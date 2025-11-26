@@ -1,0 +1,39 @@
+/* Professional dark mode theme (Ableton-inspired) */
+
+:root {
+	--bg-primary: #1a1a1a;
+	--bg-secondary: #252525;
+	--bg-tertiary: #2d2d2d;
+	--bg-hover: #333333;
+	--text-primary: #e8e8e8;
+	--text-secondary: #b8b8b8;
+	--text-muted: #6b6b6b;
+	--accent: #7ab8ff;
+	--accent-hover: #5a9eff;
+	--accent-muted: #4a7ab8;
+	--border: rgba(255, 255, 255, 0.1);
+	--border-hover: rgba(255, 255, 255, 0.2);
+	--selection: #7ab8ff;
+	--danger: #ff6b6b;
+	--success: #51cf66;
+}
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
+		sans-serif;
+	overflow: hidden;
+}
+
+/* Monospace for technical elements */
+.mono {
+	font-family: 'Courier New', Courier, monospace;
+}
+

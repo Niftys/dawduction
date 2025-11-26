@@ -1,0 +1,169 @@
+/**
+ * Manages project state, instruments, timeline tracks, effects, and envelopes
+ * Handles project loading and view mode configuration
+ * 
+ * TERMINOLOGY CLARIFICATION:
+ * - INSTRUMENT: A generated synth with a pattern tree (what goes into pattern canvas)
+ *   - Stored as Track (standalone) or Pattern (reusable)
+ *   - Has instrumentType, patternTree, settings
+ * - PATTERN: Currently stores a single instrument (future: container for multiple instruments)
+ *   - Patterns can be loaded into timeline tracks
+ *   - All instruments in a pattern play simultaneously (when pattern supports multiple)
+ * - TRACK (TimelineTrack): Where patterns, effects, and envelopes are arranged
+ *   - Exists ONLY in arrangement view timeline
+ *   - Can be type 'pattern', 'effect', or 'envelope'
+ */
+
+class ProjectManager {
+	constructor(processor) {
+		this.processor = processor;
+		this.tracks = null;
+		this.events = [];
+		this.timeline = null;
+		this.effects = [];
+		this.envelopes = [];
+		this.baseMeterTrackId = null;
+		this.isArrangementView = false;
+		this.patternToTrackId = new Map();
+	}
+
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId) {
+		this.tracks = tracks;
+		this.events = events || [];
+		this.timeline = timeline || null;
+		this.effects = effects || [];
+		this.envelopes = envelopes || [];
+		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
+		
+		// Debug: Log project load
+		this.processor.port.postMessage({
+			type: 'debug',
+			message: 'ProjectManager.loadProject',
+			data: {
+				viewMode,
+				isArrangementView: this.isArrangementView,
+				tracksCount: tracks?.length || 0,
+				eventsCount: this.events.length,
+				timelineLength: timeline?.totalLength || 0,
+				clipsCount: timeline?.clips?.length || 0,
+				firstEvent: this.events[0] || null,
+				firstTrack: tracks?.[0] || null
+			}
+		});
+		
+		// Set base meter track (defaults to first track if not specified)
+		this.baseMeterTrackId = baseMeterTrackId || (tracks?.[0]?.id);
+		
+		// Build pattern to track ID mapping for effect/envelope assignment
+		this.patternToTrackId.clear();
+		if (this.isArrangementView) {
+			// Use provided mapping if available, otherwise build from tracks
+			if (patternToTrackId && Array.isArray(patternToTrackId)) {
+				for (const [patternId, trackId] of patternToTrackId) {
+					this.patternToTrackId.set(patternId, trackId);
+				}
+			} else if (timeline && timeline.clips) {
+				// Fallback: build from tracks
+				for (const clip of timeline.clips) {
+					if (clip.patternId && !this.patternToTrackId.has(clip.patternId)) {
+						// Find the track ID for this pattern
+						const track = tracks.find(t => t.id && t.id.startsWith(`__pattern_${clip.patternId}`));
+						if (track) {
+							this.patternToTrackId.set(clip.patternId, track.id);
+						}
+					}
+				}
+			}
+		}
+		
+		// Initialize effects and envelopes processors
+		const timelineEffects = timeline?.effects || [];
+		const timelineEnvelopes = timeline?.envelopes || [];
+		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId);
+		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId);
+	}
+
+	getTrack(trackId) {
+		return this.tracks?.find(t => t.id === trackId);
+	}
+
+	updatePatternTree(trackId, patternTree) {
+		const track = this.getTrack(trackId);
+		if (track) {
+			track.patternTree = patternTree;
+			// Re-flatten events for this track in real-time
+			this.updateTrackEvents(trackId);
+		}
+	}
+	
+	updateTrackEvents(trackId) {
+		// Remove old events for this track
+		this.events = this.events.filter(e => e.instrumentId !== trackId);
+		
+		// Get the track
+		const track = this.getTrack(trackId);
+		if (!track || !track.patternTree) return;
+		
+		// Re-flatten events for this track
+		const { flattenTrackPattern } = require('../utils/eventFlatten');
+		const newEvents = flattenTrackPattern(track.patternTree, trackId);
+		
+		// Add new events
+		this.events.push(...newEvents);
+		
+		// Re-sort events by time
+		this.events.sort((a, b) => a.time - b.time);
+		
+		// Notify processor to clear future scheduled events and re-schedule
+		if (this.processor && this.processor.eventScheduler) {
+			// Clear scheduled events for future times (keep past ones that are already playing)
+			const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+			const currentSampleTime = Math.floor(this.processor.currentTime);
+			
+			// Remove scheduled events that are in the future
+			for (const [sampleTime, events] of this.processor.eventScheduler.scheduledEvents.entries()) {
+				if (sampleTime > currentSampleTime) {
+					// Filter out events for this track
+					const filteredEvents = events.filter(e => e.instrumentId !== trackId);
+					if (filteredEvents.length === 0) {
+						this.processor.eventScheduler.scheduledEvents.delete(sampleTime);
+					} else {
+						this.processor.eventScheduler.scheduledEvents.set(sampleTime, filteredEvents);
+					}
+				}
+			}
+		}
+	}
+
+	updateTrackSettings(trackId, settings) {
+		const track = this.getTrack(trackId);
+		if (track) {
+			track.settings = { ...track.settings, ...settings };
+		}
+	}
+
+	updateTrack(trackId, updatedTrack) {
+		if (!this.tracks) return null;
+		const index = this.tracks.findIndex(t => t.id === trackId);
+		if (index !== -1) {
+			const oldTrack = this.tracks[index];
+			this.tracks[index] = updatedTrack;
+			return oldTrack;
+		}
+		return null;
+	}
+
+	addTrack(track) {
+		if (!this.tracks) {
+			this.tracks = [];
+		}
+		// Check if track already exists
+		const existingIndex = this.tracks.findIndex(t => t.id === track.id);
+		if (existingIndex !== -1) {
+			this.tracks[existingIndex] = track;
+		} else {
+			this.tracks.push(track);
+		}
+	}
+}
+

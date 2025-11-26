@@ -1,0 +1,137 @@
+.velocity-editor {
+	position: fixed;
+	top: 60px; /* Below toolbar */
+	left: 0;
+	right: 350px; /* Leave space for sidebar */
+	height: 250px;
+	background: #252525;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	z-index: 999;
+	display: flex;
+	flex-direction: column;
+	box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+	overflow: hidden;
+}
+
+.velocity-roll-container {
+	display: flex;
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+}
+
+/* Velocity Scale (Left Side) */
+.velocity-scale {
+	width: 80px;
+	background: #1a1a1a;
+	border-right: 1px solid rgba(255, 255, 255, 0.1);
+	flex-shrink: 0;
+	overflow-y: auto;
+	overflow-x: hidden;
+	position: relative;
+	scrollbar-width: none; /* Firefox */
+	-ms-overflow-style: none; /* IE and Edge */
+}
+
+.velocity-scale::-webkit-scrollbar {
+	display: none; /* Chrome, Safari, Opera */
+}
+
+.velocity-scale-content {
+	position: relative;
+}
+
+.velocity-scale-row {
+	position: relative;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: default;
+	background: #2d2d2d;
+}
+
+.scale-label {
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.5);
+	font-weight: 500;
+	pointer-events: none;
+}
+
+/* Grid Area (Right Side) */
+.grid-area {
+	flex: 1;
+	overflow: hidden;
+	background: #1a1a1a;
+}
+
+.grid-container {
+	height: 100%;
+	width: 100%;
+	overflow-y: auto;
+	overflow-x: hidden;
+	position: relative;
+	scrollbar-width: none; /* Firefox */
+	-ms-overflow-style: none; /* IE and Edge */
+}
+
+.grid-container::-webkit-scrollbar {
+	display: none; /* Chrome, Safari, Opera */
+}
+
+.grid-content {
+	display: flex;
+	position: relative;
+}
+
+.grid-column {
+	display: flex;
+	flex-direction: column;
+	border-right: 1px solid rgba(255, 255, 255, 0.05);
+	flex-shrink: 0;
+	position: relative;
+}
+
+.grid-cell {
+	position: relative;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+	cursor: pointer;
+	transition: background-color 0.1s ease;
+	background: #252525;
+}
+
+.grid-cell:hover {
+	background: rgba(122, 184, 255, 0.1) !important;
+}
+
+.grid-cell.active {
+	background: rgba(122, 184, 255, 0.15);
+}
+
+.grid-cell.active:hover {
+	background: rgba(122, 184, 255, 0.25) !important;
+}
+
+.velocity-block {
+	position: absolute;
+	left: 2px;
+	right: 2px;
+	top: 2px;
+	bottom: 2px;
+	background: #7ab8ff;
+	border-radius: 3px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+	z-index: 1;
+}
+
+.velocity-label {
+	color: #ffffff;
+	font-size: 10px;
+	font-weight: 600;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+	pointer-events: none;
+}
+

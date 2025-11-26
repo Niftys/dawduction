@@ -1,0 +1,107 @@
+.canvas {
+	position: fixed;
+	top: 60px; /* Below toolbar */
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: #1a1a1a;
+	transition: top 0.3s ease, left 0.3s ease;
+}
+
+:global(body.midi-editor-visible) .canvas {
+	top: 310px; /* Toolbar (60px) + MIDI Editor (250px) */
+}
+
+.canvas.grabbing {
+	cursor: grabbing !important;
+}
+
+.canvas.selecting {
+	cursor: crosshair !important;
+}
+
+.edit-overlay {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(0, 0, 0, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 10001;
+	backdrop-filter: blur(4px);
+}
+
+.edit-dialog {
+	background: #2d2d2d;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 8px;
+	padding: 24px;
+	min-width: 280px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.edit-dialog label {
+	display: block;
+	color: #b8b8b8;
+	margin-bottom: 10px;
+	font-weight: 500;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.edit-dialog input {
+	width: 100%;
+	background: #1a1a1a;
+	color: #e8e8e8;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	padding: 10px 12px;
+	font-size: 14px;
+	margin-bottom: 16px;
+	border-radius: 4px;
+	transition: all 0.2s ease;
+}
+
+.edit-dialog input:focus {
+	outline: none;
+	border-color: #7ab8ff;
+	background: #252525;
+}
+
+.edit-buttons {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+.edit-buttons button {
+	background: #7ab8ff;
+	color: #1a1a1a;
+	border: none;
+	padding: 8px 16px;
+	cursor: pointer;
+	font-weight: 600;
+	font-size: 13px;
+	border-radius: 4px;
+	transition: all 0.2s ease;
+}
+
+.edit-buttons button:hover {
+	background: #5a9eff;
+}
+
+.edit-buttons button:last-child {
+	background: #2d2d2d;
+	color: #b8b8b8;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.edit-buttons button:last-child:hover {
+	background: #333333;
+	color: #e8e8e8;
+	border-color: rgba(255, 255, 255, 0.2);
+}
+

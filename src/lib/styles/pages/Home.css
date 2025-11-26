@@ -1,0 +1,73 @@
+.home {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100vh;
+	background: #0f0f0f;
+}
+
+.circle-wrapper {
+	position: relative;
+	width: 320px;
+	height: 320px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 18px;
+}
+
+.circle-text {
+	position: absolute;
+	width: 4800px;
+	height: 480px;
+	animation: spin 25s linear infinite;
+	pointer-events: none;
+}
+
+.circle-text text {
+	font-size: 20px;
+	font-weight: 600;
+	fill: rgba(255, 255, 255, 0.7);
+	letter-spacing: 4.5px;
+	text-transform: uppercase;
+}
+
+.new-project-button {
+	background: #ff5f5f;
+	color: #0f0f0f;
+	border: none;
+	padding: 14px 36px;
+	font-size: 15px;
+	font-weight: 700;
+	cursor: pointer;
+	border-radius: 999px;
+	transition: transform 0.2s ease, box-shadow 0.2s ease;
+	z-index: 2;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+.new-project-button:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 10px 30px rgba(255, 95, 95, 0.35);
+}
+
+.subtitle {
+	font-size: 14px;
+	color: rgba(255, 255, 255, 0.6);
+	text-align: center;
+	font-weight: 400;
+	max-width: 240px;
+	line-height: 1.5;
+}
+
+@keyframes spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+

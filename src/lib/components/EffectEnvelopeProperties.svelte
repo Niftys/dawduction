@@ -1,0 +1,409 @@
+<script lang="ts">
+	import { projectStore } from '$lib/stores/projectStore';
+	import type { Effect, Envelope } from '$lib/types/effects';
+	import ParamControl from '$lib/components/sidebar/ParamControl.svelte';
+	import '$lib/styles/components/EffectEnvelopeProperties.css';
+
+	export let selectedEffectId: string | null = null;
+	export let selectedEnvelopeId: string | null = null;
+	export let selectedTimelineEffectId: string | null = null; // Timeline effect instance ID
+	export let selectedTimelineEnvelopeId: string | null = null; // Timeline envelope instance ID
+
+	let project: any;
+	projectStore.subscribe((p) => (project = p));
+
+	$: effects = project?.effects || [];
+	$: envelopes = project?.envelopes || [];
+	$: patterns = project?.patterns || [];
+	$: timeline = project?.timeline;
+	
+	$: selectedEffect = selectedEffectId ? effects.find((e: Effect) => e.id === selectedEffectId) : null;
+	$: selectedEnvelope = selectedEnvelopeId ? envelopes.find((e: Envelope) => e.id === selectedEnvelopeId) : null;
+	
+	// Get the timeline effect/envelope instance to see pattern assignment
+	$: selectedTimelineEffect = selectedTimelineEffectId && timeline?.effects 
+		? timeline.effects.find((te: any) => te.id === selectedTimelineEffectId) 
+		: null;
+	$: selectedTimelineEnvelope = selectedTimelineEnvelopeId && timeline?.envelopes 
+		? timeline.envelopes.find((te: any) => te.id === selectedTimelineEnvelopeId) 
+		: null;
+
+	function updateEffectSetting(key: string, value: any) {
+		if (!selectedEffect) return;
+		projectStore.updateEffect(selectedEffect.id, {
+			settings: {
+				...selectedEffect.settings,
+				[key]: value
+			}
+		});
+	}
+
+	function updateEnvelopeSetting(key: string, value: any) {
+		if (!selectedEnvelope) return;
+		projectStore.updateEnvelope(selectedEnvelope.id, {
+			settings: {
+				...selectedEnvelope.settings,
+				[key]: value
+			}
+		});
+	}
+
+	function updateTimelineEffectPattern(patternId: string | null) {
+		if (!selectedTimelineEffect) return;
+		projectStore.updateTimelineEffect(selectedTimelineEffect.id, {
+			patternId: patternId || undefined
+		});
+		// Reload project if playing
+		window.dispatchEvent(new CustomEvent('reloadProject'));
+	}
+
+	function updateTimelineEnvelopePattern(patternId: string | null) {
+		if (!selectedTimelineEnvelope) return;
+		projectStore.updateTimelineEnvelope(selectedTimelineEnvelope.id, {
+			patternId: patternId || undefined
+		});
+		// Reload project if playing
+		window.dispatchEvent(new CustomEvent('reloadProject'));
+	}
+
+	// Helper to get automation props for effect parameters
+	function getEffectAutomationProps(parameterKey: string) {
+		if (!selectedEffect) return {};
+		return {
+			automationTargetType: 'effect' as const,
+			automationTargetId: selectedEffect.id,
+			automationParameterKey: parameterKey,
+			automationTimelineInstanceId: selectedTimelineEffect?.id || null,
+			automationLabel: `${selectedEffect.name} - ${parameterKey.charAt(0).toUpperCase() + parameterKey.slice(1)}`
+		};
+	}
+
+	// Helper to get automation props for envelope parameters
+	function getEnvelopeAutomationProps(parameterKey: string) {
+		if (!selectedEnvelope) return {};
+		return {
+			automationTargetType: 'envelope' as const,
+			automationTargetId: selectedEnvelope.id,
+			automationParameterKey: parameterKey,
+			automationTimelineInstanceId: selectedTimelineEnvelope?.id || null,
+			automationLabel: `${selectedEnvelope.name} - ${parameterKey.charAt(0).toUpperCase() + parameterKey.slice(1)}`
+		};
+	}
+</script>
+
+{#if selectedEffect || selectedEnvelope}
+	<div class="effect-envelope-properties">
+		<div class="properties-header">
+			<h3>{selectedEffect?.name || selectedEnvelope?.name}</h3>
+			<span class="properties-type">{selectedEffect?.type || selectedEnvelope?.type}</span>
+		</div>
+		<div class="properties-content">
+			{#if selectedTimelineEffect}
+				<!-- Pattern Assignment for Timeline Effect -->
+				<div class="pattern-assignment">
+					<label>
+						Apply to Pattern:
+						<select
+							value={selectedTimelineEffect.patternId || ''}
+							on:change={(e) => updateTimelineEffectPattern(e.currentTarget.value || null)}
+						>
+							<option value="">All Patterns (Global)</option>
+							{#each patterns as pattern}
+								<option value={pattern.id}>{pattern.name}</option>
+							{/each}
+						</select>
+					</label>
+					<p class="help-text">Select which pattern this effect applies to, or leave as "All Patterns" for global effect.</p>
+				</div>
+			{/if}
+			{#if selectedTimelineEnvelope}
+				<!-- Pattern Assignment for Timeline Envelope -->
+				<div class="pattern-assignment">
+					<label>
+						Apply to Pattern:
+						<select
+							value={selectedTimelineEnvelope.patternId || ''}
+							on:change={(e) => updateTimelineEnvelopePattern(e.currentTarget.value || null)}
+						>
+							<option value="">All Patterns (Global)</option>
+							{#each patterns as pattern}
+								<option value={pattern.id}>{pattern.name}</option>
+							{/each}
+						</select>
+					</label>
+					<p class="help-text">Select which pattern this envelope applies to, or leave as "All Patterns" for global envelope.</p>
+				</div>
+			{/if}
+			{#if selectedEffect}
+				{#if selectedEffect.type === 'reverb'}
+					<ParamControl
+						label="Room Size"
+						value={selectedEffect.settings.roomSize ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('roomSize', v)}
+						{...getEffectAutomationProps('roomSize')}
+					/>
+					<ParamControl
+						label="Dampening"
+						value={selectedEffect.settings.dampening ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('dampening', v)}
+						{...getEffectAutomationProps('dampening')}
+					/>
+					<ParamControl
+						label="Wet"
+						value={selectedEffect.settings.wet ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('wet', v)}
+						{...getEffectAutomationProps('wet')}
+					/>
+					<ParamControl
+						label="Dry"
+						value={selectedEffect.settings.dry ?? 0.7}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('dry', v)}
+						{...getEffectAutomationProps('dry')}
+					/>
+				{:else if selectedEffect.type === 'delay'}
+					<ParamControl
+						label="Time"
+						value={selectedEffect.settings.time ?? 0.25}
+						min={0}
+						max={2}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('time', v)}
+						{...getEffectAutomationProps('time')}
+					/>
+					<ParamControl
+						label="Feedback"
+						value={selectedEffect.settings.feedback ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('feedback', v)}
+						{...getEffectAutomationProps('feedback')}
+					/>
+					<ParamControl
+						label="Wet"
+						value={selectedEffect.settings.wet ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('wet', v)}
+						{...getEffectAutomationProps('wet')}
+					/>
+					<ParamControl
+						label="Dry"
+						value={selectedEffect.settings.dry ?? 0.7}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('dry', v)}
+						{...getEffectAutomationProps('dry')}
+					/>
+				{:else if selectedEffect.type === 'filter'}
+					<label>
+						Type
+						<select
+							value={selectedEffect.settings.type ?? 'lowpass'}
+							on:change={(e) => updateEffectSetting('type', e.currentTarget.value)}
+						>
+							<option value="lowpass">Lowpass</option>
+							<option value="highpass">Highpass</option>
+							<option value="bandpass">Bandpass</option>
+						</select>
+					</label>
+					<ParamControl
+						label="Frequency"
+						value={selectedEffect.settings.frequency ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('frequency', v)}
+						{...getEffectAutomationProps('frequency')}
+					/>
+					<ParamControl
+						label="Resonance"
+						value={selectedEffect.settings.resonance ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('resonance', v)}
+						{...getEffectAutomationProps('resonance')}
+					/>
+				{:else if selectedEffect.type === 'distortion'}
+					<ParamControl
+						label="Amount"
+						value={selectedEffect.settings.amount ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('amount', v)}
+						{...getEffectAutomationProps('amount')}
+					/>
+					<ParamControl
+						label="Drive"
+						value={selectedEffect.settings.drive ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('drive', v)}
+						{...getEffectAutomationProps('drive')}
+					/>
+				{:else if selectedEffect.type === 'compressor'}
+					<ParamControl
+						label="Threshold"
+						value={selectedEffect.settings.threshold ?? 0.7}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('threshold', v)}
+						{...getEffectAutomationProps('threshold')}
+					/>
+					<ParamControl
+						label="Ratio"
+						value={selectedEffect.settings.ratio ?? 4}
+						min={1}
+						max={20}
+						step={0.1}
+						onChange={(v) => updateEffectSetting('ratio', v)}
+						{...getEffectAutomationProps('ratio')}
+					/>
+					<ParamControl
+						label="Attack"
+						value={selectedEffect.settings.attack ?? 0.01}
+						min={0}
+						max={1}
+						step={0.001}
+						onChange={(v) => updateEffectSetting('attack', v)}
+						{...getEffectAutomationProps('attack')}
+					/>
+					<ParamControl
+						label="Release"
+						value={selectedEffect.settings.release ?? 0.1}
+						min={0}
+						max={1}
+						step={0.001}
+						onChange={(v) => updateEffectSetting('release', v)}
+						{...getEffectAutomationProps('release')}
+					/>
+				{:else if selectedEffect.type === 'chorus'}
+					<ParamControl
+						label="Rate"
+						value={selectedEffect.settings.rate ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('rate', v)}
+						{...getEffectAutomationProps('rate')}
+					/>
+					<ParamControl
+						label="Depth"
+						value={selectedEffect.settings.depth ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('depth', v)}
+						{...getEffectAutomationProps('depth')}
+					/>
+					<ParamControl
+						label="Delay"
+						value={selectedEffect.settings.delay ?? 0.02}
+						min={0}
+						max={0.1}
+						step={0.001}
+						onChange={(v) => updateEffectSetting('delay', v)}
+						{...getEffectAutomationProps('delay')}
+					/>
+					<ParamControl
+						label="Wet"
+						value={selectedEffect.settings.wet ?? 0.3}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEffectSetting('wet', v)}
+						{...getEffectAutomationProps('wet')}
+					/>
+				{/if}
+			{:else if selectedEnvelope}
+				{#if selectedEnvelope.type === 'volume'}
+					<ParamControl
+						label="Volume"
+						value={selectedEnvelope.settings.volume ?? 1.0}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('volume', v)}
+						{...getEnvelopeAutomationProps('volume')}
+					/>
+				{:else if selectedEnvelope.type === 'filter'}
+					<ParamControl
+						label="Filter Start"
+						value={selectedEnvelope.settings.startValue ?? 0.2}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('startValue', v)}
+						{...getEnvelopeAutomationProps('startValue')}
+					/>
+					<ParamControl
+						label="Filter End"
+						value={selectedEnvelope.settings.endValue ?? 0.8}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('endValue', v)}
+						{...getEnvelopeAutomationProps('endValue')}
+					/>
+				{:else if selectedEnvelope.type === 'pitch'}
+					<ParamControl
+						label="Pitch Start"
+						value={selectedEnvelope.settings.startValue ?? 0.5}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('startValue', v)}
+						{...getEnvelopeAutomationProps('startValue')}
+					/>
+					<ParamControl
+						label="Pitch End"
+						value={selectedEnvelope.settings.endValue ?? 1.0}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('endValue', v)}
+						{...getEnvelopeAutomationProps('endValue')}
+					/>
+				{:else if selectedEnvelope.type === 'pan'}
+					<ParamControl
+						label="Pan Start"
+						value={selectedEnvelope.settings.startValue ?? 0.0}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('startValue', v)}
+						{...getEnvelopeAutomationProps('startValue')}
+					/>
+					<ParamControl
+						label="Pan End"
+						value={selectedEnvelope.settings.endValue ?? 1.0}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('endValue', v)}
+						{...getEnvelopeAutomationProps('endValue')}
+					/>
+				{/if}
+			{/if}
+		</div>
+	</div>
+{/if}
+

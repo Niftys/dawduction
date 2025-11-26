@@ -1,0 +1,89 @@
+.effect-envelope-properties {
+	position: fixed;
+	right: 0;
+	top: 60px;
+	bottom: 0;
+	width: 280px;
+	background: #1f1f1f;
+	border-left: 1px solid rgba(255, 255, 255, 0.1);
+	display: flex;
+	flex-direction: column;
+	z-index: 100;
+	overflow-y: auto;
+}
+
+.properties-header {
+	padding: 16px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	background: #252525;
+}
+
+.properties-header h3 {
+	margin: 0 0 4px 0;
+	font-size: 14px;
+	font-weight: 600;
+	color: #e8e8e8;
+}
+
+.properties-type {
+	font-size: 11px;
+	color: #b8b8b8;
+	text-transform: capitalize;
+}
+
+.properties-content {
+	flex: 1;
+	padding: 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.properties-content label {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	font-size: 12px;
+	color: #b8b8b8;
+	font-weight: 500;
+}
+
+.properties-content select {
+	background: #2d2d2d;
+	color: #e8e8e8;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	border-radius: 4px;
+	padding: 8px 12px;
+	font-size: 13px;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.properties-content select:hover {
+	border-color: rgba(255, 255, 255, 0.2);
+}
+
+.properties-content select:focus {
+	outline: none;
+	border-color: #7ab8ff;
+}
+
+.pattern-assignment {
+	padding: 12px;
+	background: rgba(122, 184, 255, 0.1);
+	border: 1px solid rgba(122, 184, 255, 0.2);
+	border-radius: 6px;
+	margin-bottom: 16px;
+}
+
+.pattern-assignment label {
+	margin-bottom: 8px;
+}
+
+.help-text {
+	margin: 8px 0 0 0;
+	font-size: 11px;
+	color: #888;
+	font-style: italic;
+}
+
