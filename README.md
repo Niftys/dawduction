@@ -57,7 +57,7 @@ DAWDUCTION is a browser-based music production tool that lets you create pattern
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
+git clone https://github.com/Niftys/dawduction.git
 cd dawduction
 ```
 
