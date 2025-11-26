@@ -25,15 +25,24 @@ class ProjectManager {
 		this.baseMeterTrackId = null;
 		this.isArrangementView = false;
 		this.patternToTrackId = new Map();
+		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track ID to array of audio track IDs
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
 		this.tracks = tracks;
 		this.events = events || [];
 		this.timeline = timeline || null;
 		this.effects = effects || [];
 		this.envelopes = envelopes || [];
 		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
+		
+		// Build timeline track to audio tracks mapping
+		this.timelineTrackToAudioTracks.clear();
+		if (timelineTrackToAudioTracks && Array.isArray(timelineTrackToAudioTracks)) {
+			for (const [timelineTrackId, audioTrackIds] of timelineTrackToAudioTracks) {
+				this.timelineTrackToAudioTracks.set(timelineTrackId, audioTrackIds);
+			}
+		}
 		
 		// Debug: Log project load
 		this.processor.port.postMessage({
@@ -105,7 +114,48 @@ class ProjectManager {
 		if (!track || !track.patternTree) return;
 		
 		// Re-flatten events for this track
-		const { flattenTrackPattern } = require('../utils/eventFlatten');
+		// Inline flattenTrackPattern function (can't use require in AudioWorklet)
+		const flattenTree = (node, parentDuration, startTime, instrumentId) => {
+			// Leaf node - create event
+			if (!node.children || node.children.length === 0) {
+				// Check if this is the root node (empty pattern)
+				if (parentDuration === node.division && startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
+					return [];
+				}
+				// Real leaf node - create event
+				return [{
+					time: startTime,
+					velocity: node.velocity !== undefined ? node.velocity : 1.0,
+					pitch: node.pitch !== undefined ? node.pitch : 60,
+					instrumentId
+				}];
+			}
+			
+			// Calculate total division sum for proportional distribution
+			const totalDivision = node.children.reduce((sum, child) => sum + (child.division || 1), 0);
+			
+			if (totalDivision === 0) {
+				return [];
+			}
+			
+			// Recursively process children with proportional timing
+			let currentTime = startTime;
+			const events = [];
+			
+			for (const child of node.children) {
+				const childDivision = child.division || 1;
+				const childDuration = parentDuration * (childDivision / totalDivision);
+				events.push(...flattenTree(child, childDuration, currentTime, instrumentId));
+				currentTime += childDuration;
+			}
+			
+			return events;
+		};
+		
+		const flattenTrackPattern = (rootNode, trackId) => {
+			return flattenTree(rootNode, rootNode.division, 0.0, trackId);
+		};
+		
 		const newEvents = flattenTrackPattern(track.patternTree, trackId);
 		
 		// Add new events
@@ -164,6 +214,23 @@ class ProjectManager {
 		} else {
 			this.tracks.push(track);
 		}
+	}
+
+	updateTimelineTrackVolume(trackId, volume) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.volume = volume;
+			}
+		}
+	}
+
+	getTimelineTrackVolume(trackId) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			return track?.volume ?? 1.0;
+		}
+		return 1.0;
 	}
 }
 

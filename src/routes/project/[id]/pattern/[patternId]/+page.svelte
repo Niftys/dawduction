@@ -12,10 +12,13 @@
 	import { goto } from '$app/navigation';
 	import type { Pattern } from '$lib/types/pattern';
 	import { viewStore } from '$lib/stores/viewStore';
+	import { engineStore } from '$lib/stores/engineStore';
 
 	let project: any;
 	let pattern: Pattern | null = null;
 	let unsubscribeAutoSave: (() => void) | null = null;
+	let engine: any = null;
+	engineStore.subscribe((e) => (engine = e));
 
 	projectStore.subscribe((p) => {
 		project = p;
@@ -197,8 +200,44 @@
 				// Select the new instrument so the user can see it
 				selectionStore.selectNode(newInstrument.patternTree.id, null, true, false, pattern.id, newInstrument.id);
 				
-				// Trigger reload for pattern changes
-				window.dispatchEvent(new CustomEvent('reloadProject'));
+				// Update engine in real-time without stopping playback
+				// Use a small delay to ensure store update completes
+				setTimeout(() => {
+					if (engine) {
+						// Get the updated instrument from the store to ensure we have the latest data
+						let currentProject = null;
+						projectStore.subscribe((p) => (currentProject = p))();
+						if (!currentProject) return;
+						
+						const updatedPattern = currentProject.patterns?.find((p) => p.id === pattern.id);
+						if (!updatedPattern) return;
+						
+						const updatedInstruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
+							? updatedPattern.instruments
+							: [];
+						
+						const updatedInstrument = updatedInstruments.find((inst) => inst.id === newInstrument.id);
+						if (!updatedInstrument) return;
+						
+						const patternTrackId = `__pattern_${pattern.id}_${newInstrument.id}`;
+						const trackForEngine = {
+							id: patternTrackId,
+							projectId: pattern.projectId,
+							instrumentType: updatedInstrument.instrumentType,
+							patternTree: updatedInstrument.patternTree,
+							settings: updatedInstrument.settings || {},
+							instrumentSettings: updatedInstrument.instrumentSettings,
+							volume: updatedInstrument.volume ?? 1.0,
+							pan: updatedInstrument.pan ?? 0.0,
+							color: updatedInstrument.color,
+							mute: updatedInstrument.mute ?? false,
+							solo: updatedInstrument.solo ?? false
+						};
+						
+						// Add the track to the engine - updateTrack will add it if it doesn't exist
+						engine.updateTrack(patternTrackId, trackForEngine);
+					}
+				}, 0);
 			}}
 			title="Add new instrument to pattern"
 		>

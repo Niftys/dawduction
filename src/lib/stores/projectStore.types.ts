@@ -18,6 +18,7 @@ export interface TimelineTrack {
 	name: string;
 	patternId?: string; // For pattern tracks, which pattern this track displays/plays
 	order: number; // Display order
+	volume?: number; // Track volume (0.0 to 2.0, default 1.0)
 	createdAt: number;
 }
 

@@ -95,13 +95,24 @@
 	}
 	
 	// Auto-scroll for velocity mode
+	// If velocities are high (>= 95%), ensure 100% is visible at the top
 	$: if (showVelocityEditor && !previousShouldShow && selectedNodes.length > 0) {
 		setTimeout(() => {
 			if (gridContainer && pianoKeysContainer && selectedNodes.length > 0) {
 				const velocities = selectedNodes.map(({ node }) => node.velocity ?? 1.0);
-				const centerVelocity = (Math.min(...velocities) + Math.max(...velocities)) / 2;
+				const maxVelocity = Math.max(...velocities);
+				const centerVelocity = (Math.min(...velocities) + maxVelocity) / 2;
 				const centerRow = Math.round(centerVelocity * VELOCITY_STEPS);
-				const targetScroll = Math.max(0, ((VELOCITY_STEPS - centerRow) * KEY_HEIGHT) - (gridContainer.clientHeight / 2));
+				
+				let targetScroll: number;
+				// If max velocity is >= 95%, scroll to show 100% at the top
+				if (maxVelocity >= 0.95) {
+					// Scroll to top (0) to show 100% at the very top
+					targetScroll = 0;
+				} else {
+					// Otherwise, center on selected velocities
+					targetScroll = Math.max(0, ((VELOCITY_STEPS - centerRow) * KEY_HEIGHT) - (gridContainer.clientHeight / 2));
+				}
 				
 				pianoKeysContainer.scrollTop = targetScroll;
 				gridContainer.scrollTop = targetScroll;
@@ -146,11 +157,14 @@
 		const nodes: Array<{ node: PatternNode; nodeId: string; index: number }> = [];
 		let index = 0;
 		
-		// Helper to find nodes in tree
+		// Helper to find leaf nodes (childmost nodes) in tree
+		// Only include nodes that are selected AND have no children (leaf nodes)
 		const findNodes = (node: PatternNode): void => {
-			if (selection.selectedNodes.has(node.id)) {
+			// Only add if selected AND is a leaf node (no children)
+			if (selection.selectedNodes.has(node.id) && (!node.children || node.children.length === 0)) {
 				nodes.push({ node, nodeId: node.id, index: index++ });
 			}
+			// Continue traversing children
 			for (const child of node.children) {
 				findNodes(child);
 			}

@@ -252,6 +252,45 @@ export class EngineWorklet {
 				events: allEvents.map(e => ({ time: e.time, instrumentId: e.instrumentId, pitch: e.pitch, patternId: e.patternId }))
 			});
 			
+			// Build mapping from timeline track ID to audio track IDs
+			// This allows us to apply timeline track volume to all audio tracks in that timeline track
+			const timelineTrackToAudioTracks = new Map<string, string[]>();
+			if (timeline?.tracks) {
+				for (const timelineTrack of timeline.tracks) {
+					const audioTrackIds: string[] = [];
+					// Find all clips on this timeline track
+					const clipsOnTrack = timeline.clips.filter((c: any) => c.trackId === timelineTrack.id);
+					// For each clip, find all audio tracks that belong to it
+					for (const clip of clipsOnTrack) {
+						const pattern = patternMap.get(clip.patternId);
+						if (!pattern) continue;
+						
+						// Get all instruments from pattern
+						let patternInstruments: any[] = [];
+						if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
+							patternInstruments = pattern.instruments;
+						} else if (pattern.instrumentType && pattern.patternTree) {
+							patternInstruments = [{
+								id: pattern.id,
+								instrumentType: pattern.instrumentType,
+								patternTree: pattern.patternTree
+							}];
+						}
+						
+						// Add audio track IDs for each instrument
+						for (const instrument of patternInstruments) {
+							const audioTrackId = patternToTrackId.get(`${clip.patternId}_${instrument.id}`);
+							if (audioTrackId && !audioTrackIds.includes(audioTrackId)) {
+								audioTrackIds.push(audioTrackId);
+							}
+						}
+					}
+					if (audioTrackIds.length > 0) {
+						timelineTrackToAudioTracks.set(timelineTrack.id, audioTrackIds);
+					}
+				}
+			}
+			
 			// Send to worklet with timeline, pattern tracks, effects, and envelopes
 			// Also send pattern-to-track mapping for effect/envelope assignment
 			this.sendMessage({
@@ -262,6 +301,7 @@ export class EngineWorklet {
 				baseMeterTrackId: patternTracks[0]?.id,
 				timeline: {
 					clips: timeline.clips,
+					tracks: timeline.tracks, // Send timeline tracks with volumes
 					effects: timeline.effects || [],
 					envelopes: timeline.envelopes || [],
 					totalLength: safeTimelineLength
@@ -269,7 +309,8 @@ export class EngineWorklet {
 				effects: effects || [],
 				envelopes: envelopes || [],
 				viewMode: 'arrangement', // Arrangement view mode
-				patternToTrackId: Array.from(patternToTrackId.entries()) // Send as array for serialization
+				patternToTrackId: Array.from(patternToTrackId.entries()), // Send as array for serialization
+				timelineTrackToAudioTracks: Array.from(timelineTrackToAudioTracks.entries()) // Mapping for track volume
 			});
 			return;
 		}

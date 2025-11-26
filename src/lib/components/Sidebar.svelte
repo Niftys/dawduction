@@ -150,6 +150,7 @@
 				selectedPattern={selectedPattern} 
 				isRootNode={isRootNode}
 				selectedInstrumentId={selection.selectedInstrumentId}
+				selectedInstrument={selectedInstrument}
 			/>
 			<MixerControls {selectedTrack} selectedInstrument={selectedInstrument} />
 			<SynthParameters selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} trackSettings={trackSettings} />

@@ -24,6 +24,7 @@
 	export let selectedPattern: Pattern | undefined = undefined;
 	export let isRootNode: boolean = false;
 	export let selectedInstrumentId: string | null = null;
+	export let selectedInstrument: Instrument | undefined = undefined;
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
@@ -65,8 +66,9 @@
 		bass: { color: '#0066ff', settings: { attack: 0.05, decay: 0.2, sustain: 0.8, release: 0.3, osc1Type: 'saw', subLevel: 0.6, saturation: 0.3, filterCutoff: 2000, filterResonance: 0.3 } }
 	};
 
-	// Get the active item (pattern or track)
-	$: activeItem = selectedPattern || selectedTrack;
+	// Get the active item (selected instrument from pattern, or standalone instrument)
+	// When root node is selected, use the selected instrument, not the pattern
+	$: activeItem = selectedInstrument || selectedTrack;
 	
 	async function updateInstrumentType(type: string) {
 		if (!activeItem) return;
@@ -119,26 +121,54 @@
 					});
 					
 					// Update the engine directly using updateTrack to avoid resetting playback position
-					if (engine) {
-						const patternTrackId = `__pattern_${selectedPattern.id}_${selectedInstrumentId}`;
-						const trackForEngine: any = {
-							id: patternTrackId,
-							projectId: selectedPattern.projectId,
-							instrumentType: type, // Use the new type directly
-							patternTree: instrument.patternTree, // Use existing pattern tree
-							settings: newSettings,
-							instrumentSettings: instrumentSettings,
-							volume: instrument.volume ?? 1.0,
-							pan: instrument.pan ?? 0.0,
-							color: defaults.color,
-							mute: instrument.mute ?? false,
-							solo: instrument.solo ?? false
-						};
-						
-						// Update just this track - this will recreate the synth without resetting playback
-						// The pattern tree is already included in trackForEngine, so updateTrack will update it
-						engine.updateTrack(patternTrackId, trackForEngine);
-					}
+					// Use a small delay to ensure store update completes and we get the latest pattern tree
+					setTimeout(() => {
+						if (engine) {
+							// Get the updated instrument from the store
+							let currentProject: any = null;
+							projectStore.subscribe((p) => (currentProject = p))();
+							if (!currentProject) return;
+							
+							const updatedPattern = currentProject.patterns?.find((p: Pattern) => p.id === selectedPattern.id);
+							if (!updatedPattern) return;
+							
+							const updatedInstruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
+								? updatedPattern.instruments
+								: (updatedPattern.instrumentType && updatedPattern.patternTree ? [{
+									id: updatedPattern.id,
+									instrumentType: updatedPattern.instrumentType,
+									patternTree: updatedPattern.patternTree,
+									settings: updatedPattern.settings || {},
+									instrumentSettings: updatedPattern.instrumentSettings,
+									color: updatedPattern.color || '#7ab8ff',
+									volume: updatedPattern.volume ?? 1.0,
+									pan: updatedPattern.pan ?? 0.0,
+									mute: updatedPattern.mute,
+									solo: updatedPattern.solo
+								}] : []);
+							
+							const updatedInstrument = updatedInstruments.find((inst: Instrument) => inst.id === selectedInstrumentId);
+							if (!updatedInstrument) return;
+							
+							const patternTrackId = `__pattern_${selectedPattern.id}_${selectedInstrumentId}`;
+							const trackForEngine = {
+								id: patternTrackId,
+								projectId: selectedPattern.projectId,
+								instrumentType: type, // Use the new type directly
+								patternTree: updatedInstrument.patternTree, // Use updated pattern tree from store
+								settings: newSettings,
+								instrumentSettings: instrumentSettings,
+								volume: updatedInstrument.volume ?? 1.0,
+								pan: updatedInstrument.pan ?? 0.0,
+								color: defaults.color,
+								mute: updatedInstrument.mute ?? false,
+								solo: updatedInstrument.solo ?? false
+							};
+							
+							// Update just this track - this will recreate the synth without resetting playback
+							engine.updateTrack(patternTrackId, trackForEngine);
+						}
+					}, 0);
 					return;
 				}
 			}
@@ -159,7 +189,7 @@
 					: { ...defaults.settings };
 				
 				// Update track
-				projectStore.updateTrack(selectedTrack.id, {
+				projectStore.updateStandaloneInstrument(selectedTrack.id, {
 					instrumentType: type,
 					color: defaults.color,
 					settings: newSettings,
@@ -217,23 +247,43 @@
 			});
 			
 			// Update engine in real-time without stopping playback
-			if (engine) {
-				const patternTrackId = `__pattern_${selectedPattern.id}_${newInstrument.id}`;
-				const trackForEngine: any = {
-					id: patternTrackId,
-					projectId: selectedPattern.projectId,
-					instrumentType: newInstrument.instrumentType,
-					patternTree: newInstrument.patternTree,
-					settings: newInstrument.settings || {},
-					instrumentSettings: newInstrument.instrumentSettings,
-					volume: newInstrument.volume ?? 1.0,
-					pan: newInstrument.pan ?? 0.0,
-					color: newInstrument.color,
-					mute: newInstrument.mute ?? false,
-					solo: newInstrument.solo ?? false
-				};
-				engine.updateTrack(patternTrackId, trackForEngine);
-			}
+			// Use a small delay to ensure store update completes
+			setTimeout(() => {
+				if (engine) {
+					// Get the updated instrument from the store to ensure we have the latest data
+					let currentProject = null;
+					projectStore.subscribe((p) => (currentProject = p))();
+					if (!currentProject) return;
+					
+					const updatedPattern = currentProject.patterns?.find((p) => p.id === selectedPattern.id);
+					if (!updatedPattern) return;
+					
+					const updatedInstruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
+						? updatedPattern.instruments
+						: [];
+					
+					const updatedInstrument = updatedInstruments.find((inst) => inst.id === newInstrument.id);
+					if (!updatedInstrument) return;
+					
+					const patternTrackId = `__pattern_${selectedPattern.id}_${newInstrument.id}`;
+					const trackForEngine = {
+						id: patternTrackId,
+						projectId: selectedPattern.projectId,
+						instrumentType: updatedInstrument.instrumentType,
+						patternTree: updatedInstrument.patternTree,
+						settings: updatedInstrument.settings || {},
+						instrumentSettings: updatedInstrument.instrumentSettings,
+						volume: updatedInstrument.volume ?? 1.0,
+						pan: updatedInstrument.pan ?? 0.0,
+						color: updatedInstrument.color,
+						mute: updatedInstrument.mute ?? false,
+						solo: updatedInstrument.solo ?? false
+					};
+					
+					// Add the track to the engine - updateTrack will add it if it doesn't exist
+					engine.updateTrack(patternTrackId, trackForEngine);
+				}
+			}, 0);
 			return;
 		}
 	}

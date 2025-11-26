@@ -19,7 +19,9 @@
 	import PatternCard from '$lib/components/PatternCard.svelte';
 	import AutomationCurveEditor from '$lib/components/AutomationCurveEditor.svelte';
 	import { automationStore } from '$lib/stores/automationStore';
+	import { engineStore } from '$lib/stores/engineStore';
 	import '$lib/styles/components/ProjectView.css';
+	import '$lib/styles/components/ArrangementView.css';
 
 	let project: any;
 	let playbackState: any;
@@ -137,6 +139,10 @@
 	const BEATS_PER_BAR = 4; // Standard 4/4 time
 
 	$: PIXELS_PER_BEAT = BASE_PIXELS_PER_BEAT * zoomLevel;
+	
+	// Declare reactive variables for ruler marks and grid lines
+	let rulerMarks: any[] = [];
+	let gridLines: any[] = [];
 
 	function beatToPixel(beat: number): number {
 		return beat * PIXELS_PER_BEAT;
@@ -151,7 +157,8 @@
 		e.preventDefault();
 		e.stopPropagation();
 		
-		const delta = e.deltaY > 0 ? -0.1 : 0.1;
+		// Use larger delta for more noticeable zoom changes
+		const delta = e.deltaY > 0 ? -0.5 : 0.5;
 		zoomLevel = Math.max(0.25, Math.min(64, zoomLevel + delta)); // Zoom between 0.25x (25%) and 64x (6400%)
 	}
 	
@@ -711,6 +718,48 @@
 	function deleteTimelineTrack(trackId: string) {
 		projectStore.deleteTimelineTrack(trackId);
 	}
+	
+	function handleTrackVolumeClick(e: MouseEvent, trackId: string) {
+		e.stopPropagation();
+		const volumeBar = (e.currentTarget as HTMLElement).querySelector('.track-volume-bar') as HTMLElement;
+		if (!volumeBar) return;
+		
+		const rect = volumeBar.getBoundingClientRect();
+		// Calculate volume from click position (0.0 to 2.0, where 1.0 is center)
+		// Click at top = 2.0, click at bottom = 0.0
+		const clickY = e.clientY - rect.top;
+		const height = rect.height;
+		const volume = Math.max(0, Math.min(2.0, 2.0 * (1.0 - (clickY / height))));
+		
+		updateTrackVolume(trackId, volume);
+		
+		// Set up drag handlers for real-time adjustment
+		const handleMouseMove = (moveEvent: MouseEvent) => {
+			const newRect = volumeBar.getBoundingClientRect();
+			const newClickY = moveEvent.clientY - newRect.top;
+			const newVolume = Math.max(0, Math.min(2.0, 2.0 * (1.0 - (newClickY / newRect.height))));
+			updateTrackVolume(trackId, newVolume);
+		};
+		
+		const handleMouseUp = () => {
+			window.removeEventListener('mousemove', handleMouseMove);
+			window.removeEventListener('mouseup', handleMouseUp);
+		};
+		
+		window.addEventListener('mousemove', handleMouseMove);
+		window.addEventListener('mouseup', handleMouseUp);
+	}
+	
+	function updateTrackVolume(trackId: string, volume: number) {
+		// Update track volume
+		projectStore.updateTimelineTrack(trackId, { volume });
+		
+		// Update audio engine in real-time
+		const engine = $engineStore;
+		if (engine) {
+			engine.updateTimelineTrackVolume(trackId, volume);
+		}
+	}
 
 	// Get clips/effects/envelopes for a specific track
 	function getClipsForTrack(trackId: string): TimelineClip[] {
@@ -726,40 +775,52 @@
 	}
 
 	// Generate ruler marks with beats and bars (reactive to zoom)
-	$: rulerMarks = (() => {
-		const marks = [];
-		// Only show bars and beats, not sub-beats
-		for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
-			const isBar = beat % BEATS_PER_BAR === 0;
-			const barNumber = Math.floor(beat / BEATS_PER_BAR);
-			const beatInBar = Math.floor(beat % BEATS_PER_BAR);
-			
-			marks.push({
-				beat,
-				x: beatToPixel(beat),
-				isBar,
-				isBeat: true,
-				barNumber,
-				beatInBar
-			});
+	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
+	$: {
+		if (!timeline || !timeline.totalLength) {
+			rulerMarks = [];
+		} else {
+			const marks = [];
+			const pixelsPerBeat = PIXELS_PER_BEAT; // Explicitly reference reactive variable
+			// Only show bars and beats, not sub-beats
+			for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
+				const isBar = beat % BEATS_PER_BAR === 0;
+				const barNumber = Math.floor(beat / BEATS_PER_BAR);
+				const beatInBar = Math.floor(beat % BEATS_PER_BAR);
+				
+				marks.push({
+					beat,
+					x: beat * pixelsPerBeat,
+					isBar,
+					isBeat: true,
+					barNumber,
+					beatInBar
+				});
+			}
+			rulerMarks = marks;
 		}
-		return marks;
-	})();
+	}
 	
 	// Generate grid lines for timeline rows - only bars and beats (reactive to zoom)
-	$: gridLines = (() => {
-		const lines = [];
-		for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
-			const isBar = beat % BEATS_PER_BAR === 0;
-			lines.push({
-				beat,
-				x: beatToPixel(beat),
-				isBar,
-				isBeat: true
-			});
+	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
+	$: {
+		if (!timeline || !timeline.totalLength) {
+			gridLines = [];
+		} else {
+			const lines = [];
+			const pixelsPerBeat = PIXELS_PER_BEAT; // Explicitly reference reactive variable
+			for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
+				const isBar = beat % BEATS_PER_BAR === 0;
+				lines.push({
+					beat,
+					x: beat * pixelsPerBeat,
+					isBar,
+					isBeat: true
+				});
+			}
+			gridLines = lines;
 		}
-		return lines;
-	})();
+	}
 
 	// Get clips for each pattern
 	$: clipsByPattern = (() => {
@@ -910,9 +971,11 @@
 				>
 					<div class="timeline-ruler-container">
 						<div class="ruler-label-spacer" style="width: {ROW_LABEL_WIDTH}px;">
-							<div class="zoom-indicator" title="Zoom: {zoomDisplay} (Ctrl+Wheel to zoom)">
-								{zoomDisplay}
-							</div>
+							{#if Math.round((zoomLevel / BASE_ZOOM) * 100) !== 100}
+								<div class="zoom-indicator" title="Zoom: {zoomDisplay} (Ctrl+Wheel to zoom)">
+									{zoomDisplay}
+								</div>
+							{/if}
 							<div class="add-track-dropdown-ruler">
 								<span 
 									class="add-track-trigger"
@@ -1062,7 +1125,20 @@
 									on:dragleave={(e) => handleTrackDragLeave(e)}
 									on:drop={(e) => handleTrackDrop(e, track.id)}
 								>
-									<span>{track.name}</span>
+									<div 
+										class="track-volume-control"
+										on:click={(e) => handleTrackVolumeClick(e, track.id)}
+										on:mousedown|stopPropagation
+										title="Click to set volume: {Math.round((track.volume ?? 1.0) * 100)}%"
+									>
+										<div class="track-volume-bar">
+											<div 
+												class="track-volume-fill"
+												style="height: {((track.volume ?? 1.0) / 2.0) * 100}%"
+											></div>
+										</div>
+									</div>
+									<span class="track-name">{track.name}</span>
 									<button 
 										class="track-delete" 
 										on:click|stopPropagation={() => deleteTimelineTrack(track.id)}
@@ -1083,14 +1159,17 @@
 									
 									{#if track.type === 'pattern'}
 										<!-- Pattern clips -->
-										{#each trackClips as clip}
-											{@const clipPattern = findPatternById(clip.patternId)}
+										{#key PIXELS_PER_BEAT}
+											{#each trackClips as clip}
+												{@const clipPattern = findPatternById(clip.patternId)}
+												{@const clipLeft = beatToPixel(clip.startBeat)}
+												{@const clipWidth = Math.max(20, beatToPixel(clip.duration))}
 											{#if clipPattern}
 												<div
 													class="timeline-clip {isDraggingClip?.id === clip.id && isDraggingClip?.type === 'clip' ? 'dragging' : ''}"
 													style="
-														left: {beatToPixel(clip.startBeat)}px;
-														width: {Math.max(20, beatToPixel(clip.duration))}px;
+														left: {clipLeft}px;
+														width: {clipWidth}px;
 														background: {clipPattern.color}CC;
 														border-color: {clipPattern.color};
 													"
@@ -1112,17 +1191,21 @@
 												</div>
 											{/if}
 										{/each}
+										{/key}
 									{:else if track.type === 'effect'}
 										<!-- Effect clips -->
-										{#each trackEffects as timelineEffect}
-											{@const effect = effects.find((e) => e.id === timelineEffect.effectId)}
-											{@const assignedPattern = findPatternById(timelineEffect.patternId)}
+										{#key PIXELS_PER_BEAT}
+											{#each trackEffects as timelineEffect}
+												{@const effect = effects.find((e) => e.id === timelineEffect.effectId)}
+												{@const assignedPattern = findPatternById(timelineEffect.patternId)}
+												{@const effectLeft = beatToPixel(timelineEffect.startBeat)}
+												{@const effectWidth = Math.max(20, beatToPixel(timelineEffect.duration))}
 											{#if effect}
 												<div
 													class="timeline-clip timeline-effect {selectedEffectId === timelineEffect.id ? 'selected' : ''} {isDraggingClip?.id === timelineEffect.id && isDraggingClip?.type === 'effect' ? 'dragging' : ''}"
 													style="
-														left: {beatToPixel(timelineEffect.startBeat)}px;
-														width: {Math.max(20, beatToPixel(timelineEffect.duration))}px;
+														left: {effectLeft}px;
+														width: {effectWidth}px;
 														background: {effect.color}80;
 														border-color: {effect.color};
 													"
@@ -1158,19 +1241,23 @@
 													<div class="clip-resize-handle-right" title="Drag to resize right edge"></div>
 												</div>
 											{/if}
-										{/each}
+											{/each}
+										{/key}
 									{:else if track.type === 'envelope'}
 										<!-- Envelope clips -->
-										{#each trackEnvelopes as timelineEnvelope}
-											{@const envelope = envelopes.find((e) => e.id === timelineEnvelope.envelopeId)}
-											{@const isSelected = selectedEnvelopeId === timelineEnvelope.id}
-											{@const assignedPattern = findPatternById(timelineEnvelope.patternId)}
+										{#key PIXELS_PER_BEAT}
+											{#each trackEnvelopes as timelineEnvelope}
+												{@const envelope = envelopes.find((e) => e.id === timelineEnvelope.envelopeId)}
+												{@const isSelected = selectedEnvelopeId === timelineEnvelope.id}
+												{@const assignedPattern = findPatternById(timelineEnvelope.patternId)}
+												{@const envelopeLeft = beatToPixel(timelineEnvelope.startBeat)}
+												{@const envelopeWidth = Math.max(20, beatToPixel(timelineEnvelope.duration))}
 											{#if envelope}
 												<div
 													class="timeline-clip timeline-envelope {isSelected ? 'selected' : ''} {isDraggingClip?.id === timelineEnvelope.id && isDraggingClip?.type === 'envelope' ? 'dragging' : ''}"
 													style="
-														left: {beatToPixel(timelineEnvelope.startBeat)}px;
-														width: {Math.max(20, beatToPixel(timelineEnvelope.duration))}px;
+														left: {envelopeLeft}px;
+														width: {envelopeWidth}px;
 														background: {envelope.color}80;
 														border-color: {envelope.color};
 													"
@@ -1206,7 +1293,8 @@
 													<div class="clip-resize-handle-right" title="Drag to resize right edge"></div>
 												</div>
 											{/if}
-										{/each}
+											{/each}
+										{/key}
 									{/if}
 								</div>
 							</div>

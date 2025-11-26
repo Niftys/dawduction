@@ -43,7 +43,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		};
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
 		this.playbackController.setTempo(bpm);
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
@@ -56,7 +56,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 		
 		// Delegate to ProjectManager
-		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId);
+		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks);
 		
 		// Initialize track state
 		this.trackState.initializeTracks(tracks);
@@ -85,32 +85,38 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			// Update track state
 			this.trackState.updateTrack(trackId, updatedTrack);
 			
-			// If instrument type changed, remove old synth and create new one immediately
-			if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
-				this.synthManager.removeSynth(trackId);
-				
-				// Create new synth immediately to avoid audio gaps during playback
-				// Extract patternId from trackId if it's a pattern track
-				// Format: __pattern_{patternId}_{instrumentId}
-				let patternId = null;
-				if (trackId && trackId.startsWith('__pattern_')) {
-					// Remove '__pattern_' prefix to get '{patternId}_{instrumentId}'
-					const withoutPrefix = trackId.substring('__pattern_'.length);
-					// Split by '_' to get [patternId, instrumentId]
-					const parts = withoutPrefix.split('_');
-					if (parts.length >= 1) {
-						patternId = parts[0]; // patternId is the first part after prefix
-					}
+		// If instrument type changed, create new synth to replace old one seamlessly
+		if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
+			// Extract patternId from trackId if it's a pattern track
+			// Format: __pattern_{patternId}_{instrumentId}
+			let patternId = null;
+			if (trackId && trackId.startsWith('__pattern_')) {
+				// Remove '__pattern_' prefix to get '{patternId}_{instrumentId}'
+				const withoutPrefix = trackId.substring('__pattern_'.length);
+				// Split by '_' to get [patternId, instrumentId]
+				const parts = withoutPrefix.split('_');
+				if (parts.length >= 1) {
+					patternId = parts[0]; // patternId is the first part after prefix
 				}
-				
-				// Force creation of new synth with updated instrument type
-				this.synthManager.getOrCreateSynth(trackId, patternId);
 			}
 			
-			// If pattern tree changed, update it in real-time
-			if (updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
-				this.updatePatternTree(trackId, updatedTrack.patternTree);
+			// Remove old synth first to force creation of new one with new instrument type
+			this.synthManager.removeSynth(trackId);
+			
+			// Create new synth with updated instrument type
+			// The track has already been updated in projectManager, so getOrCreateSynth will use the new type
+			this.synthManager.getOrCreateSynth(trackId, patternId);
+			
+			// Update synth settings to match the new track settings
+			if (updatedTrack.settings) {
+				this.synthManager.updateSynthSettings(trackId, updatedTrack.settings);
 			}
+		}
+			
+		// If pattern tree changed, update it in real-time
+		if (oldTrack && updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
+			this.updatePatternTree(trackId, updatedTrack.patternTree);
+		}
 		} else {
 			// Track doesn't exist yet, add it
 			this.projectManager.addTrack(updatedTrack);
@@ -138,6 +144,10 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 
 	updateTrackVolume(trackId, volume) {
 		this.trackState.setVolume(trackId, volume);
+	}
+
+	updateTimelineTrackVolume(trackId, volume) {
+		this.projectManager.updateTimelineTrackVolume(trackId, volume);
 	}
 
 	updateTrackEvents(trackId, events) {

@@ -218,11 +218,14 @@ function handleAddChildKey(
 	}
 	
 	// Update pattern tree in engine for real-time audio updates
-	updateEnginePatternTree(engine, createUpdateContext({
-		patternId: foundPatternId,
-		trackId: foundTrackId,
-		instrumentId: foundInstrumentId,
-		selection: selectionState
-	}));
+	// Use a small delay to ensure store update completes
+	setTimeout(() => {
+		updateEnginePatternTree(engine, createUpdateContext({
+			patternId: foundPatternId,
+			trackId: foundTrackId,
+			instrumentId: foundInstrumentId,
+			selection: selectionState
+		}));
+	}, 0);
 }
 

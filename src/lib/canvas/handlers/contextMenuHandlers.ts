@@ -96,7 +96,10 @@ function handleAddChild(
 	}
 	
 	// Update pattern tree in engine for real-time audio updates
-	updateEnginePatternTree(engine, createUpdateContext({ menu }));
+	// Use a small delay to ensure store update completes
+	setTimeout(() => {
+		updateEnginePatternTree(engine, createUpdateContext({ menu }));
+	}, 0);
 }
 
 /**

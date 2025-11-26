@@ -32,6 +32,20 @@ class AudioMixer {
 				let trackVolume = this.trackStateManager.getVolume(trackId);
 				let trackPan = this.trackStateManager.getPan(trackId);
 				
+				// Apply timeline track volume if this audio track belongs to a timeline track
+				if (this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
+					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
+						if (audioTrackIds.includes(trackId)) {
+							// This audio track belongs to a timeline track, apply timeline track volume
+							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+							if (timelineTrack && timelineTrack.volume !== undefined) {
+								trackVolume *= timelineTrack.volume;
+							}
+							break;
+						}
+					}
+				}
+				
 				// Get pattern ID from track ID (if it's a pattern track)
 				// Also check processor's patternToTrackId map for reverse lookup
 				// And check if synth has a stored patternId

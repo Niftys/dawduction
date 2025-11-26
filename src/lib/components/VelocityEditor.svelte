@@ -24,11 +24,38 @@
 	
 	// Check if we should show the velocity editor
 	$: shouldShow = (() => {
-		if (!project || !selection.selectedTrackId || selection.selectedNodes.size < 2) {
+		if (!project || selection.selectedNodes.size < 2) {
 			return false;
 		}
 		
-		const track = project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId);
+		// Check if we have a track (standalone instrument) or pattern instrument
+		let track = null;
+		if (selection.selectedTrackId) {
+			track = project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId);
+		}
+		
+		// If no standalone track, check if we have a pattern instrument
+		if (!track && selection.selectedPatternId && selection.selectedInstrumentId) {
+			const pattern = project.patterns?.find((p: any) => p.id === selection.selectedPatternId);
+			if (pattern) {
+				const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: (pattern.instrumentType && pattern.patternTree ? [{
+						id: pattern.id,
+						instrumentType: pattern.instrumentType,
+						patternTree: pattern.patternTree,
+						settings: pattern.settings || {},
+						instrumentSettings: pattern.instrumentSettings,
+						color: pattern.color || '#7ab8ff',
+						volume: pattern.volume ?? 1.0,
+						pan: pattern.pan ?? 0.0,
+						mute: pattern.mute,
+						solo: pattern.solo
+					}] : []);
+				track = instruments.find((inst: any) => inst.id === selection.selectedInstrumentId) || instruments[0] || null;
+			}
+		}
+		
 		if (!track) return false;
 		
 		// Show for non-melodic instruments
@@ -52,21 +79,51 @@
 		}
 	}
 	
-	// Get selected nodes for the current track
+	// Get selected nodes for the current instrument (standalone or pattern)
 	$: selectedNodes = (() => {
-		if (!shouldShow || !project || !selection.selectedTrackId) return [];
+		if (!shouldShow || !project) return [];
 		
-		const track = project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId);
+		// Check if we have a track (standalone instrument) or pattern instrument
+		let track = null;
+		if (selection.selectedTrackId) {
+			track = project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId);
+		}
+		
+		// If no standalone track, check if we have a pattern instrument
+		if (!track && selection.selectedPatternId && selection.selectedInstrumentId) {
+			const pattern = project.patterns?.find((p: any) => p.id === selection.selectedPatternId);
+			if (pattern) {
+				const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: (pattern.instrumentType && pattern.patternTree ? [{
+						id: pattern.id,
+						instrumentType: pattern.instrumentType,
+						patternTree: pattern.patternTree,
+						settings: pattern.settings || {},
+						instrumentSettings: pattern.instrumentSettings,
+						color: pattern.color || '#7ab8ff',
+						volume: pattern.volume ?? 1.0,
+						pan: pattern.pan ?? 0.0,
+						mute: pattern.mute,
+						solo: pattern.solo
+					}] : []);
+				track = instruments.find((inst: any) => inst.id === selection.selectedInstrumentId) || instruments[0] || null;
+			}
+		}
+		
 		if (!track) return [];
 		
 		const nodes: Array<{ node: PatternNode; nodeId: string; index: number }> = [];
 		let index = 0;
 		
-		// Helper to find nodes in tree
+		// Helper to find leaf nodes (childmost nodes) in tree
+		// Only include nodes that are selected AND have no children (leaf nodes)
 		const findNodes = (node: PatternNode): void => {
-			if (selection.selectedNodes.has(node.id)) {
+			// Only add if selected AND is a leaf node (no children)
+			if (selection.selectedNodes.has(node.id) && (!node.children || node.children.length === 0)) {
 				nodes.push({ node, nodeId: node.id, index: index++ });
 			}
+			// Continue traversing children
 			for (const child of node.children) {
 				findNodes(child);
 			}
@@ -94,6 +151,7 @@
 	$: totalRowsHeight = velocityRows.length * ROW_HEIGHT;
 	
 	// Auto-scroll to center on selected velocities when editor first opens
+	// If velocities are high (>= 95%), ensure 100% is visible at the top
 	$: if (shouldShow && !previousShouldShow && selectedNodes.length > 0) {
 		hasAutoScrolled = false;
 		previousShouldShow = true;
@@ -101,9 +159,19 @@
 		setTimeout(() => {
 			if (gridContainer && scaleContainer && selectedNodes.length > 0) {
 				const velocities = selectedNodes.map(({ node }) => node.velocity ?? 1.0);
-				const centerVelocity = (Math.min(...velocities) + Math.max(...velocities)) / 2;
+				const maxVelocity = Math.max(...velocities);
+				const centerVelocity = (Math.min(...velocities) + maxVelocity) / 2;
 				const centerRow = Math.round(centerVelocity * VELOCITY_STEPS);
-				const targetScroll = Math.max(0, ((VELOCITY_STEPS - centerRow) * ROW_HEIGHT) - (gridContainer.clientHeight / 2));
+				
+				let targetScroll: number;
+				// If max velocity is >= 95%, scroll to show 100% at the top
+				if (maxVelocity >= 0.95) {
+					// Scroll to top (0) to show 100% at the very top
+					targetScroll = 0;
+				} else {
+					// Otherwise, center on selected velocities
+					targetScroll = Math.max(0, ((VELOCITY_STEPS - centerRow) * ROW_HEIGHT) - (gridContainer.clientHeight / 2));
+				}
 				
 				scaleContainer.scrollTop = targetScroll;
 				gridContainer.scrollTop = targetScroll;
@@ -136,12 +204,20 @@
 	}
 	
 	function updateNodeVelocity(nodeId: string, newVelocity: number) {
-		if (!project || !selection.selectedTrackId) return;
+		if (!project) return;
 		
 		// Clamp velocity to valid range
 		const clampedVelocity = Math.max(0, Math.min(1, newVelocity));
 		
-		projectStore.updateNodeVelocity(selection.selectedTrackId, nodeId, clampedVelocity);
+		// Update velocity for standalone instrument or pattern instrument
+		if (selection.selectedTrackId) {
+			projectStore.updateNodeVelocity(selection.selectedTrackId, nodeId, clampedVelocity);
+		} else if (selection.selectedPatternId && selection.selectedInstrumentId) {
+			projectStore.updatePatternNodeVelocity(selection.selectedPatternId, nodeId, clampedVelocity, selection.selectedInstrumentId);
+		} else {
+			return;
+		}
+		
 		window.dispatchEvent(new CustomEvent('reloadProject'));
 	}
 	
@@ -180,10 +256,38 @@
 		};
 	});
 	
-	// Get selected track for color
-	$: selectedTrack = shouldShow && project && selection.selectedTrackId
-		? project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId)
-		: null;
+	// Get selected track/instrument for color
+	$: selectedTrack = (() => {
+		if (!shouldShow || !project) return null;
+		
+		// Check if we have a track (standalone instrument) or pattern instrument
+		if (selection.selectedTrackId) {
+			return project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId) || null;
+		}
+		
+		if (selection.selectedPatternId && selection.selectedInstrumentId) {
+			const pattern = project.patterns?.find((p: any) => p.id === selection.selectedPatternId);
+			if (pattern) {
+				const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: (pattern.instrumentType && pattern.patternTree ? [{
+						id: pattern.id,
+						instrumentType: pattern.instrumentType,
+						patternTree: pattern.patternTree,
+						settings: pattern.settings || {},
+						instrumentSettings: pattern.instrumentSettings,
+						color: pattern.color || '#7ab8ff',
+						volume: pattern.volume ?? 1.0,
+						pan: pattern.pan ?? 0.0,
+						mute: pattern.mute,
+						solo: pattern.solo
+					}] : []);
+				return instruments.find((inst: any) => inst.id === selection.selectedInstrumentId) || instruments[0] || null;
+			}
+		}
+		
+		return null;
+	})();
 </script>
 
 {#if shouldShow && selectedNodes.length > 0}

@@ -663,15 +663,24 @@ class ProjectManager {
 		this.baseMeterTrackId = null;
 		this.isArrangementView = false;
 		this.patternToTrackId = new Map();
+		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track ID to array of audio track IDs
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
 		this.tracks = tracks;
 		this.events = events || [];
 		this.timeline = timeline || null;
 		this.effects = effects || [];
 		this.envelopes = envelopes || [];
 		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
+		
+		// Build timeline track to audio tracks mapping
+		this.timelineTrackToAudioTracks.clear();
+		if (timelineTrackToAudioTracks && Array.isArray(timelineTrackToAudioTracks)) {
+			for (const [timelineTrackId, audioTrackIds] of timelineTrackToAudioTracks) {
+				this.timelineTrackToAudioTracks.set(timelineTrackId, audioTrackIds);
+			}
+		}
 		
 		// Debug: Log project load
 		this.processor.port.postMessage({
@@ -743,7 +752,48 @@ class ProjectManager {
 		if (!track || !track.patternTree) return;
 		
 		// Re-flatten events for this track
-		const { flattenTrackPattern } = require('../utils/eventFlatten');
+		// Inline flattenTrackPattern function (can't use require in AudioWorklet)
+		const flattenTree = (node, parentDuration, startTime, instrumentId) => {
+			// Leaf node - create event
+			if (!node.children || node.children.length === 0) {
+				// Check if this is the root node (empty pattern)
+				if (parentDuration === node.division && startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
+					return [];
+				}
+				// Real leaf node - create event
+				return [{
+					time: startTime,
+					velocity: node.velocity !== undefined ? node.velocity : 1.0,
+					pitch: node.pitch !== undefined ? node.pitch : 60,
+					instrumentId
+				}];
+			}
+			
+			// Calculate total division sum for proportional distribution
+			const totalDivision = node.children.reduce((sum, child) => sum + (child.division || 1), 0);
+			
+			if (totalDivision === 0) {
+				return [];
+			}
+			
+			// Recursively process children with proportional timing
+			let currentTime = startTime;
+			const events = [];
+			
+			for (const child of node.children) {
+				const childDivision = child.division || 1;
+				const childDuration = parentDuration * (childDivision / totalDivision);
+				events.push(...flattenTree(child, childDuration, currentTime, instrumentId));
+				currentTime += childDuration;
+			}
+			
+			return events;
+		};
+		
+		const flattenTrackPattern = (rootNode, trackId) => {
+			return flattenTree(rootNode, rootNode.division, 0.0, trackId);
+		};
+		
 		const newEvents = flattenTrackPattern(track.patternTree, trackId);
 		
 		// Add new events
@@ -802,6 +852,23 @@ class ProjectManager {
 		} else {
 			this.tracks.push(track);
 		}
+	}
+
+	updateTimelineTrackVolume(trackId, volume) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.volume = volume;
+			}
+		}
+	}
+
+	getTimelineTrackVolume(trackId) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			return track?.volume ?? 1.0;
+		}
+		return 1.0;
 	}
 }
 
@@ -1032,6 +1099,20 @@ class AudioMixer {
 				let trackVolume = this.trackStateManager.getVolume(trackId);
 				let trackPan = this.trackStateManager.getPan(trackId);
 				
+				// Apply timeline track volume if this audio track belongs to a timeline track
+				if (this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
+					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
+						if (audioTrackIds.includes(trackId)) {
+							// This audio track belongs to a timeline track, apply timeline track volume
+							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+							if (timelineTrack && timelineTrack.volume !== undefined) {
+								trackVolume *= timelineTrack.volume;
+							}
+							break;
+						}
+					}
+				}
+				
 				// Get pattern ID from track ID (if it's a pattern track)
 				// Also check processor's patternToTrackId map for reverse lookup
 				// And check if synth has a stored patternId
@@ -1234,7 +1315,7 @@ class MessageHandler {
 	handle(message) {
 		switch (message.type) {
 		case 'loadProject':
-			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId);
+			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId, message.timelineTrackToAudioTracks);
 			break;
 			case 'setTransport':
 				this.processor.setTransport(message.state, message.position);
@@ -1268,6 +1349,9 @@ class MessageHandler {
 			break;
 		case 'removeTrack':
 			this.processor.removeTrack(message.trackId);
+			break;
+		case 'updateTimelineTrackVolume':
+			this.processor.updateTimelineTrackVolume(message.trackId, message.volume);
 			break;
 		}
 	}
@@ -1368,7 +1452,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		};
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
 		this.playbackController.setTempo(bpm);
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
@@ -1381,7 +1465,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 		
 		// Delegate to ProjectManager
-		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId);
+		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks);
 		
 		// Initialize track state
 		this.trackState.initializeTracks(tracks);
@@ -1410,32 +1494,38 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			// Update track state
 			this.trackState.updateTrack(trackId, updatedTrack);
 			
-			// If instrument type changed, remove old synth and create new one immediately
-			if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
-				this.synthManager.removeSynth(trackId);
-				
-				// Create new synth immediately to avoid audio gaps during playback
-				// Extract patternId from trackId if it's a pattern track
-				// Format: __pattern_{patternId}_{instrumentId}
-				let patternId = null;
-				if (trackId && trackId.startsWith('__pattern_')) {
-					// Remove '__pattern_' prefix to get '{patternId}_{instrumentId}'
-					const withoutPrefix = trackId.substring('__pattern_'.length);
-					// Split by '_' to get [patternId, instrumentId]
-					const parts = withoutPrefix.split('_');
-					if (parts.length >= 1) {
-						patternId = parts[0]; // patternId is the first part after prefix
-					}
+		// If instrument type changed, create new synth to replace old one seamlessly
+		if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
+			// Extract patternId from trackId if it's a pattern track
+			// Format: __pattern_{patternId}_{instrumentId}
+			let patternId = null;
+			if (trackId && trackId.startsWith('__pattern_')) {
+				// Remove '__pattern_' prefix to get '{patternId}_{instrumentId}'
+				const withoutPrefix = trackId.substring('__pattern_'.length);
+				// Split by '_' to get [patternId, instrumentId]
+				const parts = withoutPrefix.split('_');
+				if (parts.length >= 1) {
+					patternId = parts[0]; // patternId is the first part after prefix
 				}
-				
-				// Force creation of new synth with updated instrument type
-				this.synthManager.getOrCreateSynth(trackId, patternId);
 			}
 			
-			// If pattern tree changed, update it in real-time
-			if (updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
-				this.updatePatternTree(trackId, updatedTrack.patternTree);
+			// Remove old synth first to force creation of new one with new instrument type
+			this.synthManager.removeSynth(trackId);
+			
+			// Create new synth with updated instrument type
+			// The track has already been updated in projectManager, so getOrCreateSynth will use the new type
+			this.synthManager.getOrCreateSynth(trackId, patternId);
+			
+			// Update synth settings to match the new track settings
+			if (updatedTrack.settings) {
+				this.synthManager.updateSynthSettings(trackId, updatedTrack.settings);
 			}
+		}
+			
+		// If pattern tree changed, update it in real-time
+		if (oldTrack && updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
+			this.updatePatternTree(trackId, updatedTrack.patternTree);
+		}
 		} else {
 			// Track doesn't exist yet, add it
 			this.projectManager.addTrack(updatedTrack);
@@ -1463,6 +1553,10 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 
 	updateTrackVolume(trackId, volume) {
 		this.trackState.setVolume(trackId, volume);
+	}
+
+	updateTimelineTrackVolume(trackId, volume) {
+		this.projectManager.updateTimelineTrackVolume(trackId, volume);
 	}
 
 	updateTrackEvents(trackId, events) {

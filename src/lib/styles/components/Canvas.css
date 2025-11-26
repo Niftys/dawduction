@@ -12,6 +12,11 @@
 	top: 310px; /* Toolbar (60px) + MIDI Editor (250px) */
 }
 
+/* When on pattern page with editor visible, account for pattern header */
+:global(.pattern-editor) :global(body.midi-editor-visible) .canvas {
+	top: 360px; /* Toolbar (60px) + Pattern Header (50px) + MIDI Editor (250px) */
+}
+
 .canvas.grabbing {
 	cursor: grabbing !important;
 }

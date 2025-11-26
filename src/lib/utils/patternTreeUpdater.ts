@@ -37,8 +37,12 @@ export function updateEnginePatternTree(
 	}
 
 	// Get the latest project from the store
+	// Use get() method if available, otherwise subscribe to get current value
 	let currentProject: any = null;
-	projectStore.subscribe((p) => (currentProject = p))();
+	const unsubscribe = projectStore.subscribe((p) => {
+		currentProject = p;
+	});
+	unsubscribe(); // Unsubscribe immediately after getting the value
 	
 	if (!currentProject) {
 		console.warn('[PatternTreeUpdater] No project available');

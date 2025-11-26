@@ -357,8 +357,8 @@ function createProjectStore() {
 						x: grandchildX,
 						y: grandchildY,
 						children: [],
-						velocity: 1.0,
-						pitch: 60
+						velocity: childNode.velocity !== undefined ? childNode.velocity : 1.0, // Inherit from parent or default
+						pitch: childNode.pitch !== undefined ? childNode.pitch : 60 // Inherit from parent or default
 					});
 				}
 				
@@ -542,14 +542,15 @@ function createProjectStore() {
 						const addChild = (node: PatternNode): PatternNode => {
 							if (node.id === parentNodeId) {
 								// Create new child first
+								// Inherit velocity and pitch from parent if they exist
 								const newChild: PatternNode = {
 									id: crypto.randomUUID(),
 									division,
 									x: 0, // Will be calculated below
 									y: 0, // Will be calculated below
 									children: [],
-									velocity: 1.0, // Default velocity (100%)
-									pitch: 60 // Default pitch (Middle C)
+									velocity: node.velocity !== undefined ? node.velocity : 1.0, // Inherit from parent or default to 100%
+									pitch: node.pitch !== undefined ? node.pitch : 60 // Inherit from parent or default to Middle C
 								};
 								
 								// Now we have all children (existing + new)
@@ -945,6 +946,7 @@ function createProjectStore() {
 				name: name || `${defaultNames[type]} ${existingTracks.filter((t: TimelineTrack) => t.type === type).length + 1}`,
 				patternId,
 				order: maxOrder + 1,
+				volume: 1.0, // Default volume
 				createdAt: now
 			};
 		},
@@ -1552,14 +1554,15 @@ function createProjectStore() {
 						const addChild = (node: PatternNode): PatternNode => {
 							if (node.id === parentNodeId) {
 								// Create new child first
+								// Inherit velocity and pitch from parent if they exist
 								const newChild: PatternNode = {
 									id: crypto.randomUUID(),
 									division,
 									x: 0, // Will be calculated below
 									y: 0, // Will be calculated below
 									children: [],
-									velocity: 1.0,
-									pitch: 60
+									velocity: node.velocity !== undefined ? node.velocity : 1.0, // Inherit from parent or default to 100%
+									pitch: node.pitch !== undefined ? node.pitch : 60 // Inherit from parent or default to Middle C
 								};
 								
 								// Now we have all children (existing + new)

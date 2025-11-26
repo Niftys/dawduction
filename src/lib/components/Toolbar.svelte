@@ -7,30 +7,63 @@
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
 	import { viewStore } from '$lib/stores/viewStore';
-	import { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
-	import { recordProject, exportBufferToWAV } from '$lib/audio/utils/audioExport';
-	import type { Pattern } from '$lib/types/pattern';
-	import type { Pattern } from '$lib/types/pattern';
+import { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
+import { recordProject, exportBufferToWAV } from '$lib/audio/utils/audioExport';
+import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
+import type { Pattern } from '$lib/types/pattern';
 
 	let engine: EngineWorklet | null = null;
 	let isPlaying = false;
 	let transportState: 'play' | 'stop' | 'pause' = 'stop'; // Track actual transport state
-	let bpm = 120;
 	let canUndo = false;
 	let canRedo = false;
+	let isMuted = false;
+	let isSoloed = false;
 	
 	// Reactive project for base meter selection
 	$: project = $projectStore;
 	$: selection = $selectionStore;
 	$: viewMode = $viewStore;
+	// Initialize BPM from project store, default to 120 if not set
+	$: bpm = project?.bpm ?? 120;
 	$: selectedTrack = project?.standaloneInstruments?.find((i) => i.id === selection.selectedTrackId);
 	$: selectedPattern = selection.selectedPatternId ? project?.patterns?.find((p) => p.id === selection.selectedPatternId) : null;
 	// For pattern view, get the selected instrument if one is selected
-	$: selectedInstrument = selectedPattern && selection.selectedInstrumentId 
-		? projectStore.getPatternInstruments(selectedPattern).find((inst: any) => inst.id === selection.selectedInstrumentId)
-		: null;
-	$: isMuted = selectedTrack?.mute ?? selectedPattern?.mute ?? selectedInstrument?.mute ?? false;
-	$: isSoloed = selectedTrack?.solo ?? selectedPattern?.solo ?? selectedInstrument?.solo ?? false;
+	// Explicitly depend on project and selectedPattern to ensure it updates when instruments change
+	// Force reactivity by explicitly accessing pattern.updatedAt and pattern.instruments
+	$: selectedInstrument = (() => {
+		if (!project || !selectedPattern || !selection.selectedInstrumentId) return null;
+		// Force reactivity by accessing pattern properties
+		const _updatedAt = selectedPattern.updatedAt;
+		const _instruments = selectedPattern.instruments;
+		return projectStore.getPatternInstruments(selectedPattern).find((inst: any) => inst.id === selection.selectedInstrumentId);
+	})();
+	
+	// Reactive statements for mute/solo state
+	// Explicitly depend on project, selectedPattern, and selectedInstrument to ensure updates
+	// Force reactivity by explicitly accessing the mute/solo properties
+	$: {
+		// Force reactivity by accessing project
+		const _project = project;
+		const _selectedPattern = selectedPattern;
+		const _selectedInstrument = selectedInstrument;
+		const _selectedTrack = selectedTrack;
+		
+		if (_selectedTrack) {
+			isMuted = _selectedTrack.mute ?? false;
+			isSoloed = _selectedTrack.solo ?? false;
+		} else if (_selectedPattern && _selectedInstrument) {
+			// Explicitly access the properties to ensure reactivity
+			isMuted = _selectedInstrument.mute ?? false;
+			isSoloed = _selectedInstrument.solo ?? false;
+		} else if (_selectedPattern) {
+			isMuted = _selectedPattern.mute ?? false;
+			isSoloed = _selectedPattern.solo ?? false;
+		} else {
+			isMuted = false;
+			isSoloed = false;
+		}
+	}
 	
 	// Subscribe to history state changes for undo/redo button states
 	projectStore.subscribeHistory((state) => {
@@ -165,13 +198,14 @@
 		engine?.destroy();
 	});
 
-	// Reactive statement to update BPM when it changes
-	$: if (engine && bpm) {
-		engine.setTempo(bpm);
-		projectStore.update((p) => {
-			if (p) p.bpm = bpm;
-			return p;
-		});
+	// Track last BPM to avoid infinite loops
+	let lastBpmUpdate = 0;
+	
+	// Reactive statement to sync BPM from project store to engine
+	// This ensures the engine always uses the project's BPM
+	$: if (engine && project?.bpm && project.bpm !== lastBpmUpdate) {
+		lastBpmUpdate = project.bpm;
+		engine.setTempo(project.bpm);
 	}
 
 	// Reload project when view mode changes (always, not just when playing)
@@ -408,7 +442,8 @@
 	function toggleMute() {
 		if (selectedPattern && selection.selectedInstrumentId) {
 			// Pattern view: update the specific instrument
-			const newMuteState = !isMuted;
+			const currentMuteState = selectedInstrument?.mute ?? false;
+			const newMuteState = !currentMuteState;
 			projectStore.updatePatternInstrument(selectedPattern.id, selection.selectedInstrumentId, { mute: newMuteState });
 			
 			// Update engine in real-time
@@ -418,7 +453,8 @@
 			}
 		} else if (selectedTrack) {
 			// Arrangement view: update the standalone instrument
-			const newMuteState = !isMuted;
+			const currentMuteState = selectedTrack.mute ?? false;
+			const newMuteState = !currentMuteState;
 			projectStore.updateStandaloneInstrument(selectedTrack.id, { mute: newMuteState });
 			
 			// Update engine in real-time
@@ -431,7 +467,8 @@
 	function toggleSolo() {
 		if (selectedPattern && selection.selectedInstrumentId) {
 			// Pattern view: update the specific instrument
-			const newSoloState = !isSoloed;
+			const currentSoloState = selectedInstrument?.solo ?? false;
+			const newSoloState = !currentSoloState;
 			
 			// If soloing, unsolo all other instruments in this pattern first
 			if (newSoloState && engine) {
@@ -446,7 +483,7 @@
 				}
 			}
 			
-			// Update the selected instrument
+			// Update the selected instrument (this handles both soloing and un-soloing)
 			projectStore.updatePatternInstrument(selectedPattern.id, selection.selectedInstrumentId, { solo: newSoloState });
 			
 			// Update engine in real-time
@@ -456,7 +493,8 @@
 			}
 		} else if (selectedTrack) {
 			// Arrangement view: update the standalone instrument
-			const newSoloState = !isSoloed;
+			const currentSoloState = selectedTrack.solo ?? false;
+			const newSoloState = !currentSoloState;
 			
 			// If soloing, unsolo all other standalone instruments first
 			if (newSoloState && project && engine) {
@@ -469,7 +507,7 @@
 				}
 			}
 			
-			// Update the selected standalone instrument
+			// Update the selected standalone instrument (this handles both soloing and un-soloing)
 			projectStore.updateStandaloneInstrument(selectedTrack.id, { solo: newSoloState });
 			
 			// Update engine in real-time
@@ -540,13 +578,74 @@
 		{#if viewMode === 'arrangement' || (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/))}
 			<div class="bpm-control">
 				<label for="bpm-input">BPM</label>
-				<input
-					id="bpm-input"
-					type="number"
-					bind:value={bpm}
-					min="20"
-					max="500"
-				/>
+				<div class="number-input-wrapper">
+					<input
+						id="bpm-input"
+						type="number"
+						bind:value={bpm}
+						min="20"
+						max="500"
+						on:input={() => {
+							// Update project store immediately when BPM changes
+							projectStore.update((p) => {
+								if (p) {
+									p.bpm = bpm;
+								}
+								return p;
+							});
+							// Update engine tempo immediately
+							if (engine) {
+								engine.setTempo(bpm);
+							}
+						}}
+					/>
+					<div class="number-input-arrows">
+						<button
+							type="button"
+							class="arrow-button arrow-up"
+							on:click={() => {
+								const newBpm = Math.min(500, bpm + 1);
+								bpm = newBpm;
+								projectStore.update((p) => {
+									if (p) {
+										p.bpm = newBpm;
+									}
+									return p;
+								});
+								if (engine) {
+									engine.setTempo(newBpm);
+								}
+							}}
+							title="Increase BPM"
+						>
+							<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<path d="M5 2L8 6H2L5 2Z" fill="currentColor"/>
+							</svg>
+						</button>
+						<button
+							type="button"
+							class="arrow-button arrow-down"
+							on:click={() => {
+								const newBpm = Math.max(20, bpm - 1);
+								bpm = newBpm;
+								projectStore.update((p) => {
+									if (p) {
+										p.bpm = newBpm;
+									}
+									return p;
+								});
+								if (engine) {
+									engine.setTempo(newBpm);
+								}
+							}}
+							title="Decrease BPM"
+						>
+							<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+								<path d="M5 8L2 4H8L5 8Z" fill="currentColor"/>
+							</svg>
+						</button>
+					</div>
+				</div>
 			</div>
 		{/if}
 		{#if typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/)}
@@ -555,30 +654,152 @@
 			{#if currentPattern}
 				<div class="base-meter-control">
 					<label for="base-meter-input">Base Meter</label>
-					<input
-						id="base-meter-input"
-						type="number"
-						value={currentPattern.baseMeter || 4}
-						min="1"
-						max="32"
-						on:change={(e) => {
-							const baseMeter = parseInt(e.currentTarget.value) || 4;
-							if (currentPattern) {
-								// Update both the baseMeter property and the root node's division
-								// This ensures the pattern timing scales correctly
-								const updatedPatternTree = {
-									...currentPattern.patternTree,
-									division: baseMeter
-								};
-								projectStore.updatePattern(currentPattern.id, { 
-									baseMeter,
-									patternTree: updatedPatternTree
-								});
-								window.dispatchEvent(new CustomEvent('reloadProject'));
-							}
-						}}
-						title="Base meter/division for this pattern (default loop length)"
-					/>
+					<div class="number-input-wrapper">
+						<input
+							id="base-meter-input"
+							type="number"
+							value={currentPattern.baseMeter || 4}
+							min="1"
+							max="32"
+							on:change={(e) => {
+								const baseMeter = parseInt(e.currentTarget.value) || 4;
+								if (currentPattern && engine) {
+									// Update the baseMeter property
+									// Also update the root node's division for all instruments in the pattern
+									const patternInstruments = projectStore.getPatternInstruments(currentPattern);
+									
+									// Update each instrument's root node division to match the new base meter
+									if (patternInstruments && patternInstruments.length > 0) {
+										for (const instrument of patternInstruments) {
+											if (instrument.patternTree) {
+												// Update the root node's division in the store
+												projectStore.updatePatternTree(
+													currentPattern.id,
+													{
+														...instrument.patternTree,
+														division: baseMeter
+													},
+													instrument.id
+												);
+												
+												// Update the engine in real-time
+												updateEnginePatternTree(engine, createUpdateContext({
+													patternId: currentPattern.id,
+													instrumentId: instrument.id,
+													selection
+												}));
+											}
+										}
+									}
+									
+									// Update the pattern's baseMeter and legacy patternTree (for backward compatibility)
+									const updatedPatternTree = currentPattern.patternTree ? {
+										...currentPattern.patternTree,
+										division: baseMeter
+									} : undefined;
+									
+									projectStore.updatePattern(currentPattern.id, { 
+										baseMeter,
+										patternTree: updatedPatternTree
+									});
+									
+									// Reload project to ensure all changes are applied
+									window.dispatchEvent(new CustomEvent('reloadProject'));
+								}
+							}}
+							title="Base meter/division for this pattern (default loop length)"
+						/>
+						<div class="number-input-arrows">
+							<button
+								type="button"
+								class="arrow-button arrow-up"
+								on:click={() => {
+									const currentBaseMeter = currentPattern.baseMeter || 4;
+									const newBaseMeter = Math.min(32, currentBaseMeter + 1);
+									if (currentPattern && engine) {
+										const patternInstruments = projectStore.getPatternInstruments(currentPattern);
+										if (patternInstruments && patternInstruments.length > 0) {
+											for (const instrument of patternInstruments) {
+												if (instrument.patternTree) {
+													projectStore.updatePatternTree(
+														currentPattern.id,
+														{
+															...instrument.patternTree,
+															division: newBaseMeter
+														},
+														instrument.id
+													);
+													updateEnginePatternTree(engine, createUpdateContext({
+														patternId: currentPattern.id,
+														instrumentId: instrument.id,
+														selection
+													}));
+												}
+											}
+										}
+										const updatedPatternTree = currentPattern.patternTree ? {
+											...currentPattern.patternTree,
+											division: newBaseMeter
+										} : undefined;
+										projectStore.updatePattern(currentPattern.id, { 
+											baseMeter: newBaseMeter,
+											patternTree: updatedPatternTree
+										});
+										window.dispatchEvent(new CustomEvent('reloadProject'));
+									}
+								}}
+								title="Increase Base Meter"
+							>
+								<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path d="M5 2L8 6H2L5 2Z" fill="currentColor"/>
+								</svg>
+							</button>
+							<button
+								type="button"
+								class="arrow-button arrow-down"
+								on:click={() => {
+									const currentBaseMeter = currentPattern.baseMeter || 4;
+									const newBaseMeter = Math.max(1, currentBaseMeter - 1);
+									if (currentPattern && engine) {
+										const patternInstruments = projectStore.getPatternInstruments(currentPattern);
+										if (patternInstruments && patternInstruments.length > 0) {
+											for (const instrument of patternInstruments) {
+												if (instrument.patternTree) {
+													projectStore.updatePatternTree(
+														currentPattern.id,
+														{
+															...instrument.patternTree,
+															division: newBaseMeter
+														},
+														instrument.id
+													);
+													updateEnginePatternTree(engine, createUpdateContext({
+														patternId: currentPattern.id,
+														instrumentId: instrument.id,
+														selection
+													}));
+												}
+											}
+										}
+										const updatedPatternTree = currentPattern.patternTree ? {
+											...currentPattern.patternTree,
+											division: newBaseMeter
+										} : undefined;
+										projectStore.updatePattern(currentPattern.id, { 
+											baseMeter: newBaseMeter,
+											patternTree: updatedPatternTree
+										});
+										window.dispatchEvent(new CustomEvent('reloadProject'));
+									}
+								}}
+								title="Decrease Base Meter"
+							>
+								<svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<path d="M5 8L2 4H8L5 8Z" fill="currentColor"/>
+								</svg>
+							</button>
+						</div>
+					</div>
 				</div>
 			{/if}
 		{/if}
