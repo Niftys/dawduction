@@ -23,6 +23,8 @@ function createProjectStore() {
 	let historyIndex = -1;
 	let isUndoRedo = false; // Flag to prevent saving history during undo/redo
 	let lastSavedState: Project | null = null; // Track last saved state to avoid duplicates
+	let isBatching = false; // Flag to batch operations (e.g., during slider drags)
+	let batchInitialState: Project | null = null; // Initial state when batch started
 	
 	// Internal writable for undo/redo state changes (to trigger reactivity)
 	const { subscribe: subscribeHistory, set: setHistory } = writable({ canUndo: false, canRedo: false });
@@ -95,6 +97,33 @@ function createProjectStore() {
 		let currentProject: Project | null = null;
 		subscribe((p: Project | null) => (currentProject = p))();
 		
+		// If batching, only save history on the first update (initial state)
+		// Subsequent updates during batching won't save to history
+		if (isBatching) {
+			// If this is the first update in the batch, save the initial state
+			if (!batchInitialState && currentProject) {
+				const cloned = cloneProject(currentProject);
+				if (cloned && cloned.id) {
+					batchInitialState = cloned;
+					// Remove any history after current index
+					history = history.slice(0, historyIndex + 1);
+					history.push(cloned);
+					historyIndex++;
+					
+					// Limit history size
+					if (history.length > MAX_HISTORY) {
+						history.shift();
+						historyIndex--;
+					}
+					
+					updateHistoryState();
+				}
+			}
+			// Apply update without saving to history (we'll save final state in endBatch)
+			svelteUpdate(updater);
+			return;
+		}
+		
 		// ALWAYS save current state before update - this is what we'll undo to
 		// This ensures every action is captured, even rapid ones
 		// Only save if we have a valid project (tracks can be empty array)
@@ -158,6 +187,59 @@ function createProjectStore() {
 		subscribe,
 		subscribeHistory, // Expose history state subscription
 		getCurrent, // Helper to get current value without subscribing
+		startBatch: () => {
+			// Start batching operations - saves initial state on first update
+			if (!isBatching) {
+				isBatching = true;
+				batchInitialState = null;
+			}
+		},
+		endBatch: () => {
+			// End batching - saves final state to history
+			if (isBatching) {
+				isBatching = false;
+				// Save final state to history
+				let currentProject: Project | null = null;
+				subscribe((p: Project | null) => (currentProject = p))();
+				
+				if (currentProject) {
+					const proj = currentProject as Project;
+					// Ensure arrays are valid
+					if (!Array.isArray(proj.standaloneInstruments)) {
+						proj.standaloneInstruments = [];
+					}
+					if (!Array.isArray(proj.effects)) {
+						proj.effects = [];
+					}
+					if (!Array.isArray(proj.envelopes)) {
+						proj.envelopes = [];
+					}
+					
+					// Remove any history after current index
+					history = history.slice(0, historyIndex + 1);
+					
+					// Save final state to history
+					const cloned = cloneProject(currentProject);
+					if (cloned && cloned.id) {
+						// Ensure cloned standaloneInstruments is an array
+						if (!Array.isArray(cloned.standaloneInstruments)) {
+							cloned.standaloneInstruments = [];
+						}
+						history.push(cloned);
+						historyIndex++;
+						
+						// Limit history size
+						if (history.length > MAX_HISTORY) {
+							history.shift();
+							historyIndex--;
+						}
+						
+						updateHistoryState();
+					}
+				}
+				batchInitialState = null;
+			}
+		},
 		set: (project: Project | null) => {
 			// Only initialize history on first load, not during undo/redo
 			// Only save valid projects to history

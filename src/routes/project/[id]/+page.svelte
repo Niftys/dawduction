@@ -20,6 +20,7 @@
 	import AutomationCurveEditor from '$lib/components/AutomationCurveEditor.svelte';
 	import { automationStore } from '$lib/stores/automationStore';
 	import { engineStore } from '$lib/stores/engineStore';
+	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
 	import '$lib/styles/components/ProjectView.css';
 	import '$lib/styles/components/ArrangementView.css';
 
@@ -377,7 +378,8 @@
 		// Check if clicking on a resize handle (could be the handle itself or a child)
 		const resizeHandle = target.closest('.clip-resize-handle-left, .clip-resize-handle-right') as HTMLElement;
 		if (resizeHandle) {
-			// Start resizing
+			// Start resizing - begin batching for undo/redo
+			projectStore.startBatch();
 			const side = resizeHandle.classList.contains('clip-resize-handle-left') ? 'left' : 'right';
 			const clipContainer = e.currentTarget as HTMLElement;
 			if (!clipContainer) return;
@@ -394,7 +396,8 @@
 				startX
 			};
 		} else {
-			// Start dragging the clip
+			// Start dragging the clip - begin batching for undo/redo
+			projectStore.startBatch();
 			const clipContainer = e.currentTarget as HTMLElement;
 			if (!clipContainer) return;
 			const rect = clipContainer.closest('.timeline-area')?.getBoundingClientRect();
@@ -497,6 +500,10 @@
 	}
 	
 	function handleTimelineMouseUp() {
+		// End batching if we were dragging or resizing
+		if (isResizing || isDraggingClip) {
+			projectStore.endBatch();
+		}
 		isResizing = null;
 		isDraggingClip = null;
 	}
@@ -773,6 +780,7 @@
 	function getEnvelopesForTrack(trackId: string): TimelineEnvelope[] {
 		return (timeline.envelopes || []).filter((e) => e.trackId === trackId);
 	}
+
 
 	// Generate ruler marks with beats and bars (reactive to zoom)
 	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
@@ -1253,12 +1261,14 @@
 												{@const envelopeLeft = beatToPixel(timelineEnvelope.startBeat)}
 												{@const envelopeWidth = Math.max(20, beatToPixel(timelineEnvelope.duration))}
 											{#if envelope}
+												{@const clipHeight = PATTERN_ROW_HEIGHT - 18}
+												{@const curvePath = generateEnvelopeCurvePath(envelopeWidth, clipHeight, envelope, timelineEnvelope.duration)}
 												<div
 													class="timeline-clip timeline-envelope {isSelected ? 'selected' : ''} {isDraggingClip?.id === timelineEnvelope.id && isDraggingClip?.type === 'envelope' ? 'dragging' : ''}"
 													style="
 														left: {envelopeLeft}px;
 														width: {envelopeWidth}px;
-														background: {envelope.color}80;
+														background: {envelope.color}40;
 														border-color: {envelope.color};
 													"
 													role="button"
@@ -1278,6 +1288,19 @@
 														}
 													}}
 												>
+													<!-- Curve visualization overlay -->
+													<svg
+														class="envelope-curve-visualization"
+														width={envelopeWidth}
+														height={clipHeight}
+														style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1;"
+													>
+														<path
+															d={curvePath}
+															fill={envelope.color}
+															opacity="0.7"
+														/>
+													</svg>
 													<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
 													<span class="clip-label">
 														{envelope.name}

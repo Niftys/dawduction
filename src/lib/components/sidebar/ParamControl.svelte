@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getInputValue } from './sidebarUtils';
 	import { automationStore } from '$lib/stores/automationStore';
+	import { projectStore } from '$lib/stores/projectStore';
 
 	const fallbackId = `param-${Math.random().toString(36).slice(2)}`;
 	export let id: string = fallbackId;
@@ -21,12 +22,28 @@
 	export let automationTimelineInstanceId: string | null = null;
 	export let automationLabel: string | null = null;
 
+	let isDragging = false;
+
 	const handleUpdate = (val: number) => {
 		if (typeof onUpdate === 'function') {
 			onUpdate(val);
 		}
 		if (typeof onChange === 'function') {
 			onChange(val);
+		}
+	};
+
+	const handleMouseDown = () => {
+		if (!isDragging) {
+			isDragging = true;
+			projectStore.startBatch();
+		}
+	};
+
+	const handleMouseUp = () => {
+		if (isDragging) {
+			isDragging = false;
+			projectStore.endBatch();
 		}
 	};
 
@@ -73,6 +90,9 @@
 			{max}
 			{step}
 			value={value}
+			on:mousedown={handleMouseDown}
+			on:mouseup={handleMouseUp}
+			on:mouseleave={handleMouseUp}
 			on:input={(e) => handleUpdate(Number(getInputValue(e)))}
 		/>
 		<input

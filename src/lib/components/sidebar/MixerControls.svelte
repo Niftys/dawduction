@@ -18,6 +18,9 @@
 	let selection: any = null;
 	selectionStore.subscribe((s) => (selection = s));
 
+	let isDraggingVolume = false;
+	let isDraggingPan = false;
+
 	$: activeItem = selectedInstrument || selectedTrack;
 	
 	// Read directly from project store using selection IDs to ensure reactivity
@@ -163,6 +166,24 @@
 			max="2"
 			step="0.01"
 			value={itemVolume}
+			on:mousedown={() => {
+				if (!isDraggingVolume) {
+					isDraggingVolume = true;
+					projectStore.startBatch();
+				}
+			}}
+			on:mouseup={() => {
+				if (isDraggingVolume) {
+					isDraggingVolume = false;
+					projectStore.endBatch();
+				}
+			}}
+			on:mouseleave={() => {
+				if (isDraggingVolume) {
+					isDraggingVolume = false;
+					projectStore.endBatch();
+				}
+			}}
 			on:input={(e) => updateVolume(Number(getInputValue(e)))}
 		/>
 		<input
@@ -192,6 +213,24 @@
 			max="1"
 			step="0.01"
 			value={itemPan}
+			on:mousedown={() => {
+				if (!isDraggingPan) {
+					isDraggingPan = true;
+					projectStore.startBatch();
+				}
+			}}
+			on:mouseup={() => {
+				if (isDraggingPan) {
+					isDraggingPan = false;
+					projectStore.endBatch();
+				}
+			}}
+			on:mouseleave={() => {
+				if (isDraggingPan) {
+					isDraggingPan = false;
+					projectStore.endBatch();
+				}
+			}}
 			on:input={(e) => updatePan(Number(getInputValue(e)))}
 		/>
 		<span class="pan-label pan-label-right" title="Right">R</span>
