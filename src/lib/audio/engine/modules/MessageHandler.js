@@ -49,6 +49,12 @@ class MessageHandler {
 		case 'updateTimelineTrackVolume':
 			this.processor.updateTimelineTrackVolume(message.trackId, message.volume);
 			break;
+		case 'updateEffect':
+			this.processor.updateEffect(message.effectId, message.settings);
+			break;
+		case 'updateEnvelope':
+			this.processor.updateEnvelope(message.envelopeId, message.settings);
+			break;
 		}
 	}
 }

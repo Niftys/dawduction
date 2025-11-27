@@ -219,6 +219,14 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.trackState.setSolo(trackId, solo);
 	}
 
+	updateEffect(effectId, settings) {
+		this.effectsProcessor.updateEffect(effectId, settings);
+	}
+
+	updateEnvelope(envelopeId, settings) {
+		this.envelopesProcessor.updateEnvelope(envelopeId, settings);
+	}
+
 	process(inputs, outputs, parameters) {
 		return this.audioProcessor.process(inputs, outputs, parameters);
 	}

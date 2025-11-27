@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { projectStore } from '$lib/stores/projectStore';
+	import { engineStore } from '$lib/stores/engineStore';
+	import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
 	import type { Effect, Envelope } from '$lib/types/effects';
 	import ParamControl from '$lib/components/sidebar/ParamControl.svelte';
 	import '$lib/styles/components/EffectEnvelopeProperties.css';
@@ -11,6 +13,9 @@
 
 	let project: any;
 	projectStore.subscribe((p) => (project = p));
+
+	let engine: EngineWorklet | null = null;
+	engineStore.subscribe((e) => (engine = e));
 
 	$: effects = project?.effects || [];
 	$: envelopes = project?.envelopes || [];
@@ -30,22 +35,38 @@
 
 	function updateEffectSetting(key: string, value: any) {
 		if (!selectedEffect) return;
+		const newSettings = {
+			...selectedEffect.settings,
+			[key]: value
+		};
+		
+		// Update store
 		projectStore.updateEffect(selectedEffect.id, {
-			settings: {
-				...selectedEffect.settings,
-				[key]: value
-			}
+			settings: newSettings
 		});
+		
+		// Update engine in real-time
+		if (engine) {
+			engine.updateEffect(selectedEffect.id, { [key]: value });
+		}
 	}
 
 	function updateEnvelopeSetting(key: string, value: any) {
 		if (!selectedEnvelope) return;
+		const newSettings = {
+			...selectedEnvelope.settings,
+			[key]: value
+		};
+		
+		// Update store
 		projectStore.updateEnvelope(selectedEnvelope.id, {
-			settings: {
-				...selectedEnvelope.settings,
-				[key]: value
-			}
+			settings: newSettings
 		});
+		
+		// Update engine in real-time
+		if (engine) {
+			engine.updateEnvelope(selectedEnvelope.id, { [key]: value });
+		}
 	}
 
 	function updateTimelineEffectPattern(patternId: string | null) {
@@ -79,15 +100,9 @@
 	}
 
 	// Helper to get automation props for envelope parameters
+	// Returns empty object to hide automation button (envelopes don't need automation editor)
 	function getEnvelopeAutomationProps(parameterKey: string) {
-		if (!selectedEnvelope) return {};
-		return {
-			automationTargetType: 'envelope' as const,
-			automationTargetId: selectedEnvelope.id,
-			automationParameterKey: parameterKey,
-			automationTimelineInstanceId: selectedTimelineEnvelope?.id || null,
-			automationLabel: `${selectedEnvelope.name} - ${parameterKey.charAt(0).toUpperCase() + parameterKey.slice(1)}`
-		};
+		return {};
 	}
 </script>
 
@@ -336,14 +351,46 @@
 			{:else if selectedEnvelope}
 				{#if selectedEnvelope.type === 'volume'}
 					<ParamControl
-						label="Volume"
-						value={selectedEnvelope.settings.volume ?? 1.0}
+						label="Volume Start"
+						value={selectedEnvelope.settings.startValue ?? 0.5}
 						min={0}
 						max={1}
 						step={0.01}
-						onChange={(v) => updateEnvelopeSetting('volume', v)}
-						{...getEnvelopeAutomationProps('volume')}
+						onChange={(v) => updateEnvelopeSetting('startValue', v)}
+						{...getEnvelopeAutomationProps('startValue')}
 					/>
+					<ParamControl
+						label="Volume End"
+						value={selectedEnvelope.settings.endValue ?? 1.0}
+						min={0}
+						max={1}
+						step={0.01}
+						onChange={(v) => updateEnvelopeSetting('endValue', v)}
+						{...getEnvelopeAutomationProps('endValue')}
+					/>
+					<div class="param">
+						<label for="volume-curve">Curve Type</label>
+						<select
+							id="volume-curve"
+							value={selectedEnvelope.settings.curve ?? 'linear'}
+							on:change={(e) => updateEnvelopeSetting('curve', e.currentTarget.value)}
+						>
+							<option value="linear">Linear</option>
+							<option value="exponential">Exponential</option>
+							<option value="logarithmic">Logarithmic</option>
+						</select>
+					</div>
+					<div class="param param-checkbox">
+						<label class="checkbox-label">
+							<input
+								type="checkbox"
+								class="styled-checkbox"
+								checked={selectedEnvelope.settings.reverse ?? false}
+								on:change={(e) => updateEnvelopeSetting('reverse', e.currentTarget.checked)}
+							/>
+							<span>Reverse Direction</span>
+						</label>
+					</div>
 				{:else if selectedEnvelope.type === 'filter'}
 					<ParamControl
 						label="Filter Start"
@@ -363,6 +410,29 @@
 						onChange={(v) => updateEnvelopeSetting('endValue', v)}
 						{...getEnvelopeAutomationProps('endValue')}
 					/>
+					<div class="param">
+						<label for="filter-curve">Curve Type</label>
+						<select
+							id="filter-curve"
+							value={selectedEnvelope.settings.curve ?? 'linear'}
+							on:change={(e) => updateEnvelopeSetting('curve', e.currentTarget.value)}
+						>
+							<option value="linear">Linear</option>
+							<option value="exponential">Exponential</option>
+							<option value="logarithmic">Logarithmic</option>
+						</select>
+					</div>
+					<div class="param param-checkbox">
+						<label class="checkbox-label">
+							<input
+								type="checkbox"
+								class="styled-checkbox"
+								checked={selectedEnvelope.settings.reverse ?? false}
+								on:change={(e) => updateEnvelopeSetting('reverse', e.currentTarget.checked)}
+							/>
+							<span>Reverse Direction</span>
+						</label>
+					</div>
 				{:else if selectedEnvelope.type === 'pitch'}
 					<ParamControl
 						label="Pitch Start"
@@ -382,10 +452,33 @@
 						onChange={(v) => updateEnvelopeSetting('endValue', v)}
 						{...getEnvelopeAutomationProps('endValue')}
 					/>
+					<div class="param">
+						<label for="pitch-curve">Curve Type</label>
+						<select
+							id="pitch-curve"
+							value={selectedEnvelope.settings.curve ?? 'linear'}
+							on:change={(e) => updateEnvelopeSetting('curve', e.currentTarget.value)}
+						>
+							<option value="linear">Linear</option>
+							<option value="exponential">Exponential</option>
+							<option value="logarithmic">Logarithmic</option>
+						</select>
+					</div>
+					<div class="param param-checkbox">
+						<label class="checkbox-label">
+							<input
+								type="checkbox"
+								class="styled-checkbox"
+								checked={selectedEnvelope.settings.reverse ?? false}
+								on:change={(e) => updateEnvelopeSetting('reverse', e.currentTarget.checked)}
+							/>
+							<span>Reverse Direction</span>
+						</label>
+					</div>
 				{:else if selectedEnvelope.type === 'pan'}
 					<ParamControl
 						label="Pan Start"
-						value={selectedEnvelope.settings.startValue ?? 0.0}
+						value={selectedEnvelope.settings.startValue ?? 0.5}
 						min={0}
 						max={1}
 						step={0.01}
@@ -394,13 +487,36 @@
 					/>
 					<ParamControl
 						label="Pan End"
-						value={selectedEnvelope.settings.endValue ?? 1.0}
+						value={selectedEnvelope.settings.endValue ?? 0.5}
 						min={0}
 						max={1}
 						step={0.01}
 						onChange={(v) => updateEnvelopeSetting('endValue', v)}
 						{...getEnvelopeAutomationProps('endValue')}
 					/>
+					<div class="param">
+						<label for="pan-curve">Curve Type</label>
+						<select
+							id="pan-curve"
+							value={selectedEnvelope.settings.curve ?? 'linear'}
+							on:change={(e) => updateEnvelopeSetting('curve', e.currentTarget.value)}
+						>
+							<option value="linear">Linear</option>
+							<option value="exponential">Exponential</option>
+							<option value="logarithmic">Logarithmic</option>
+						</select>
+					</div>
+					<div class="param param-checkbox">
+						<label class="checkbox-label">
+							<input
+								type="checkbox"
+								class="styled-checkbox"
+								checked={selectedEnvelope.settings.reverse ?? false}
+								on:change={(e) => updateEnvelopeSetting('reverse', e.currentTarget.checked)}
+							/>
+							<span>Reverse Direction</span>
+						</label>
+					</div>
 				{/if}
 			{/if}
 		</div>

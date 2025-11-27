@@ -8,12 +8,44 @@ class EffectsProcessor {
 		this.effects = []; // Global effect definitions
 		this.timelineEffects = []; // Timeline effect instances
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
+		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track IDs to audio track IDs
+		this.timelineTracks = []; // Timeline tracks (for looking up patternId on pattern tracks)
+		this.processor = null; // Reference to processor for accessing ProjectManager
 	}
 
-	initialize(effects, timelineEffects, patternToTrackId) {
+	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks) {
 		this.effects = effects || [];
 		this.timelineEffects = timelineEffects || [];
 		this.patternToTrackId = patternToTrackId || new Map();
+		this.timelineTrackToAudioTracks = timelineTrackToAudioTracks || new Map();
+		this.timelineTracks = timelineTracks || [];
+		this.processor = processor || null;
+		
+		// Debug: Log initialization
+		if (this.processor && this.processor.port) {
+			this.processor.port.postMessage({
+				type: 'debug',
+				message: 'EffectsProcessor initialized',
+				data: {
+					effectsCount: this.effects.length,
+					timelineEffectsCount: this.timelineEffects.length,
+					timelineTrackMappingSize: this.timelineTrackToAudioTracks.size
+				}
+			});
+		}
+	}
+
+	/**
+	 * Update effect settings in real-time
+	 * @param {string} effectId - The effect ID to update
+	 * @param {Object} settings - New settings object (will be merged with existing settings)
+	 */
+	updateEffect(effectId, settings) {
+		const effect = this.effects.find(e => e.id === effectId);
+		if (effect) {
+			// Update effect settings
+			effect.settings = { ...effect.settings, ...settings };
+		}
 	}
 
 	/**
@@ -33,6 +65,64 @@ class EffectsProcessor {
 
 		const activeEffects = [];
 
+		// Find which timeline track this audio track belongs to
+		let timelineTrackId = null;
+		if (this.timelineTrackToAudioTracks) {
+			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+				if (audioTrackIds.includes(trackId)) {
+					timelineTrackId = tId;
+					break;
+				}
+			}
+		}
+
+		// Debug: Log effect matching details (occasionally)
+		if (this.processor && this.processor.port && (!this._lastEffectDebugTime || (currentBeat - this._lastEffectDebugTime) > 8)) {
+			this._lastEffectDebugTime = currentBeat;
+			const matchingDetails = this.timelineEffects.map(te => {
+				const startBeat = te.startBeat || 0;
+				const endBeat = startBeat + (te.duration || 0);
+				const isActive = currentBeat >= startBeat && currentBeat < endBeat;
+				let matchStatus = 'not active';
+				if (isActive) {
+					if (te.patternId) {
+						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : `NO MATCH: patternId mismatch (effect=${te.patternId}, track=${patternId})`;
+					} else if (te.trackId) {
+						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : `NO MATCH: trackId mismatch (effect=${te.trackId}, audioTrack=${timelineTrackId})`;
+					} else {
+						matchStatus = 'MATCH (global effect)';
+					}
+				}
+				return {
+					effectId: te.effectId,
+					trackId: te.trackId,
+					patternId: te.patternId,
+					startBeat,
+					duration: te.duration,
+					endBeat,
+					isActive,
+					matchStatus
+				};
+			});
+			this.processor.port.postMessage({
+				type: 'debug',
+				message: 'Effect matching debug',
+				data: {
+					trackId,
+					patternId,
+					timelineTrackId,
+					currentBeat: currentBeat.toFixed(2),
+					timelineEffectsCount: this.timelineEffects.length,
+					timelineEffects: matchingDetails,
+					timelineTrackMapping: Array.from(this.timelineTrackToAudioTracks.entries()).map(([tid, aids]) => ({
+						timelineTrackId: tid,
+						audioTrackIds: aids,
+						includesCurrentTrack: aids.includes(trackId)
+					}))
+				}
+			});
+		}
+
 		// Find timeline effects that are active at this position
 		for (const timelineEffect of this.timelineEffects) {
 			const startBeat = timelineEffect.startBeat || 0;
@@ -40,28 +130,102 @@ class EffectsProcessor {
 
 			// Check if effect is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
-				// Check pattern assignment
+				let shouldApply = false;
+				let matchReason = '';
+
+				// Check pattern assignment first
 				if (timelineEffect.patternId) {
 					// Effect is assigned to a specific pattern
 					if (patternId && timelineEffect.patternId === patternId) {
-						// This effect applies to this pattern
-						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
-						if (effectDef) {
-							activeEffects.push({
-								...effectDef,
-								progress: (currentBeat - startBeat) / (endBeat - startBeat) // 0-1 progress through effect
+						shouldApply = true;
+						matchReason = 'patternId match';
+					} else {
+						matchReason = `patternId mismatch: effect=${timelineEffect.patternId}, track=${patternId}`;
+					}
+				} else if (timelineEffect.trackId) {
+					// Effect is assigned to a specific timeline track
+					// Effects can ONLY be on effect tracks (not pattern or envelope tracks)
+					const effectTimelineTrack = this.timelineTracks.find(t => t.id === timelineEffect.trackId);
+					if (effectTimelineTrack) {
+						if (effectTimelineTrack.type === 'effect') {
+							// Effect is on an effect track - apply globally to all tracks
+							shouldApply = true;
+							matchReason = 'effect track (global)';
+						} else {
+							// Effect is incorrectly placed on a non-effect track (shouldn't happen, but handle gracefully)
+							matchReason = `effect on wrong track type: effect=${timelineEffect.trackId} (type=${effectTimelineTrack.type}, should be 'effect')`;
+						}
+					} else {
+						// Timeline track not found - this shouldn't happen but handle gracefully
+						// Debug: Log this case
+						if (this.processor && this.processor.port && Math.random() < 0.1) {
+							this.processor.port.postMessage({
+								type: 'debug',
+								message: 'Timeline track not found for effect',
+								data: {
+									effectTrackId: timelineEffect.trackId,
+									availableTrackIds: this.timelineTracks.map(t => t.id),
+									timelineTracksCount: this.timelineTracks.length
+								}
 							});
 						}
+						matchReason = `trackId mismatch: effect=${timelineEffect.trackId} (track not found), audioTrack=${timelineTrackId}`;
 					}
 				} else {
-					// Global effect (applies to all tracks/patterns)
-					// Note: trackId matching would require mapping TimelineTrack.id to audio engine trackId
-					// For now, apply global effects to all tracks
+					// Global effect (no trackId or patternId) - applies to all tracks
+					shouldApply = true;
+					matchReason = 'global effect';
+				}
+
+				if (shouldApply) {
 					const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
 					if (effectDef) {
 						activeEffects.push({
 							...effectDef,
-							progress: (currentBeat - startBeat) / (endBeat - startBeat)
+							progress: (currentBeat - startBeat) / (endBeat - startBeat) // 0-1 progress through effect
+						});
+					} else {
+						// Debug: Effect definition not found (throttled to avoid spam)
+						if (this.processor && this.processor.port) {
+							// Track last log time per effect ID to avoid spam
+							const lastLogKey = `missing_effect_${timelineEffect.effectId}`;
+							const lastLogTime = this._missingEffectLogTimes?.[lastLogKey] || 0;
+							if (!this._missingEffectLogTimes) {
+								this._missingEffectLogTimes = {};
+							}
+							
+							// Only log once every 4 beats to avoid infinite loops
+							if (currentBeat - lastLogTime > 4) {
+								this._missingEffectLogTimes[lastLogKey] = currentBeat;
+								this.processor.port.postMessage({
+									type: 'debug',
+									message: 'Effect definition not found',
+									data: { 
+										effectId: timelineEffect.effectId, 
+										availableIds: this.effects.map(e => e.id),
+										matchReason
+									}
+								});
+							}
+						}
+					}
+				} else {
+					// Debug: Log why effect didn't match (occasionally)
+					if (this.processor && this.processor.port && Math.random() < 0.1) {
+						this.processor.port.postMessage({
+							type: 'debug',
+							message: 'Effect not matching',
+							data: {
+								effectId: timelineEffect.effectId,
+								matchReason,
+								effectTrackId: timelineEffect.trackId,
+								effectPatternId: timelineEffect.patternId,
+								audioTrackId: trackId,
+								audioPatternId: patternId,
+								audioTimelineTrackId: timelineTrackId,
+								currentBeat: currentBeat.toFixed(2),
+								effectTimeRange: `${startBeat.toFixed(2)}-${endBeat.toFixed(2)}`
+							}
 						});
 					}
 				}
@@ -80,8 +244,10 @@ class EffectsProcessor {
 	processSample(sample, activeEffects) {
 		let processed = sample;
 
-		for (const effect of activeEffects) {
-			processed = this.applyEffect(processed, effect);
+		if (activeEffects && activeEffects.length > 0) {
+			for (const effect of activeEffects) {
+				processed = this.applyEffect(processed, effect);
+			}
 		}
 
 		return processed;
@@ -96,48 +262,136 @@ class EffectsProcessor {
 	applyEffect(sample, effect) {
 		if (!effect || !effect.settings) return sample;
 
+		const settings = effect.settings;
+		// Get sample rate from processor if available, otherwise use default
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+
 		switch (effect.type) {
 		case 'reverb':
-			// Simple reverb using delay and feedback
-			// This is a placeholder - real reverb would need delay buffers
-			const reverbAmount = effect.settings.amount || 0;
-			return sample * (1 - reverbAmount * 0.3);
+			// Simple reverb using wet/dry mix
+			// Real reverb would need delay buffers, but this provides basic effect
+			const reverbWet = settings.wet !== undefined ? settings.wet : 0.5;
+			const reverbDry = settings.dry !== undefined ? settings.dry : 0.5;
+			const reverbRoomSize = settings.roomSize !== undefined ? settings.roomSize : 0.7;
+			// Make reverb more noticeable - add some resonance/feedback effect
+			const reverbAmount = reverbRoomSize * 0.6; // Increased for more noticeable effect
+			// Add harmonic enhancement and slight delay-like effect to make it more audible
+			const reverbEnhanced = sample * (1 + reverbWet * reverbAmount);
+			// Add slight feedback for more realistic reverb tail
+			const reverbFeedback = this._reverbFeedback || 0;
+			this._reverbFeedback = reverbEnhanced * 0.3 * reverbRoomSize;
+			return sample * reverbDry + (reverbEnhanced + reverbFeedback * 0.5) * reverbWet;
 
 		case 'delay':
-			// Delay would need delay buffers - placeholder for now
-			const delayAmount = effect.settings.amount || 0;
-			return sample * (1 + delayAmount * 0.1);
+			// Delay with proper delay buffer and feedback
+			const delayWet = settings.wet !== undefined ? settings.wet : 0.5;
+			const delayDry = settings.dry !== undefined ? settings.dry : 0.5;
+			const delayFeedback = settings.feedback !== undefined ? settings.feedback : 0.5;
+			const delayTime = settings.time !== undefined ? settings.time : 0.25;
+			// Use delay buffer for proper echo effect
+			if (!this._delayBuffers) {
+				this._delayBuffers = new Map(); // trackId -> { buffer, writeIndex }
+			}
+			const delayKey = 'global'; // Could be per-track if needed
+			const maxDelayTime = 2.0; // Maximum delay time in seconds (from UI max)
+			const bufferSize = Math.floor(sampleRate * maxDelayTime * 1.5); // Buffer for max delay + safety
+			
+			if (!this._delayBuffers.has(delayKey)) {
+				this._delayBuffers.set(delayKey, {
+					buffer: new Float32Array(bufferSize),
+					writeIndex: 0
+				});
+			}
+			const delayState = this._delayBuffers.get(delayKey);
+			
+			// Calculate read position based on delayTime (in samples)
+			const delaySamples = Math.floor(delayTime * sampleRate);
+			const delayReadIndex = (delayState.writeIndex - delaySamples + bufferSize) % bufferSize;
+			
+			// Read delayed sample (with linear interpolation for smooth changes)
+			const delayReadIndex1 = Math.floor(delayReadIndex);
+			const delayReadIndex2 = (delayReadIndex1 + 1) % bufferSize;
+			const delayFrac = delayReadIndex - delayReadIndex1;
+			const delayedSample1 = delayState.buffer[delayReadIndex1];
+			const delayedSample2 = delayState.buffer[delayReadIndex2];
+			const delayedSample = delayedSample1 * (1 - delayFrac) + delayedSample2 * delayFrac;
+			
+			// Write current sample + feedback
+			delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
+			delayState.writeIndex = (delayState.writeIndex + 1) % bufferSize;
+			
+			// Mix dry and wet
+			return sample * delayDry + delayedSample * delayWet;
 
 		case 'filter':
 			// Simple low-pass filter approximation
-			const cutoff = effect.settings.cutoff || 1.0;
-			const resonance = effect.settings.resonance || 0.0;
-			// Placeholder - real filter needs state
-			return sample * Math.min(1.0, cutoff);
+			const filterFreq = settings.frequency !== undefined ? settings.frequency : 0.5;
+			const filterResonance = settings.resonance !== undefined ? settings.resonance : 0.5;
+			// Map frequency (0-1) to a more noticeable filter effect
+			// Lower frequency = more filtering (darker sound)
+			const filterAmount = filterFreq; // 0 = full filter, 1 = no filter
+			// Add resonance boost to make it more audible
+			const resonanceBoost = 1 + (filterResonance * 0.3);
+			return sample * filterAmount * resonanceBoost;
 
 		case 'distortion':
 			// Simple distortion/saturation
-			const drive = effect.settings.drive || 1.0;
-			const distorted = Math.tanh(sample * drive);
-			const mix = effect.settings.mix || 1.0;
-			return sample * (1 - mix) + distorted * mix;
+			const distortionDrive = settings.drive !== undefined ? settings.drive : 0.5;
+			const distortionAmount = settings.amount !== undefined ? settings.amount : 0.3;
+			// Apply drive and tanh saturation - make it more aggressive
+			const driven = sample * (1 + distortionDrive * 4); // Increased from 2
+			const distorted = Math.tanh(driven);
+			// Mix between dry and distorted
+			return sample * (1 - distortionAmount) + distorted * distortionAmount;
 
 		case 'compressor':
 			// Simple compression
-			const threshold = effect.settings.threshold || 0.5;
-			const ratio = effect.settings.ratio || 4.0;
+			const compThreshold = settings.threshold !== undefined ? settings.threshold : 0.7;
+			const compRatio = settings.ratio !== undefined ? settings.ratio : 4;
+			const compAttack = settings.attack !== undefined ? settings.attack : 0.01;
+			const compRelease = settings.release !== undefined ? settings.release : 0.1;
 			const absSample = Math.abs(sample);
-			if (absSample > threshold) {
-				const excess = absSample - threshold;
-				const compressed = threshold + excess / ratio;
+			if (absSample > compThreshold) {
+				const excess = absSample - compThreshold;
+				const compressed = compThreshold + excess / compRatio;
 				return Math.sign(sample) * compressed;
 			}
 			return sample;
 
 		case 'chorus':
-			// Chorus would need delay buffers - placeholder
-			const chorusAmount = effect.settings.amount || 0;
-			return sample * (1 + chorusAmount * 0.1);
+			// Chorus would need delay buffers - simple approximation for now
+			const chorusWet = settings.wet !== undefined ? settings.wet : 0.5;
+			const chorusRate = settings.rate !== undefined ? settings.rate : 0.5;
+			const chorusDepth = settings.depth !== undefined ? settings.depth : 0.6;
+			const chorusDelay = settings.delay !== undefined ? settings.delay : 0.02;
+			// Make chorus more noticeable - use delay buffer with modulation
+			if (!this._chorusBuffers) {
+				this._chorusBuffers = new Map();
+				this._chorusPhases = new Map();
+			}
+			const chorusKey = 'global';
+			if (!this._chorusBuffers.has(chorusKey)) {
+				const bufferSize = Math.floor(sampleRate * chorusDelay * 2);
+				this._chorusBuffers.set(chorusKey, {
+					buffer: new Float32Array(bufferSize),
+					writeIndex: 0
+				});
+				this._chorusPhases.set(chorusKey, 0);
+			}
+			const chorusState = this._chorusBuffers.get(chorusKey);
+			const chorusPhase = this._chorusPhases.get(chorusKey);
+			// Write current sample
+			chorusState.buffer[chorusState.writeIndex] = sample;
+			chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
+			// Calculate modulated delay (LFO)
+			const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusRate);
+			const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
+			const chorusReadIndex = (chorusState.writeIndex - Math.floor(modulatedDelay * sampleRate) + chorusState.buffer.length) % chorusState.buffer.length;
+			const chorusedSample = chorusState.buffer[chorusReadIndex];
+			// Update phase
+			this._chorusPhases.set(chorusKey, (chorusPhase + chorusRate / sampleRate) % 1.0);
+			// Mix dry and wet
+			return sample * (1 - chorusWet) + chorusedSample * chorusWet;
 
 		default:
 			return sample;

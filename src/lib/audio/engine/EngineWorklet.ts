@@ -437,6 +437,22 @@ export class EngineWorklet {
 		});
 	}
 
+	updateEffect(effectId: string, settings: Record<string, any>) {
+		this.sendMessage({
+			type: 'updateEffect',
+			effectId,
+			settings
+		});
+	}
+
+	updateEnvelope(envelopeId: string, settings: Record<string, any>) {
+		this.sendMessage({
+			type: 'updateEnvelope',
+			envelopeId,
+			settings
+		});
+	}
+
 	updateTrack(trackId: string, instrument: StandaloneInstrument) {
 		this.sendMessage({
 			type: 'updateTrack',

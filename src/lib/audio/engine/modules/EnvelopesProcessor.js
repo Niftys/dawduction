@@ -8,12 +8,43 @@ class EnvelopesProcessor {
 		this.envelopes = []; // Global envelope definitions
 		this.timelineEnvelopes = []; // Timeline envelope instances
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
+		this.timelineTracks = []; // Timeline tracks (for validation)
+		this.processor = null; // Reference to processor for debug logging
 	}
 
-	initialize(envelopes, timelineEnvelopes, patternToTrackId) {
+	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null) {
 		this.envelopes = envelopes || [];
 		this.timelineEnvelopes = timelineEnvelopes || [];
 		this.patternToTrackId = patternToTrackId || new Map();
+		this.timelineTracks = timelineTracks || [];
+		this.processor = processor || null;
+		
+		// Debug: Log initialization
+		if (this.processor && this.processor.port) {
+			this.processor.port.postMessage({
+				type: 'debug',
+				message: 'EnvelopesProcessor initialized',
+				data: {
+					envelopesCount: this.envelopes.length,
+					timelineEnvelopesCount: this.timelineEnvelopes.length,
+					envelopeIds: this.envelopes.map(e => e.id),
+					timelineEnvelopeIds: this.timelineEnvelopes.map(te => te.envelopeId)
+				}
+			});
+		}
+	}
+
+	/**
+	 * Update envelope settings in real-time
+	 * @param {string} envelopeId - The envelope ID to update
+	 * @param {Object} settings - New settings object (will be merged with existing settings)
+	 */
+	updateEnvelope(envelopeId, settings) {
+		const envelope = this.envelopes.find(e => e.id === envelopeId);
+		if (envelope) {
+			// Update envelope settings
+			envelope.settings = { ...envelope.settings, ...settings };
+		}
 	}
 
 	/**
@@ -44,29 +75,59 @@ class EnvelopesProcessor {
 		};
 
 		// Find timeline envelopes that are active at this position
+		// Envelopes can ONLY be on envelope tracks and apply globally
 		for (const timelineEnvelope of this.timelineEnvelopes) {
 			const startBeat = timelineEnvelope.startBeat || 0;
 			const endBeat = startBeat + (timelineEnvelope.duration || 0);
 
 			// Check if envelope is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
-				// Check pattern assignment
+				// CRITICAL: Envelopes can ONLY be on 'envelope' type tracks
+				// Find the timeline track this envelope belongs to
+				const envelopeTrack = this.timelineTracks.find(t => t.id === timelineEnvelope.trackId);
+				if (!envelopeTrack || envelopeTrack.type !== 'envelope') {
+					// Envelope is not on an envelope track - skip it
+					continue;
+				}
+				
+				// Envelopes on envelope tracks apply globally to all tracks
+				// Check pattern assignment if specified
+				let shouldApply = true;
 				if (timelineEnvelope.patternId) {
 					// Envelope is assigned to a specific pattern
-					if (patternId && timelineEnvelope.patternId === patternId) {
-						// This envelope applies to this pattern
-						const envelopeDef = this.envelopes.find(e => e.id === timelineEnvelope.envelopeId);
-						if (envelopeDef) {
-							this.applyEnvelope(envelopeValues, envelopeDef, currentBeat, startBeat, endBeat);
-						}
-					}
-				} else {
-					// Global envelope (applies to all tracks/patterns)
-					// Note: trackId matching would require mapping TimelineTrack.id to audio engine trackId
-					// For now, apply global envelopes to all tracks
+					shouldApply = patternId && timelineEnvelope.patternId === patternId;
+				}
+				// If no patternId, apply globally
+				
+				if (shouldApply) {
 					const envelopeDef = this.envelopes.find(e => e.id === timelineEnvelope.envelopeId);
 					if (envelopeDef) {
 						this.applyEnvelope(envelopeValues, envelopeDef, currentBeat, startBeat, endBeat);
+					} else {
+						// Debug: Envelope definition not found (throttled to avoid spam)
+						if (this.processor && this.processor.port) {
+							// Track last log time per envelope ID to avoid spam
+							const lastLogKey = `missing_envelope_${timelineEnvelope.envelopeId}`;
+							const lastLogTime = this._missingEnvelopeLogTimes?.[lastLogKey] || 0;
+							if (!this._missingEnvelopeLogTimes) {
+								this._missingEnvelopeLogTimes = {};
+							}
+							
+							// Only log once every 4 beats to avoid infinite loops
+							if (currentBeat - lastLogTime > 4) {
+								this._missingEnvelopeLogTimes[lastLogKey] = currentBeat;
+								this.processor.port.postMessage({
+									type: 'debug',
+									message: 'Envelope definition not found',
+									data: { 
+										envelopeId: timelineEnvelope.envelopeId, 
+										availableIds: this.envelopes.map(e => e.id),
+										timelineEnvelopeTrackId: timelineEnvelope.trackId,
+										timelineEnvelopePatternId: timelineEnvelope.patternId
+									}
+								});
+							}
+						}
 					}
 				}
 			}
@@ -86,11 +147,51 @@ class EnvelopesProcessor {
 	applyEnvelope(envelopeValues, envelopeDef, currentBeat, startBeat, endBeat) {
 		if (!envelopeDef || !envelopeDef.settings) return;
 
-		const progress = (currentBeat - startBeat) / (endBeat - startBeat); // 0-1
+		let progress = (currentBeat - startBeat) / (endBeat - startBeat); // 0-1
 		const envelopeType = envelopeDef.type;
 
+		// Check if envelope should be reversed
+		const reverse = envelopeDef.settings.reverse === true;
+		if (reverse) {
+			progress = 1.0 - progress; // Invert progress: 0→1 becomes 1→0
+		}
+
 		// Get envelope curve value based on settings
-		const value = this.calculateEnvelopeValue(progress, envelopeDef.settings);
+		const value = this.calculateEnvelopeValue(progress, envelopeDef.settings, envelopeType);
+
+		// Debug: Log pitch envelope values (occasionally)
+		if (envelopeType === 'pitch' && this.processor && this.processor.port) {
+			const lastLogKey = `pitch_env_${envelopeDef.id}`;
+			const lastLogTime = this._pitchEnvLogTimes?.[lastLogKey] || 0;
+			if (!this._pitchEnvLogTimes) {
+				this._pitchEnvLogTimes = {};
+			}
+			if (currentBeat - lastLogTime > 2) {
+				this._pitchEnvLogTimes[lastLogKey] = currentBeat;
+				const actualStartValue = envelopeDef.settings.startValue !== undefined ? envelopeDef.settings.startValue : (envelopeType === 'pitch' ? 0.5 : 0);
+				const actualEndValue = envelopeDef.settings.endValue !== undefined ? envelopeDef.settings.endValue : (envelopeType === 'pitch' ? 0.5 : 1);
+				let pitchMultiplier;
+				if (value <= 0.5) {
+					pitchMultiplier = 0.5 + (value * 1.0);
+				} else {
+					pitchMultiplier = 1.0 + ((value - 0.5) * 2.0);
+				}
+				this.processor.port.postMessage({
+					type: 'debug',
+					message: 'Pitch envelope calculation',
+					data: {
+						progress: progress.toFixed(3),
+						startValue: actualStartValue,
+						endValue: actualEndValue,
+						rawStartValue: envelopeDef.settings.startValue,
+						rawEndValue: envelopeDef.settings.endValue,
+						calculatedValue: value.toFixed(3),
+						pitchMultiplier: pitchMultiplier.toFixed(3),
+						currentBeat: currentBeat.toFixed(2)
+					}
+				});
+			}
+		}
 
 		// Apply to appropriate parameter
 		switch (envelopeType) {
@@ -101,7 +202,20 @@ class EnvelopesProcessor {
 			envelopeValues.filter *= value;
 			break;
 		case 'pitch':
-			envelopeValues.pitch *= value;
+			// Pitch envelope: value is 0-1, map to pitch multiplier
+			// The pitch shifter appears to be inverted, so we invert the value
+			// 0.0 should map to 2.0x (up octave), 0.5 to 1.0x (normal), 1.0 to 0.5x (down octave)
+			// So we use: invertedValue = 1.0 - value, then map that
+			const invertedValue = 1.0 - value;
+			let pitchMultiplier;
+			if (invertedValue <= 0.5) {
+				// Map 0.0-0.5 to 0.5-1.0 (down octave to normal)
+				pitchMultiplier = 0.5 + (invertedValue * 1.0); // 0.0→0.5, 0.5→1.0
+			} else {
+				// Map 0.5-1.0 to 1.0-2.0 (normal to up octave)
+				pitchMultiplier = 1.0 + ((invertedValue - 0.5) * 2.0); // 0.5→1.0, 1.0→2.0
+			}
+			envelopeValues.pitch *= pitchMultiplier;
 			break;
 		case 'pan':
 			// Pan is additive (can be -1 to 1)
@@ -118,11 +232,20 @@ class EnvelopesProcessor {
 	 * @param {Object} settings - Envelope settings
 	 * @returns {number} Envelope value (typically 0-1)
 	 */
-	calculateEnvelopeValue(progress, settings) {
+	calculateEnvelopeValue(progress, settings, envelopeType = null) {
 		// Simple linear envelope for now
 		// Can be enhanced with curves, attack/decay/sustain/release, etc.
-		const startValue = settings.startValue !== undefined ? settings.startValue : 0;
-		const endValue = settings.endValue !== undefined ? settings.endValue : 1;
+		// For pitch envelopes, default to 0.5 (normal pitch, center of range) instead of 0
+		let defaultStart = 0;
+		let defaultEnd = 1;
+		if (envelopeType === 'pitch') {
+			defaultStart = 0.5; // Default to center (normal pitch, 1.0x multiplier)
+			defaultEnd = 0.5;   // Default to center (normal pitch, 1.0x multiplier)
+		}
+		
+		// Handle undefined values - use defaults
+		const startValue = (settings.startValue !== undefined && settings.startValue !== null) ? settings.startValue : defaultStart;
+		const endValue = (settings.endValue !== undefined && settings.endValue !== null) ? settings.endValue : defaultEnd;
 		const curve = settings.curve || 'linear'; // linear, exponential, logarithmic
 
 		let value;

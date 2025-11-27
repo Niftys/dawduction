@@ -280,6 +280,9 @@ import type { Pattern } from '$lib/types/pattern';
 	async function togglePlayback() {
 		if (!engine) return;
 
+		// Ensure AudioContext is resumed (required for audio playback after page load)
+		await engine.resume();
+
 		isPlaying = !isPlaying;
 		transportState = isPlaying ? 'play' : 'stop';
 		engine.setTransport(transportState);

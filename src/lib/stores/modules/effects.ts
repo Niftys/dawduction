@@ -13,12 +13,12 @@ export function createEffectsModule(updateFn: UpdateFn, getCurrent: GetCurrent) 
 			
 			// Default settings based on type
 			const defaultSettings: Record<string, Record<string, any>> = {
-				reverb: { roomSize: 0.5, dampening: 0.5, wet: 0.3, dry: 0.7 },
-				delay: { time: 0.25, feedback: 0.3, wet: 0.3, dry: 0.7 },
+				reverb: { roomSize: 0.7, dampening: 0.5, wet: 0.5, dry: 0.5 },
+				delay: { time: 0.25, feedback: 0.5, wet: 0.5, dry: 0.5 },
 				filter: { type: 'lowpass', frequency: 0.5, resonance: 0.5 },
 				distortion: { amount: 0.3, drive: 0.5 },
 				compressor: { threshold: 0.7, ratio: 4, attack: 0.01, release: 0.1 },
-				chorus: { rate: 0.5, depth: 0.3, delay: 0.02, wet: 0.3 }
+				chorus: { rate: 0.5, depth: 0.6, delay: 0.02, wet: 0.5 }
 			};
 			
 			return {

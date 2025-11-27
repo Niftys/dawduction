@@ -88,8 +88,9 @@ class ProjectManager {
 		// Initialize effects and envelopes processors
 		const timelineEffects = timeline?.effects || [];
 		const timelineEnvelopes = timeline?.envelopes || [];
-		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId);
-		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId);
+		const timelineTracks = timeline?.tracks || [];
+		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks);
+		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
 	}
 
 	getTrack(trackId) {
