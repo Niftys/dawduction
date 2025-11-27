@@ -5,7 +5,7 @@
 	import { onMount } from 'svelte';
 	import '$lib/styles/components/AutomationCurveEditor.css';
 
-	export let window: import('$lib/stores/automationStore').OpenAutomationWindow;
+	export let automationWindow: import('$lib/stores/automationStore').OpenAutomationWindow;
 
 	let project: any;
 	$: project = $projectStore;
@@ -26,20 +26,20 @@
 	// Use project.automation directly to ensure reactivity
 	$: automation = (() => {
 		if (!project || !project.automation) return null;
-		const automationId = window.timelineInstanceId 
-			? `${window.targetType}:${window.targetId}:${window.timelineInstanceId}:${window.parameterKey}`
-			: `${window.targetType}:${window.targetId}:${window.parameterKey}`;
+		const automationId = automationWindow.timelineInstanceId 
+			? `${automationWindow.targetType}:${automationWindow.targetId}:${automationWindow.timelineInstanceId}:${automationWindow.parameterKey}`
+			: `${automationWindow.targetType}:${automationWindow.targetId}:${automationWindow.parameterKey}`;
 		return (project.automation as any)[automationId] || null;
 	})();
 
 	// Get timeline effect/envelope duration if on timeline
 	$: timelineObject = (() => {
-		if (!window.timelineInstanceId || !project?.timeline) return null;
+		if (!automationWindow.timelineInstanceId || !project?.timeline) return null;
 		
-		if (window.targetType === 'effect') {
-			return project.timeline.effects?.find((e: any) => e.id === window.timelineInstanceId);
+		if (automationWindow.targetType === 'effect') {
+			return project.timeline.effects?.find((e: any) => e.id === automationWindow.timelineInstanceId);
 		} else {
-			return project.timeline.envelopes?.find((e: any) => e.id === window.timelineInstanceId);
+			return project.timeline.envelopes?.find((e: any) => e.id === automationWindow.timelineInstanceId);
 		}
 	})();
 
@@ -58,14 +58,14 @@
 
 	// Get parameter min/max from effect/envelope
 	$: paramMin = (() => {
-		if (window.targetType === 'effect') {
-			const effect = project?.effects?.find((e: any) => e.id === window.targetId);
+		if (automationWindow.targetType === 'effect') {
+			const effect = project?.effects?.find((e: any) => e.id === automationWindow.targetId);
 			if (effect) {
 				// Get min/max based on parameter - default to 0-1
 				return automation?.min ?? 0;
 			}
 		} else {
-			const envelope = project?.envelopes?.find((e: any) => e.id === window.targetId);
+			const envelope = project?.envelopes?.find((e: any) => e.id === automationWindow.targetId);
 			if (envelope) {
 				return automation?.min ?? 0;
 			}
@@ -74,13 +74,13 @@
 	})();
 
 	$: paramMax = (() => {
-		if (window.targetType === 'effect') {
-			const effect = project?.effects?.find((e: any) => e.id === window.targetId);
+		if (automationWindow.targetType === 'effect') {
+			const effect = project?.effects?.find((e: any) => e.id === automationWindow.targetId);
 			if (effect) {
 				return automation?.max ?? 1;
 			}
 		} else {
-			const envelope = project?.envelopes?.find((e: any) => e.id === window.targetId);
+			const envelope = project?.envelopes?.find((e: any) => e.id === automationWindow.targetId);
 			if (envelope) {
 				return automation?.max ?? 1;
 			}
@@ -106,8 +106,26 @@
 		if (canvas) {
 			resizeObserver.observe(canvas);
 		}
+		
+		// Handle mouse up on window to end batching if mouse leaves canvas while dragging
+		const handleWindowMouseUp = () => {
+			if (isDragging) {
+				handleMouseUp();
+			}
+		};
+		if (typeof window !== 'undefined') {
+			window.addEventListener('mouseup', handleWindowMouseUp);
+		}
+		
 		return () => {
 			resizeObserver.disconnect();
+			if (typeof window !== 'undefined') {
+				window.removeEventListener('mouseup', handleWindowMouseUp);
+			}
+			// Clean up: end any active batch when component unmounts
+			if (isDragging) {
+				projectStore.endBatch();
+			}
 		};
 	});
 
@@ -237,36 +255,37 @@
 			const distance = Math.sqrt((x - px) ** 2 + (y - py) ** 2);
 
 			if (distance < 10) {
-				// Clicked on point
+				// Clicked on point - start batching for drag operation
 				draggedPointIndex = i;
 				isDragging = true;
+				projectStore.startBatch();
 				draw();
 				return;
 			}
 		}
 
-		// Add new point
+		// Add new point (single action, no batching needed)
 		const beat = Math.max(viewStartBeat, Math.min(viewEndBeat, xToBeat(x)));
 		const value = Math.max(paramMin, Math.min(paramMax, yToValue(y)));
 
 		// Create or update automation
 		if (!automation) {
 			projectStore.setParameterAutomation({
-				targetType: window.targetType,
-				targetId: window.targetId,
-				parameterKey: window.parameterKey,
-				timelineInstanceId: window.timelineInstanceId,
+				targetType: automationWindow.targetType,
+				targetId: automationWindow.targetId,
+				parameterKey: automationWindow.parameterKey,
+				timelineInstanceId: automationWindow.timelineInstanceId,
 				points: [{ beat, value }],
 				min: paramMin,
 				max: paramMax
-			}, window.timelineInstanceId);
+			}, automationWindow.timelineInstanceId);
 		} else {
 			projectStore.addAutomationPoint(
-				window.targetType,
-				window.targetId,
-				window.parameterKey,
+				automationWindow.targetType,
+				automationWindow.targetId,
+				automationWindow.parameterKey,
 				{ beat, value },
-				window.timelineInstanceId
+				automationWindow.timelineInstanceId
 			);
 		}
 	}
@@ -294,11 +313,11 @@
 				const originalIndex = points.findIndex((p) => p.beat === point.beat && p.value === point.value);
 				if (originalIndex >= 0) {
 					projectStore.removeAutomationPoint(
-						window.targetType,
-						window.targetId,
-						window.parameterKey,
+						automationWindow.targetType,
+						automationWindow.targetId,
+						automationWindow.parameterKey,
 						originalIndex,
-						window.timelineInstanceId
+						automationWindow.timelineInstanceId
 					);
 				}
 				return;
@@ -314,7 +333,7 @@
 		const y = e.clientY - rect.top;
 
 		if (isDragging && draggedPointIndex !== null) {
-			// Update dragged point
+			// Update dragged point (during batch, so this won't create history entries)
 			const sortedPoints = [...points].sort((a, b) => a.beat - b.beat);
 			const point = sortedPoints[draggedPointIndex];
 			const beat = Math.max(viewStartBeat, Math.min(viewEndBeat, xToBeat(x)));
@@ -325,12 +344,12 @@
 
 			if (originalIndex >= 0) {
 				projectStore.updateAutomationPoint(
-					window.targetType,
-					window.targetId,
-					window.parameterKey,
+					automationWindow.targetType,
+					automationWindow.targetId,
+					automationWindow.parameterKey,
 					originalIndex,
 					{ beat, value },
-					window.timelineInstanceId
+					automationWindow.timelineInstanceId
 				);
 				// Redraw immediately for smooth dragging
 				draw();
@@ -363,26 +382,28 @@
 		if (isDragging) {
 			isDragging = false;
 			draggedPointIndex = null;
+			// End batching - this will save the final state to history
+			projectStore.endBatch();
 		}
 	}
 
 	function handleDeletePoint(index: number) {
 		projectStore.removeAutomationPoint(
-			window.targetType,
-			window.targetId,
-			window.parameterKey,
+			automationWindow.targetType,
+			automationWindow.targetId,
+			automationWindow.parameterKey,
 			index,
-			window.timelineInstanceId
+			automationWindow.timelineInstanceId
 		);
 	}
 
 	function handleClearAutomation() {
 		if (automation) {
 			projectStore.deleteParameterAutomation(
-				window.targetType,
-				window.targetId,
-				window.parameterKey,
-				window.timelineInstanceId
+				automationWindow.targetType,
+				automationWindow.targetId,
+				automationWindow.parameterKey,
+				automationWindow.timelineInstanceId
 			);
 		}
 	}
@@ -407,13 +428,13 @@
 	<div class="automation-window-header">
 		<div class="automation-window-title">
 			<span class="automation-icon">📈</span>
-			<span>{window.label}</span>
+			<span>{automationWindow.label}</span>
 		</div>
 		<div class="automation-window-controls">
 			<button class="clear-btn" on:click={handleClearAutomation} title="Clear automation">
 				Clear
 			</button>
-			<button class="close-btn" on:click={() => automationStore.closeWindow(window.id)} title="Close">
+			<button class="close-btn" on:click={() => automationStore.closeWindow(automationWindow.id)} title="Close">
 				×
 			</button>
 		</div>

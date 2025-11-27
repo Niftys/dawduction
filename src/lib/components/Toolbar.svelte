@@ -104,7 +104,7 @@ import type { Pattern } from '$lib/types/pattern';
 						isPlaying = true;
 					}
 					if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
-						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
+						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 						if (wasPlaying) {
 							transportState = 'stop';
 							isPlaying = false;
@@ -143,7 +143,7 @@ import type { Pattern } from '$lib/types/pattern';
 									solo: inst.solo ?? false
 								}));
 								
-								await engine.loadProject(tracksForEngine, bpm, tracksForEngine[0]?.id, undefined, project.patterns, project.effects, project.envelopes);
+								await engine.loadProject(tracksForEngine, bpm, tracksForEngine[0]?.id, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
 									transportState = 'play';
 									isPlaying = true;
@@ -151,7 +151,7 @@ import type { Pattern } from '$lib/types/pattern';
 								}
 							} else {
 								// Pattern not found, fall back to standalone instruments
-								await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+								await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
 									transportState = 'play';
 									isPlaying = true;
@@ -160,7 +160,7 @@ import type { Pattern } from '$lib/types/pattern';
 							}
 						} else {
 							// Regular pattern view - use standalone instruments
-						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							if (wasPlaying) {
 								transportState = 'play';
 								isPlaying = true;
@@ -256,7 +256,7 @@ import type { Pattern } from '$lib/types/pattern';
 					projectStore.subscribe((p) => (project = p))();
 					
 					// Load timeline in arrangement view
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
+					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 					// Reset transport position when switching to arrangement view (if playing)
 					if (isPlaying) {
 						transportState = 'stop';
@@ -266,7 +266,7 @@ import type { Pattern } from '$lib/types/pattern';
 					}
 				} else {
 					// Load pattern mode (use standalone instruments or patterns)
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 					// Resume playback if it was playing
 					if (isPlaying) {
 						transportState = 'play';
@@ -301,7 +301,7 @@ import type { Pattern } from '$lib/types/pattern';
 				const currentViewMode = $viewStore;
 				if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
 					// Load timeline in arrangement view
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
+					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 					// Reset transport position when starting in arrangement view
 					transportState = 'stop';
 					isPlaying = false;
@@ -359,13 +359,13 @@ import type { Pattern } from '$lib/types/pattern';
 							// Also include standalone instruments so they're visible on canvas
 							const allTracks = [...(project.standaloneInstruments || []), ...patternTracks];
 							
-							await engine.loadProject(allTracks, bpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+							await engine.loadProject(allTracks, bpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							transportState = 'play';
 							isPlaying = true;
 							engine.setTransport('play');
 						} else {
 							// Pattern not found, fall back to standalone instruments
-							await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+							await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							transportState = 'play';
 							isPlaying = true;
 							engine.setTransport('play');

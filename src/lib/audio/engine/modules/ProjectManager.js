@@ -28,7 +28,7 @@ class ProjectManager {
 		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track ID to array of audio track IDs
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
 		this.tracks = tracks;
 		this.events = events || [];
 		this.timeline = timeline || null;
@@ -89,7 +89,8 @@ class ProjectManager {
 		const timelineEffects = timeline?.effects || [];
 		const timelineEnvelopes = timeline?.envelopes || [];
 		const timelineTracks = timeline?.tracks || [];
-		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks);
+		// Pass automation data to effects processor
+		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
 		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
 	}
 

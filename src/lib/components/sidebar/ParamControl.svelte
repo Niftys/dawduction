@@ -2,6 +2,7 @@
 	import { getInputValue } from './sidebarUtils';
 	import { automationStore } from '$lib/stores/automationStore';
 	import { projectStore } from '$lib/stores/projectStore';
+	import NumericInput from './NumericInput.svelte';
 
 	const fallbackId = `param-${Math.random().toString(36).slice(2)}`;
 	export let id: string = fallbackId;
@@ -74,7 +75,11 @@
 					on:click={openAutomation}
 					title="Open automation editor"
 				>
-					📈
+					<svg width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<circle cx="2" cy="10" r="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+						<circle cx="10" cy="2" r="1.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+						<line x1="3.5" y1="10" x2="8.5" y2="2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+					</svg>
 				</button>
 			{/if}
 			{#if onReset && resetValue !== undefined}
@@ -95,15 +100,13 @@
 			on:mouseleave={handleMouseUp}
 			on:input={(e) => handleUpdate(Number(getInputValue(e)))}
 		/>
-		<input
+		<NumericInput
 			id={`${id}-number`}
-			type="number"
 			{min}
 			{max}
 			{step}
-			value={value}
-			on:input={(e) => handleUpdate(Number(getInputValue(e)))}
-			class="numeric-input"
+			{value}
+			onInput={handleUpdate}
 		/>
 	</div>
 </div>

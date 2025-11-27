@@ -11,25 +11,31 @@ class EffectsProcessor {
 		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track IDs to audio track IDs
 		this.timelineTracks = []; // Timeline tracks (for looking up patternId on pattern tracks)
 		this.processor = null; // Reference to processor for accessing ProjectManager
+		this.automation = null; // Project automation data
 	}
 
-	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks) {
+	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks, automation) {
 		this.effects = effects || [];
 		this.timelineEffects = timelineEffects || [];
 		this.patternToTrackId = patternToTrackId || new Map();
 		this.timelineTrackToAudioTracks = timelineTrackToAudioTracks || new Map();
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
+		this.automation = automation || null;
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
+			const automationKeys = automation ? Object.keys(automation) : [];
 			this.processor.port.postMessage({
 				type: 'debug',
 				message: 'EffectsProcessor initialized',
 				data: {
 					effectsCount: this.effects.length,
 					timelineEffectsCount: this.timelineEffects.length,
-					timelineTrackMappingSize: this.timelineTrackToAudioTracks.size
+					timelineTrackMappingSize: this.timelineTrackToAudioTracks.size,
+					automationLoaded: !!automation,
+					automationKeysCount: automationKeys.length,
+					automationKeys: automationKeys.slice(0, 5) // First 5 keys for debugging
 				}
 			});
 		}
@@ -180,8 +186,18 @@ class EffectsProcessor {
 				if (shouldApply) {
 					const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
 					if (effectDef) {
+						// Apply automation to effect settings
+						const automatedSettings = this.applyAutomationToEffect(
+							effectDef,
+							timelineEffect.id,
+							currentBeat,
+							startBeat,
+							endBeat
+						);
+						
 						activeEffects.push({
 							...effectDef,
+							settings: automatedSettings,
 							progress: (currentBeat - startBeat) / (endBeat - startBeat) // 0-1 progress through effect
 						});
 					} else {
@@ -251,6 +267,162 @@ class EffectsProcessor {
 		}
 
 		return processed;
+	}
+
+	/**
+	 * Apply automation curves to effect settings
+	 * @param {Object} effectDef - Effect definition
+	 * @param {string} timelineEffectId - Timeline effect instance ID
+	 * @param {number} currentBeat - Current playback position
+	 * @param {number} startBeat - Effect start beat
+	 * @param {number} endBeat - Effect end beat
+	 * @returns {Object} Effect settings with automation applied
+	 */
+	applyAutomationToEffect(effectDef, timelineEffectId, currentBeat, startBeat, endBeat) {
+		if (!this.automation || !effectDef) {
+			return effectDef.settings || {};
+		}
+
+		// Start with base settings
+		const automatedSettings = { ...(effectDef.settings || {}) };
+
+		// Find all automation curves for this effect instance
+		let automationFound = false;
+		for (const [automationId, automation] of Object.entries(this.automation)) {
+			if (!automation || typeof automation !== 'object') continue;
+			
+			const auto = automation;
+			// Check if this automation is for this effect and timeline instance
+			if (auto.targetType === 'effect' && 
+			    auto.targetId === effectDef.id && 
+			    auto.timelineInstanceId === timelineEffectId) {
+				
+				automationFound = true;
+				
+				// Get automation value at current beat
+				const value = this.getAutomationValueAtBeat(auto.points || [], currentBeat, auto.min || 0, auto.max || 1);
+				
+				// Debug: Log automation application (throttled)
+				if (this.processor && this.processor.port) {
+					const lastLogKey = `automation_${timelineEffectId}_${auto.parameterKey}`;
+					const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
+					if (!this._automationLogTimes) {
+						this._automationLogTimes = {};
+					}
+					
+					// Log once every 2 beats to verify automation is working
+					if (currentBeat - lastLogTime > 2) {
+						this._automationLogTimes[lastLogKey] = currentBeat;
+						this.processor.port.postMessage({
+							type: 'debug',
+							message: 'Automation being applied',
+							data: {
+								effectId: effectDef.id,
+								timelineEffectId,
+								parameterKey: auto.parameterKey,
+								currentBeat: currentBeat.toFixed(2),
+								automatedValue: value.toFixed(3),
+								baseValue: (effectDef.settings?.[auto.parameterKey] || 0).toFixed(3),
+								pointsCount: auto.points?.length || 0,
+								points: auto.points?.map(p => ({ beat: p.beat.toFixed(2), value: p.value.toFixed(3) })) || [],
+								automationId
+							}
+						});
+					}
+				}
+				
+				// Apply to the parameter
+				automatedSettings[auto.parameterKey] = value;
+			}
+		}
+		
+		// Debug: Log automation lookup details (throttled)
+		if (this.processor && this.processor.port) {
+			const lastLogKey = `automation_lookup_${timelineEffectId}`;
+			const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
+			if (!this._automationLogTimes) {
+				this._automationLogTimes = {};
+			}
+			
+			// Log once every 4 beats to debug automation lookup
+			if (currentBeat - lastLogTime > 4 && this.automation) {
+				this._automationLogTimes[lastLogKey] = currentBeat;
+				
+				const allAutomationKeys = Object.keys(this.automation || {});
+				const effectAutomationKeys = allAutomationKeys.filter(key => {
+					const auto = this.automation[key];
+					return auto && typeof auto === 'object' && 
+					       auto.targetType === 'effect' && 
+					       auto.targetId === effectDef.id;
+				});
+				
+				this.processor.port.postMessage({
+					type: 'debug',
+					message: 'Automation lookup debug',
+					data: {
+						effectId: effectDef.id,
+						timelineEffectId,
+						currentBeat: currentBeat.toFixed(2),
+						automationFound,
+						totalAutomationKeys: allAutomationKeys.length,
+						effectAutomationKeys: effectAutomationKeys,
+						effectAutomationDetails: effectAutomationKeys.map(key => {
+							const auto = this.automation[key];
+							return {
+								key,
+								targetType: auto?.targetType,
+								targetId: auto?.targetId,
+								timelineInstanceId: auto?.timelineInstanceId,
+								parameterKey: auto?.parameterKey,
+								pointsCount: auto?.points?.length || 0
+							};
+						})
+					}
+				});
+			}
+		}
+
+		return automatedSettings;
+	}
+
+	/**
+	 * Get automation value at a specific beat using linear interpolation
+	 * @param {Array} points - Automation points array
+	 * @param {number} beat - Beat position
+	 * @param {number} min - Minimum value
+	 * @param {number} max - Maximum value
+	 * @returns {number} Interpolated value
+	 */
+	getAutomationValueAtBeat(points, beat, min, max) {
+		if (!points || points.length === 0) {
+			return (min + max) / 2; // Default to middle value
+		}
+
+		// Sort points by beat
+		const sortedPoints = [...points].sort((a, b) => a.beat - b.beat);
+
+		// Before first point
+		if (beat <= sortedPoints[0].beat) {
+			return sortedPoints[0].value;
+		}
+
+		// After last point
+		if (beat >= sortedPoints[sortedPoints.length - 1].beat) {
+			return sortedPoints[sortedPoints.length - 1].value;
+		}
+
+		// Interpolate between points
+		for (let i = 0; i < sortedPoints.length - 1; i++) {
+			const p1 = sortedPoints[i];
+			const p2 = sortedPoints[i + 1];
+
+			if (beat >= p1.beat && beat <= p2.beat) {
+				const t = (beat - p1.beat) / (p2.beat - p1.beat);
+				return p1.value + (p2.value - p1.value) * t;
+			}
+		}
+
+		return sortedPoints[0].value;
 	}
 
 	/**

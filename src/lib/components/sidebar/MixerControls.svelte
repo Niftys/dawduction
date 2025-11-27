@@ -1,9 +1,10 @@
 <script lang="ts">
 	import type { StandaloneInstrument, Pattern } from '$lib/types/pattern';
-	import { projectStore } from '$lib/stores/projectStore';
-	import { engineStore } from '$lib/stores/engineStore';
-	import { selectionStore } from '$lib/stores/selectionStore';
-	import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
+import { projectStore } from '$lib/stores/projectStore';
+import { engineStore } from '$lib/stores/engineStore';
+import { selectionStore } from '$lib/stores/selectionStore';
+import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
+import NumericInput from './NumericInput.svelte';
 	
 	export let selectedTrack: StandaloneInstrument | undefined = undefined;
 	export let selectedPattern: Pattern | undefined = undefined;
@@ -186,15 +187,13 @@
 			}}
 			on:input={(e) => updateVolume(Number(getInputValue(e)))}
 		/>
-		<input
+		<NumericInput
 			id="volume-number"
-			type="number"
-			min="0"
-			max="2"
-			step="0.01"
+			min={0}
+			max={2}
+			step={0.01}
 			value={itemVolume}
-			on:input={(e) => updateVolume(Number(getInputValue(e)))}
-			class="numeric-input"
+			onInput={updateVolume}
 		/>
 	</div>
 </div>
@@ -234,15 +233,13 @@
 			on:input={(e) => updatePan(Number(getInputValue(e)))}
 		/>
 		<span class="pan-label pan-label-right" title="Right">R</span>
-		<input
+		<NumericInput
 			id="pan-number"
-			type="number"
-			min="-1"
-			max="1"
-			step="0.01"
+			min={-1}
+			max={1}
+			step={0.01}
 			value={itemPan}
-			on:input={(e) => updatePan(Number(getInputValue(e)))}
-			class="numeric-input"
+			onInput={updatePan}
 		/>
 	</div>
 </div>

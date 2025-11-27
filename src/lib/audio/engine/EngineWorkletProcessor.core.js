@@ -43,7 +43,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		};
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
 		this.playbackController.setTempo(bpm);
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
@@ -56,7 +56,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 		
 		// Delegate to ProjectManager
-		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks);
+		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation);
 		
 		// Initialize track state
 		this.trackState.initializeTracks(tracks);

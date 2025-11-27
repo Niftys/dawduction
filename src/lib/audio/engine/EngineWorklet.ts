@@ -63,7 +63,7 @@ export class EngineWorklet {
 		}
 	}
 
-	async loadProject(standaloneInstruments: StandaloneInstrument[], bpm: number, baseMeterTrackId?: string, timeline?: any, patterns?: any[], effects?: any[], envelopes?: any[]) {
+	async loadProject(standaloneInstruments: StandaloneInstrument[], bpm: number, baseMeterTrackId?: string, timeline?: any, patterns?: any[], effects?: any[], envelopes?: any[], automation?: any) {
 		await this.ensureInitialized();
 
 		// If timeline exists, use timeline-based scheduling with patterns
@@ -308,6 +308,7 @@ export class EngineWorklet {
 				},
 				effects: effects || [],
 				envelopes: envelopes || [],
+				automation: automation || null,
 				viewMode: 'arrangement', // Arrangement view mode
 				patternToTrackId: Array.from(patternToTrackId.entries()), // Send as array for serialization
 				timelineTrackToAudioTracks: Array.from(timelineTrackToAudioTracks.entries()) // Mapping for track volume
@@ -372,6 +373,7 @@ export class EngineWorklet {
 			timeline: undefined,
 			effects: effects || [],
 			envelopes: envelopes || [],
+			automation: automation || null, // Send automation data
 			viewMode: 'pattern' // Pattern view mode
 		});
 	}

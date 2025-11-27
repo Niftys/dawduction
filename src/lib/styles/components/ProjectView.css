@@ -739,3 +739,15 @@
 	box-sizing: border-box;
 }
 
+.arrangement-view {
+	--automation-panel-height: 0px;
+}
+
+.arrangement-view.automation-open {
+	--automation-panel-height: 320px;
+}
+
+.arrangement-view .timeline-area {
+	padding-bottom: var(--automation-panel-height);
+}
+

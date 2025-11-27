@@ -21,6 +21,7 @@
 	import { automationStore } from '$lib/stores/automationStore';
 	import { engineStore } from '$lib/stores/engineStore';
 	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
+	import { generateAutomationCurvePath } from '$lib/utils/automationCurve';
 	import '$lib/styles/components/ProjectView.css';
 	import '$lib/styles/components/ArrangementView.css';
 
@@ -781,6 +782,37 @@
 		return (timeline.envelopes || []).filter((e) => e.trackId === trackId);
 	}
 
+	function getAutomationCurvesForEffect(effectId: string, timelineEffectId: string) {
+		if (!project || !project.automation) return [];
+		const curves: any[] = [];
+		const automationData: any = project.automation;
+		
+		// Check if there's an open automation window for this effect instance
+		const openAutomationWindow = $automationStore.find(
+			(w) => w.targetType === 'effect' && 
+			       w.targetId === effectId && 
+			       w.timelineInstanceId === timelineEffectId
+		);
+		
+		// Check for automation with this timeline instance ID
+		for (const [key, value] of Object.entries(automationData)) {
+			if (value && typeof value === 'object' && 'targetType' in value && 'targetId' in value) {
+				const auto: any = value;
+				if (auto.targetType === 'effect' && auto.targetId === effectId && auto.timelineInstanceId === timelineEffectId) {
+					// Only include this curve if:
+					// 1. There's no open automation window (show all), OR
+					// 2. This is the parameter currently open in the automation editor
+					if (!openAutomationWindow || auto.parameterKey === openAutomationWindow.parameterKey) {
+						if (auto.points && auto.points.length > 0) {
+							curves.push({ automation: auto, parameterKey: auto.parameterKey });
+						}
+					}
+				}
+			}
+		}
+		return curves;
+	}
+
 
 	// Generate ruler marks with beats and bars (reactive to zoom)
 	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
@@ -861,6 +893,42 @@
 	$: selectedBaseEnvelopeId = selectedEnvelopeId 
 		? timelineEnvelopes.find((te) => te.id === selectedEnvelopeId)?.envelopeId || null
 		: null;
+
+	// Close automation windows when selection changes or sidebar closes
+	$: {
+		const openWindows = $automationStore;
+		if (openWindows.length > 0) {
+			// Close all automation windows if:
+			// 1. No effect or envelope is selected (sidebar closed)
+			// 2. View mode is not arrangement
+			if (!selectedEffectId && !selectedEnvelopeId) {
+				automationStore.closeAll();
+			} else if (viewMode !== 'arrangement') {
+				automationStore.closeAll();
+			} else {
+				// Close windows that don't match the current selection
+				for (const window of openWindows) {
+					let shouldClose = false;
+					
+					if (window.targetType === 'effect') {
+						// Close if no effect is selected or window doesn't match selected effect
+						if (!selectedEffectId || window.timelineInstanceId !== selectedEffectId) {
+							shouldClose = true;
+						}
+					} else if (window.targetType === 'envelope') {
+						// Close if no envelope is selected or window doesn't match selected envelope
+						if (!selectedEnvelopeId || window.timelineInstanceId !== selectedEnvelopeId) {
+							shouldClose = true;
+						}
+					}
+					
+					if (shouldClose) {
+						automationStore.closeWindow(window.id);
+					}
+				}
+			}
+		}
+	}
 
 	// Sync pattern to temporary track for canvas compatibility
 	// Use a more controlled approach to avoid reactive loops
@@ -967,7 +1035,7 @@
 	<div class="main-content" style="margin-left: {viewMode === 'arrangement' ? sidebarWidth : 0}px;">
 		{#if viewMode === 'arrangement'}
 			<!-- Arrangement View -->
-			<div class="arrangement-view">
+			<div class="arrangement-view" class:automation-open={$automationStore.length > 0}>
 				<div 
 					class="timeline-area" 
 					role="region"
@@ -1209,6 +1277,12 @@
 												{@const effectLeft = beatToPixel(timelineEffect.startBeat)}
 												{@const effectWidth = Math.max(20, beatToPixel(timelineEffect.duration))}
 											{#if effect}
+												{@const clipHeight = PATTERN_ROW_HEIGHT - 18}
+												{@const automationCurves = (() => {
+													// Explicitly reference $automationStore to make this reactive
+													const _ = $automationStore;
+													return getAutomationCurvesForEffect(effect.id, timelineEffect.id);
+												})()}
 												<div
 													class="timeline-clip timeline-effect {selectedEffectId === timelineEffect.id ? 'selected' : ''} {isDraggingClip?.id === timelineEffect.id && isDraggingClip?.type === 'effect' ? 'dragging' : ''}"
 													style="
@@ -1234,6 +1308,22 @@
 														}
 													}}
 												>
+													<!-- Automation curve visualization overlay -->
+													{#if automationCurves.length > 0}
+														<svg
+															class="envelope-curve-visualization"
+															width={effectWidth}
+															height={clipHeight}
+															style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1;"
+														>
+															{#each automationCurves as curveItem}
+																{@const curvePath = generateAutomationCurvePath(effectWidth, clipHeight, curveItem.automation, timelineEffect.startBeat, timelineEffect.duration)}
+																{#if curvePath}
+																	<path d={curvePath} fill={effect.color} fill-opacity="0.5" />
+																{/if}
+															{/each}
+														</svg>
+													{/if}
 													<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
 													<span class="clip-label">
 														{effect.name}
@@ -1337,7 +1427,7 @@
 				<div class="automation-panel-container">
 					<div class="automation-windows-container">
 						{#if $automationStore[0]}
-							<AutomationCurveEditor window={$automationStore[0]} />
+							<AutomationCurveEditor automationWindow={$automationStore[0]} />
 						{/if}
 					</div>
 				</div>

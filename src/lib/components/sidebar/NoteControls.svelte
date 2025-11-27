@@ -1,11 +1,12 @@
 <script lang="ts">
 	import type { StandaloneInstrument, Pattern } from '$lib/types/pattern';
-	import { projectStore } from '$lib/stores/projectStore';
-	import { engineStore } from '$lib/stores/engineStore';
-	import { editorModeStore } from '$lib/stores/editorModeStore';
-	import { midiToNoteName, noteNameToMidi } from '$lib/audio/utils/midiUtils';
-	import { getInputValue } from './sidebarUtils';
-	import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
+import { projectStore } from '$lib/stores/projectStore';
+import { engineStore } from '$lib/stores/engineStore';
+import { editorModeStore } from '$lib/stores/editorModeStore';
+import { midiToNoteName, noteNameToMidi } from '$lib/audio/utils/midiUtils';
+import { getInputValue } from './sidebarUtils';
+import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
+import NumericInput from './NumericInput.svelte';
 	
 	let engine: any = null;
 	engineStore.subscribe((e) => (engine = e));
@@ -182,17 +183,15 @@
 					placeholder={isMultiSelect && hasMixedValues((n) => n.pitch, 60) ? "Mixed" : "C4"}
 					title="Enter note name (e.g., C4, D#5)"
 				/>
-				<input
+				<NumericInput
 					id="pitch-number"
-					type="number"
-					min="0"
-					max="127"
-					step="1"
+					min={0}
+					max={127}
+					step={1}
 					value={currentPitch}
-					on:input={(e) => updateNodePitch(Number(getInputValue(e)))}
-					class="numeric-input"
-					placeholder={isMultiSelect && hasMixedValues((n) => n.pitch, 60) ? "Mixed" : ""}
+					placeholder={isMultiSelect && hasMixedValues((n) => n.pitch, 60) ? 'Mixed' : ''}
 					title="MIDI note number (0-127)"
+					onInput={updateNodePitch}
 				/>
 			</div>
 		</div>
@@ -215,16 +214,14 @@
 				value={currentVelocity}
 				on:input={(e) => updateNodeVelocity(Number(getInputValue(e)))}
 			/>
-			<input
+			<NumericInput
 				id="velocity-number"
-				type="number"
-				min="0"
-				max="1"
-				step="0.01"
+				min={0}
+				max={1}
+				step={0.01}
 				value={currentVelocity}
-				on:input={(e) => updateNodeVelocity(Number(getInputValue(e)))}
-				class="numeric-input"
-				placeholder={isMultiSelect && hasMixedValues((n) => n.velocity, 1.0) ? "Mixed" : ""}
+				placeholder={isMultiSelect && hasMixedValues((n) => n.velocity, 1.0) ? 'Mixed' : ''}
+				onInput={updateNodeVelocity}
 			/>
 		</div>
 	</div>
@@ -246,16 +243,14 @@
 				value={currentVelocity}
 				on:input={(e) => updateNodeVelocity(Number(getInputValue(e)))}
 			/>
-			<input
+			<NumericInput
 				id="velocity-number"
-				type="number"
-				min="0"
-				max="1"
-				step="0.01"
+				min={0}
+				max={1}
+				step={0.01}
 				value={currentVelocity}
-				on:input={(e) => updateNodeVelocity(Number(getInputValue(e)))}
-				class="numeric-input"
-				placeholder={isMultiSelect && hasMixedValues((n) => n.velocity, 1.0) ? "Mixed" : ""}
+				placeholder={isMultiSelect && hasMixedValues((n) => n.velocity, 1.0) ? 'Mixed' : ''}
+				onInput={updateNodeVelocity}
 			/>
 		</div>
 	</div>
@@ -263,19 +258,16 @@
 
 <div class="section">
 	<label for="division-input">Division</label>
-	<input
+	<NumericInput
 		id="division-input"
-		type="number"
-		min="1"
+		min={1}
 		value={currentDivision}
-		on:input={(e) => {
-			const div = Number(getInputValue(e));
-			if (div > 0) {
-				updateNodeDivision(div);
+		placeholder={isMultiSelect && hasMixedValues((n) => n.division, 1) ? 'Mixed' : ''}
+		onInput={(val) => {
+			if (val > 0) {
+				updateNodeDivision(val);
 			}
 		}}
-		class="numeric-input"
-		placeholder={isMultiSelect && hasMixedValues((n) => n.division, 1) ? "Mixed" : ""}
 	/>
 </div>
 
