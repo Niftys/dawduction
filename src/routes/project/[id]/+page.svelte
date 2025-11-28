@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
@@ -32,6 +32,7 @@
 	import TimelineRuler from '$lib/components/timeline/TimelineRuler.svelte';
 	import TimelineTrackRow from '$lib/components/timeline/TimelineTrackRow.svelte';
 	import ProjectSkeleton from '$lib/components/skeletons/ProjectSkeleton.svelte';
+	import WelcomeModal from '$lib/components/WelcomeModal.svelte';
 	import '$lib/styles/components/ProjectView.css';
 	import '$lib/styles/components/ArrangementView.css';
 
@@ -41,6 +42,7 @@
 	let timelineAreaElement: HTMLDivElement | null = null;
 	let hasScrolledToStart = false;
 	let currentProjectId: string | null = null;
+	let showWelcomeModal = false;
 	
 	projectStore.subscribe((p) => {
 		project = p;
@@ -57,10 +59,10 @@
 	// Don't subscribe to loadingStore - that's for overlay operations only
 
 	// View mode from store
-	$: viewMode = $viewStore;
-	let previousViewMode: string | null = null;
+	let viewMode: 'arrangement' | 'pattern' = 'arrangement';
+	$: viewMode = $viewStore || 'arrangement';
 	
-	// Sidebar state - reduced width to make arrangement editor wider
+	// Sidebar width
 	const sidebarWidth = 240;
 	
 	// Selected pattern for pattern view
@@ -71,8 +73,17 @@
 	let editingEffectId: string | null = null;
 	let editingEnvelopeId: string | null = null;
 	
-	// Computed margin-left for main-content to ensure it's always correct
-	$: mainContentMarginLeft = viewMode === 'arrangement' ? sidebarWidth : 0;
+	// Reset scroll position when timeline element becomes available
+	$: if (timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart) {
+		// Set scroll to 0 immediately when element is available
+		timelineAreaElement.scrollLeft = 0;
+		// Also set it after a microtask to override any browser scroll restoration
+		setTimeout(() => {
+			if (timelineAreaElement) {
+				timelineAreaElement.scrollLeft = 0;
+			}
+		}, 0);
+	}
 	
 	// Update CSS variable for sidebar width - ensure it's set immediately
 	if (typeof document !== 'undefined') {
@@ -80,6 +91,28 @@
 	}
 	$: if (typeof document !== 'undefined') {
 		document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+	}
+
+	// Function to check and show welcome modal
+	function checkAndShowWelcomeModal() {
+		if (typeof window === 'undefined') return;
+		
+		const projectId = $page.params.id;
+		if (!projectId) return;
+		
+		// Check if modal has been shown for this project in this session
+		const welcomeKey = `welcome_shown_${projectId}`;
+		const hasShownWelcome = sessionStorage.getItem(welcomeKey);
+		
+		// Show modal if it hasn't been shown yet
+		if (!hasShownWelcome) {
+			// Mark as shown immediately to prevent multiple modals
+			sessionStorage.setItem(welcomeKey, 'true');
+			// Show modal after a short delay to ensure project is loaded
+			setTimeout(() => {
+				showWelcomeModal = true;
+			}, 100);
+		}
 	}
 
 	onMount(async () => {
@@ -112,9 +145,12 @@
 		
 		// Simple scroll to beginning after project loads
 		if (project && viewMode === 'arrangement') {
+			// Scroll to beginning
 			setTimeout(() => {
 				if (timelineAreaElement) {
 					timelineAreaElement.scrollLeft = 0;
+					// Force a reflow to ensure everything is positioned correctly
+					timelineAreaElement.offsetHeight;
 				}
 			}, 300);
 		}
@@ -123,6 +159,8 @@
 		if (project && project.id === $page.params.id) {
 			// Project already loaded, skip loading state
 			isLoading = false;
+			// Check if welcome modal should be shown
+			checkAndShowWelcomeModal();
 			return;
 		}
 		
@@ -136,6 +174,8 @@
 						const loadedProject = JSON.parse(saved);
 						projectStore.set(loadedProject);
 						isLoading = false;
+						// Check if welcome modal should be shown
+						checkAndShowWelcomeModal();
 						return;
 					} catch (e) {
 						console.error('Failed to load sandbox project from localStorage:', e);
@@ -164,6 +204,8 @@
 				});
 			}
 			isLoading = false;
+			// Check if welcome modal should be shown
+			checkAndShowWelcomeModal();
 			return;
 		}
 		
@@ -193,6 +235,8 @@
 				});
 			}
 			isLoading = false;
+			// Check if welcome modal should be shown
+			checkAndShowWelcomeModal();
 		} else if (loadedProject) {
 			// Check if we've already reloaded for this project to avoid infinite loop
 			// Only reload on initial load, not on manual page reloads
@@ -215,6 +259,8 @@
 			// If we've already reloaded, just set the project normally
 			projectStore.set(loadedProject);
 			isLoading = false;
+			// Check if welcome modal should be shown
+			checkAndShowWelcomeModal();
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {
@@ -236,26 +282,13 @@
 				});
 			}
 			isLoading = false;
+			// Check if welcome modal should be shown
+			checkAndShowWelcomeModal();
 		}
 		
-		// Set initial CSS variable - ensure it's set immediately
+		// Set CSS variable for sidebar width
 		if (typeof document !== 'undefined') {
 			document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
-			// Force a reflow to ensure styles are applied
-			document.documentElement.offsetHeight;
-		}
-
-		// Initialize previous view mode
-		previousViewMode = viewMode;
-		
-		// Ensure main-content margin is applied correctly on mount
-		if (typeof document !== 'undefined' && viewMode === 'arrangement') {
-			setTimeout(() => {
-				const mainContent = document.querySelector('.main-content') as HTMLElement;
-				if (mainContent) {
-					mainContent.style.marginLeft = `${sidebarWidth}px`;
-				}
-			}, 0);
 		}
 	});
 	
@@ -307,12 +340,32 @@
 			}
 		}, 200);
 	}
+	
+	// Force layout recalculation when arrangement view is first rendered
+	$: if (project && !isLoading && viewMode === 'arrangement' && typeof window !== 'undefined') {
+		// Use requestAnimationFrame to ensure DOM is ready
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				const mainContent = document.querySelector('.main-content.has-sidebar');
+				if (mainContent) {
+					// Force a reflow to ensure the margin-left is applied
+					(mainContent as HTMLElement).offsetHeight;
+				}
+			});
+		});
+	}
 
 	onDestroy(() => {
 		// Clean up global event listeners
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('mousemove', handleGlobalMouseMove);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			
+			// Clean up click outside listener
+			if (clickOutsideListenerAttached) {
+				window.removeEventListener('click', handleClickOutside);
+				clickOutsideListenerAttached = false;
+			}
 			
 			// Clean up localStorage auto-save
 			if (saveToLocalStorage) {
@@ -324,13 +377,6 @@
 		}
 	});
 	
-	// Reset scroll flag when switching to arrangement view
-	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement') {
-		hasScrolledToStart = false;
-		previousViewMode = viewMode;
-	} else if (previousViewMode !== viewMode) {
-		previousViewMode = viewMode;
-	}
 
 	$: patterns = project?.patterns || [];
 	$: effects = project?.effects || [];
@@ -470,6 +516,16 @@
 		if (isDraggingPlayhead || isResizing || isDraggingClip) return;
 		
 		const target = e.target as HTMLElement;
+		
+		// CRITICAL: Check for dropdown menu elements FIRST before doing anything else
+		if (target.closest('.add-track-menu') ||
+		    target.closest('.add-track-dropdown-ruler') ||
+		    target.closest('.add-track-trigger') ||
+		    (target.tagName === 'BUTTON' && target.closest('.add-track-menu'))) {
+			console.log('[handleTimelineClick] Ignoring click on dropdown menu');
+			return;
+		}
+		
 		// Don't handle clicks on interactive elements
 		if (target.closest('.timeline-clip') || 
 		    target.closest('.row-label') || 
@@ -500,8 +556,19 @@
 		if (isDraggingPlayhead) return; // Don't handle click if we just finished dragging
 		
 		const target = e.target as HTMLElement;
+		
+		// CRITICAL: Check for dropdown menu elements FIRST
+		if (target.closest('.add-track-menu') ||
+		    target.closest('.add-track-dropdown-ruler') ||
+		    target.closest('.add-track-trigger') ||
+		    (target.tagName === 'BUTTON' && target.closest('.add-track-menu'))) {
+			console.log('[handleRulerClick] Ignoring click on dropdown menu');
+			return;
+		}
+		
 		// Don't handle clicks on the spacer or interactive elements
-		if (target.closest('.ruler-label-spacer') || target.closest('button') || target.closest('.add-track-menu')) {
+		if (target.closest('.ruler-label-spacer') || 
+		    target.closest('button')) {
 			return;
 		}
 		
@@ -1026,18 +1093,49 @@
 	let showAddTrackMenu = false;
 	
 	function createTimelineTrack(type: 'pattern' | 'effect' | 'envelope', patternId?: string) {
-		if (!project) return;
-		const newTrack = projectStore.createTimelineTrack(type, patternId);
-		projectStore.addTimelineTrack(newTrack);
-		showAddTrackMenu = false;
+		console.log('[createTimelineTrack] Called with type:', type, 'project exists:', !!project);
+		if (!project) {
+			console.error('[createTimelineTrack] No project available');
+			return;
+		}
+		
+		try {
+			const newTrack = projectStore.createTimelineTrack(type, patternId);
+			console.log('[createTimelineTrack] Track created:', newTrack);
+			projectStore.addTimelineTrack(newTrack);
+			console.log('[createTimelineTrack] Track added to store');
+			showAddTrackMenu = false;
+			console.log('[createTimelineTrack] Menu closed');
+		} catch (error) {
+			console.error('[createTimelineTrack] Error creating track:', error);
+		}
+	}
+	
+	function toggleAddTrackMenu() {
+		console.log('[toggleAddTrackMenu] Current state:', showAddTrackMenu);
+		showAddTrackMenu = !showAddTrackMenu;
+		console.log('[toggleAddTrackMenu] New state:', showAddTrackMenu);
 	}
 	
 	// Close dropdown when clicking outside
 	function handleClickOutside(event: MouseEvent) {
-		const target = event.target;
-		if (!target.closest('.add-track-dropdown-ruler')) {
-			showAddTrackMenu = false;
+		if (!showAddTrackMenu) return;
+		
+		const target = event.target as HTMLElement;
+		console.log('[handleClickOutside] Target:', target, 'closest menu:', target.closest('.add-track-menu'));
+		
+		// Don't close if clicking inside the dropdown trigger, menu, or any button within
+		// Check multiple selectors to be thorough
+		if (target.closest('.add-track-dropdown-ruler') || 
+		    target.closest('.add-track-menu') ||
+		    target.closest('.add-track-trigger') ||
+		    (target.tagName === 'BUTTON' && target.closest('.add-track-menu'))) {
+			console.log('[handleClickOutside] Click was inside menu, not closing');
+			return;
 		}
+		
+		console.log('[handleClickOutside] Click was outside, closing menu');
+		showAddTrackMenu = false;
 	}
 	
 	// Track reordering
@@ -1118,10 +1216,20 @@
 	}
 	
 	// Handle click outside for dropdown
-	$: if (showAddTrackMenu && typeof window !== 'undefined') {
-		window.addEventListener('click', handleClickOutside);
-	} else if (typeof window !== 'undefined') {
-		window.removeEventListener('click', handleClickOutside);
+	// Use a ref to track if listener is attached to avoid duplicate listeners
+	let clickOutsideListenerAttached = false;
+	
+	$: if (showAddTrackMenu && typeof window !== 'undefined' && !clickOutsideListenerAttached) {
+		// Use nextTick to ensure listener is added after current event cycle
+		// This allows the button click to fire first
+		tick().then(() => {
+			// Use capture phase false (bubble phase) so button clicks fire first
+			window.addEventListener('click', handleClickOutside, false);
+			clickOutsideListenerAttached = true;
+		});
+	} else if (!showAddTrackMenu && typeof window !== 'undefined' && clickOutsideListenerAttached) {
+		window.removeEventListener('click', handleClickOutside, false);
+		clickOutsideListenerAttached = false;
 	}
 
 	function deleteTimelineTrack(trackId: string) {
@@ -1353,7 +1461,28 @@
 	});
 </script>
 
+<style>
+	/* Ensure margin is set immediately via CSS for arrangement view */
+	/* Use :global() since this is a scoped style block */
+	:global(.project-view .main-content.has-sidebar) {
+		margin-left: 240px !important;
+	}
+	
+	/* CRITICAL: When pattern-sidebar exists as a sibling, apply margin immediately */
+	/* This works even before JavaScript runs */
+	:global(.project-view .pattern-sidebar + .main-content) {
+		margin-left: 240px !important;
+	}
+	
+	/* Also ensure it's set when pattern-sidebar exists anywhere */
+	:global(.project-view:has(.pattern-sidebar) .main-content) {
+		margin-left: 240px !important;
+	}
+</style>
+
 <Toolbar />
+
+<WelcomeModal bind:isOpen={showWelcomeModal} />
 
 {#if isLoading}
 	<ProjectSkeleton viewMode={viewMode} />
@@ -1374,7 +1503,10 @@
 	{/if}
 
 	<!-- Main Content Area -->
-	<div class="main-content" style="margin-left: {mainContentMarginLeft}px !important;">
+	<div 
+		class="main-content" 
+		class:has-sidebar={viewMode === 'arrangement'}
+	>
 		{#if viewMode === 'arrangement'}
 			<!-- Arrangement View -->
 			<div class="arrangement-view" class:automation-open={$automationStore.length > 0}>
@@ -1388,6 +1520,11 @@
 					on:mousemove={(e) => handleTimelineMouseMove(e)}
 					on:mouseup={() => handleTimelineMouseUp()}
 					on:mouseleave={() => handleTimelineMouseUp()}
+					on:load={() => {
+						if (timelineAreaElement) {
+							timelineAreaElement.scrollLeft = 0;
+						}
+					}}
 				>
 					<TimelineRuler
 						totalLength={timeline.totalLength}
@@ -1396,7 +1533,7 @@
 						bind:showAddTrackMenu
 						onZoomWheel={handleTimelineWheel}
 						onCreateTrack={createTimelineTrack}
-						onToggleAddTrackMenu={() => showAddTrackMenu = !showAddTrackMenu}
+						onToggleAddTrackMenu={toggleAddTrackMenu}
 						onRulerClick={handleRulerClick}
 					/>
 

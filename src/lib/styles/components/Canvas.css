@@ -8,12 +8,12 @@
 	transition: top 0.3s ease, left 0.3s ease;
 }
 
-:global(body.midi-editor-visible) .canvas {
+body.midi-editor-visible .canvas {
 	top: 310px; /* Toolbar (60px) + MIDI Editor (250px) */
 }
 
 /* When on pattern page with editor visible, account for pattern header */
-:global(.pattern-editor) :global(body.midi-editor-visible) .canvas {
+.pattern-editor body.midi-editor-visible .canvas {
 	top: 360px; /* Toolbar (60px) + Pattern Header (50px) + MIDI Editor (250px) */
 }
 

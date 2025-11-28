@@ -14,7 +14,7 @@
 }
 
 /* When on pattern page, position below pattern header (60px toolbar + 50px header = 110px) */
-:global(.pattern-editor) .velocity-editor {
+.pattern-editor .velocity-editor {
 	top: 110px; /* Below toolbar (60px) + pattern header (50px) */
 }
 

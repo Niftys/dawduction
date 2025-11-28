@@ -139,13 +139,8 @@
 	font-size: 13px;
 }
 
-.timeline-area {
-	flex: 1;
-	position: relative;
-	overflow-x: auto;
-	overflow-y: auto;
-	background: #151515;
-}
+/* Timeline area styles moved to ProjectView.css to avoid conflicts */
+/* This file should not define .timeline-area as it conflicts with ProjectView.css */
 
 .timeline-ruler {
 	position: relative;
@@ -230,7 +225,7 @@
 	overflow: visible;
 	position: sticky;
 	left: 0;
-	z-index: 1001;
+	z-index: 200;
 	background: #1a1a1a;
 }
 
@@ -327,6 +322,8 @@
 	transition: all 0.2s ease;
 	flex-shrink: 0;
 	margin: 0;
+	position: relative;
+	z-index: 5;
 }
 
 .track-mute:hover,
@@ -424,7 +421,6 @@
 .timeline-clip.greyed-out {
 	opacity: 0.5;
 	filter: grayscale(100%);
-}
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 

@@ -13,7 +13,7 @@
 	export let trackEffects: TimelineEffect[];
 	export let trackEnvelopes: TimelineEnvelope[];
 	export let trackPattern: Pattern | null;
-	export const patterns: Pattern[] = [];
+	export let patterns: Pattern[] = [];
 	export let effects: Effect[];
 	export let envelopes: Envelope[];
 	export let timeline: any;
@@ -46,9 +46,9 @@
 	export let onClipClick: (clipId: string, type: 'effect' | 'envelope') => void;
 	export let onClipKeyDown: (clipId: string, type: 'effect' | 'envelope') => void;
 	export let onDeleteClip: (clipId: string, type: 'clip' | 'effect' | 'envelope') => void;
-	export const onAddClipToTimeline: (patternId: string, beat: number, trackId?: string) => void = () => {};
-	export const onAddEffectToTimeline: (effectId: string, beat: number, trackId?: string) => void = () => {};
-	export const onAddEnvelopeToTimeline: (envelopeId: string, beat: number, trackId?: string) => void = () => {};
+	export let onAddClipToTimeline: (patternId: string, beat: number, trackId?: string) => void = () => {};
+	export let onAddEffectToTimeline: (effectId: string, beat: number, trackId?: string) => void = () => {};
+	export let onAddEnvelopeToTimeline: (envelopeId: string, beat: number, trackId?: string) => void = () => {};
 	export let findPatternById: (patternId: string | undefined) => Pattern | null;
 
 	$: gridLines = generateGridLines(totalLength, pixelsPerBeat);

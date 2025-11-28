@@ -6,7 +6,19 @@
 	background: #1a1a1a;
 }
 
-.project-view :global(.canvas) {
+/* ULTIMATE FIX: This rule MUST work - applies margin when sidebar is present */
+/* This is the most direct selector possible - no dependencies on classes or JS */
+/* Use :has() but also provide fallback for browsers that don't support it */
+.project-view:has(.pattern-sidebar) .main-content {
+	margin-left: 240px !important;
+}
+
+/* Fallback for browsers without :has() support - use adjacent sibling */
+.project-view .pattern-sidebar + .main-content {
+	margin-left: 240px !important;
+}
+
+.project-view .canvas {
 	left: var(--sidebar-width, 280px);
 	transition: left 0.3s ease;
 }
@@ -246,7 +258,7 @@
 }
 
 /* Main Content */
-.main-content {
+.project-view .main-content {
 	flex: 1;
 	display: flex;
 	flex-direction: column;
@@ -260,11 +272,13 @@
 	position: relative;
 	/* Ensure main content stays behind sidebar */
 	z-index: 1;
+	/* Default: no margin (for pattern view) */
+	margin-left: 0;
 }
 
-/* When in arrangement view, ensure main-content accounts for sidebar */
-.project-view:has(.pattern-sidebar) .main-content {
-	margin-left: var(--sidebar-width, 240px) !important;
+/* When in arrangement view, apply margin for sidebar */
+.project-view .main-content.has-sidebar {
+	margin-left: var(--sidebar-width, 240px);
 }
 
 
@@ -286,8 +300,8 @@
 .timeline-area {
 	flex: 1;
 	position: relative;
-	overflow-x: auto;
-	overflow-y: auto;
+	overflow-x: auto !important;
+	overflow-y: auto !important;
 	background: #151515;
 	scrollbar-width: thin;
 	scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
@@ -298,6 +312,17 @@
 	/* Ensure timeline area stays behind sidebar */
 	z-index: 1;
 	/* Ensure timeline content starts after sidebar - padding will be handled by main-content margin */
+	/* Ensure content doesn't start at negative position */
+	margin-left: 0;
+	padding-left: 0;
+	/* Prevent browser from auto-scrolling or restoring scroll position */
+	scroll-behavior: auto;
+}
+
+/* Ensure overflow-y is always auto for timeline-area in arrangement view */
+.arrangement-view .timeline-area {
+	overflow-y: auto !important;
+	overflow-x: auto !important;
 }
 
 .timeline-area::-webkit-scrollbar {
@@ -326,12 +351,13 @@
 	display: flex;
 	position: sticky;
 	top: 0;
-	z-index: 20;
+	z-index: 100;
 	background: #1a1a1a;
 	min-width: fit-content;
 	width: max-content;
 	flex-shrink: 0;
 	box-sizing: border-box;
+	overflow: visible;
 }
 
 .ruler-label-spacer {
@@ -340,12 +366,13 @@
 	border-right: 1px solid rgba(255, 255, 255, 0.1);
 	position: sticky;
 	left: 0;
-	z-index: 1001;
+	z-index: 200;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: flex-start;
 	padding-top: 4px;
+	overflow: visible;
 }
 
 .zoom-indicator {
@@ -425,7 +452,7 @@
 	right: 0;
 	bottom: 0;
 	pointer-events: none;
-	z-index: 30;
+	z-index: 50;
 	overflow: visible;
 	/* Ensure playhead stays within timeline area, not behind sidebar */
 }
@@ -458,7 +485,7 @@
 	border-radius: 50%;
 	cursor: grab;
 	box-shadow: 0 2px 8px rgba(0, 255, 136, 0.7);
-	z-index: 100;
+	z-index: 51;
 	pointer-events: auto;
 	border: 2px solid #0a0a0a;
 	transition: transform 0.1s ease, box-shadow 0.1s ease;
@@ -511,12 +538,18 @@
 	flex-shrink: 0;
 	box-sizing: border-box;
 	align-items: stretch;
+	/* Ensure pattern-rows starts at position 0, not negative */
+	margin-left: 0;
+	padding-left: 0;
+	left: 0;
 }
 
 .add-track-dropdown-ruler {
 	position: relative;
 	width: 100%;
 	margin-top: 20px;
+	overflow: visible;
+	z-index: 300;
 }
 
 .add-track-trigger {
@@ -536,18 +569,21 @@
 }
 
 .add-track-menu {
-	position: absolute;
-	top: 100%;
-	left: 0;
-	background: #2d2d2d;
-	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 4px;
+	position: fixed !important;
+	background: #252525 !important;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 6px;
 	margin-top: 4px;
-	min-width: 120px;
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-	z-index: 100;
-	/* Ensure menu stays within timeline area, not behind sidebar */
-	max-width: calc(100vw - var(--sidebar-width, 240px));
+	min-width: 160px;
+	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8), 0 2px 8px rgba(0, 0, 0, 0.5);
+	z-index: 100000 !important;
+	pointer-events: auto !important;
+	overflow: visible;
+	/* Ensure menu is above everything - use transform to create new stacking context */
+	transform: translateZ(0);
+	-webkit-transform: translateZ(0);
+	/* Make sure it's fully opaque */
+	opacity: 1 !important;
 }
 
 .add-track-menu button {
@@ -556,23 +592,38 @@
 	background: transparent;
 	color: #e8e8e8;
 	border: none;
-	padding: 8px 12px;
+	padding: 10px 16px;
 	cursor: pointer;
-	font-size: 12px;
+	font-size: 13px;
+	font-weight: 500;
 	text-align: left;
-	transition: background 0.2s ease;
+	transition: all 0.15s ease;
+	pointer-events: auto !important;
+	position: relative;
+	z-index: 100001 !important;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	/* Ensure button is clickable */
+	touch-action: manipulation;
+	-webkit-tap-highlight-color: transparent;
 }
 
 .add-track-menu button:hover {
-	background: #333333;
+	background: rgba(122, 184, 255, 0.15);
+	color: #7ab8ff;
+}
+
+.add-track-menu button:active {
+	background: rgba(122, 184, 255, 0.25);
 }
 
 .add-track-menu button:first-child {
-	border-radius: 4px 4px 0 0;
+	border-radius: 6px 6px 0 0;
+	border-top: none;
 }
 
 .add-track-menu button:last-child {
-	border-radius: 0 0 4px 4px;
+	border-radius: 0 0 6px 6px;
+	border-bottom: none;
 }
 
 .track-context-menu {
@@ -581,7 +632,7 @@
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 6px;
 	padding: 4px;
-	z-index: 10000;
+	z-index: 9999;
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 	min-width: 180px;
 	backdrop-filter: blur(10px);
@@ -704,17 +755,22 @@
 	text-transform: capitalize;
 	position: sticky;
 	left: 0;
-	z-index: 1001;
-	background: #1a1a1a !important;
+	z-index: 200;
+	background: #1a1a1a;
 	cursor: move;
 	user-select: none;
+	/* Lower z-index when add track menu is open to prevent blocking */
+}
+
+.project-view:has(.add-track-menu) .row-label,
+.project-view:has(.add-track-menu) .track-volume-control,
+.project-view:has(.add-track-menu) .track-mute,
+.project-view:has(.add-track-menu) .track-solo {
+	z-index: 50;
 	/* Ensure row label doesn't clip into sidebar - account for sidebar width */
 	margin-left: 0;
 	/* Ensure row label stays visible and doesn't go behind sidebar */
 	box-shadow: 2px 0 4px rgba(0, 0, 0, 0.2);
-	/* Force visibility above sidebar */
-	position: sticky !important;
-	left: 0 !important;
 }
 
 .row-label[draggable="true"] {
@@ -857,7 +913,7 @@
 	bottom: 0;
 	width: 8px;
 	cursor: ew-resize;
-	z-index: 20;
+	z-index: 15;
 	opacity: 0;
 	transition: opacity 0.2s ease, background 0.2s ease;
 	pointer-events: auto;
@@ -937,7 +993,7 @@
 	height: 300px;
 	background: #1a1a1a;
 	border-top: 1px solid rgba(255, 255, 255, 0.1);
-	z-index: 150;
+	z-index: 500;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
