@@ -5,16 +5,8 @@
 	right: 0;
 	bottom: 0;
 	background: #1a1a1a;
-	transition: top 0.3s ease, left 0.3s ease;
-}
-
-body.midi-editor-visible .canvas {
-	top: 310px; /* Toolbar (60px) + MIDI Editor (250px) */
-}
-
-/* When on pattern page with editor visible, account for pattern header */
-.pattern-editor body.midi-editor-visible .canvas {
-	top: 360px; /* Toolbar (60px) + Pattern Header (50px) + MIDI Editor (250px) */
+	transition: left 0.3s ease;
+	z-index: 1; /* Lower than MIDI editor so it overlays */
 }
 
 .canvas.grabbing {

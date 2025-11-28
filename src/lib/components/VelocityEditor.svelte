@@ -67,22 +67,6 @@
 		return !pitchEditableInstruments.includes(track.instrumentType);
 	})();
 	
-	// Update body class to adjust canvas position
-	$: {
-		if (typeof document !== 'undefined') {
-			if (shouldShow) {
-				document.body.classList.add('velocity-editor-visible');
-				// Also add midi-editor-visible for consistent canvas positioning
-				document.body.classList.add('midi-editor-visible');
-			} else {
-				document.body.classList.remove('velocity-editor-visible');
-				// Only remove midi-editor-visible if MidiEditor is not also visible
-				if (!document.body.classList.contains('midi-editor-visible')) {
-					// This will be handled by MidiEditor itself
-				}
-			}
-		}
-	}
 	
 	// Get selected nodes for the current instrument (standalone or pattern)
 	$: selectedNodes = (() => {

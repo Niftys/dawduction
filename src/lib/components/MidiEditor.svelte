@@ -62,17 +62,6 @@
 	// Show velocity editor when mode is 'velocity'
 	$: showVelocityEditor = shouldShow && editorMode === 'velocity';
 	
-	// Update body class to adjust canvas position
-	$: {
-		if (typeof document !== 'undefined') {
-			if (shouldShow) {
-				document.body.classList.add('midi-editor-visible');
-			} else {
-				document.body.classList.remove('midi-editor-visible');
-			}
-		}
-	}
-	
 	// Auto-scroll for velocity mode
 	// If velocities are high (>= 95%), ensure 100% is visible at the top
 	$: if (showVelocityEditor && !previousShouldShow && selectedNodes.length > 0) {
@@ -383,26 +372,6 @@
 
 {#if shouldShow && selectedNodes.length > 0}
 	<div class="midi-editor" bind:this={editorContainer}>
-		<!-- Mode Toggle -->
-		<div class="editor-mode-toggle">
-			<button
-				class="mode-btn"
-				class:active={editorMode === 'pitch'}
-				on:click={() => editorModeStore.setMode('pitch')}
-				title="Pitch Editor"
-			>
-				Pitch
-			</button>
-			<button
-				class="mode-btn"
-				class:active={editorMode === 'velocity'}
-				on:click={() => editorModeStore.setMode('velocity')}
-				title="Velocity Editor"
-			>
-				Velocity
-			</button>
-		</div>
-		
 		<div class="piano-roll-container">
 			{#if showPitchEditor}
 				<!-- Piano Keys (Left Side) -->
