@@ -39,6 +39,7 @@
 	let playbackState: any;
 	let isLoading = true;
 	let timelineAreaElement: HTMLDivElement | null = null;
+	let hasScrolledToStart = false;
 	
 	projectStore.subscribe((p) => {
 		project = p;
@@ -129,6 +130,7 @@
 		} else if (loadedProject) {
 			projectStore.set(loadedProject);
 			isLoading = false;
+			hasScrolledToStart = false; // Reset scroll flag for new project
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {
@@ -160,18 +162,22 @@
 		// Note: Auto-save is handled by the Save button in Toolbar
 		// No need for localStorage auto-save subscription anymore
 		
-		// Scroll timeline to beginning when project loads
-		if (typeof window !== 'undefined' && timelineAreaElement) {
-			setTimeout(() => {
-				if (timelineAreaElement) {
-					timelineAreaElement.scrollLeft = 0;
-				}
-			}, 100);
-		}
-		
 		// Initialize previous view mode
 		previousViewMode = viewMode;
 	});
+	
+	// Scroll to beginning when project loads and timeline area is available
+	$: if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
+		// Use requestAnimationFrame to ensure DOM is fully rendered
+		requestAnimationFrame(() => {
+			setTimeout(() => {
+				if (timelineAreaElement) {
+					timelineAreaElement.scrollLeft = 0;
+					hasScrolledToStart = true;
+				}
+			}, 100);
+		});
+	}
 
 	onDestroy(() => {
 		// Clean up global event listeners
@@ -183,11 +189,13 @@
 	
 	// Scroll to beginning only when switching TO arrangement view (not continuously)
 	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
-		setTimeout(() => {
-			if (timelineAreaElement) {
-				timelineAreaElement.scrollLeft = 0;
-			}
-		}, 50);
+		requestAnimationFrame(() => {
+			setTimeout(() => {
+				if (timelineAreaElement) {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 50);
+		});
 		previousViewMode = viewMode;
 	} else if (previousViewMode !== viewMode) {
 		previousViewMode = viewMode;
