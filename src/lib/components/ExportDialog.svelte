@@ -17,7 +17,7 @@
 	let exportRange: ExportRange = hasTimeline ? 'full' : 'custom';
 	let exportFormat: ExportFormat = 'wav';
 	let customStartBeat = 0;
-	let customEndBeat = 16;
+	let customEndBeat = 64; // Default to 16 measures at 4/4 time
 	let filename = '';
 	
 	// Track if user has manually set values (to prevent reactive overrides)
@@ -25,7 +25,7 @@
 	let hasCustomEnd = false;
 	
 	// Calculate available ranges
-	$: timelineLength = timeline?.totalLength || 16;
+	$: timelineLength = timeline?.totalLength || 64; // 16 measures at 4/4 time
 	
 	// Track if user is actively editing to prevent reactive overrides
 	let isEditingStart = false;
@@ -33,7 +33,7 @@
 	
 	// Initialize custom range when timeline changes (only if user hasn't set custom values)
 	$: if (timeline && timelineLength > 0 && !isEditingEnd && !hasCustomEnd) {
-		if (customEndBeat > timelineLength || customEndBeat === 16) {
+		if (customEndBeat > timelineLength || customEndBeat === 64) {
 			customEndBeat = timelineLength;
 		}
 	}
@@ -229,7 +229,7 @@
 	// Update custom range when timeline changes (only if user hasn't set custom values)
 	$: if (exportRange === 'custom' && timeline && !isEditingEnd && !isEditingStart && !hasCustomEnd) {
 		// Only update if current value is less than timeline length AND it's still the default
-		if (customEndBeat < timelineLength && customEndBeat === 16) {
+		if (customEndBeat < timelineLength && customEndBeat === 64) {
 			// Only auto-update if it's still the default value
 			customEndBeat = timelineLength;
 		}

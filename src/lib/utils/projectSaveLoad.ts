@@ -260,7 +260,7 @@ export async function loadProject(projectId: string): Promise<{ project: Project
 				clips: [],
 				effects: [],
 				envelopes: [],
-				totalLength: 16
+				totalLength: 64 // 16 measures at 4/4 time (16 * 4 = 64 beats)
 			},
 			automation: projectData.automation || undefined,
 			baseMeterTrackId: projectData.base_meter_track_id || undefined

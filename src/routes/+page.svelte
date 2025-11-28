@@ -58,7 +58,7 @@
 					clips: [],
 					effects: [],
 					envelopes: [],
-					totalLength: 16
+					totalLength: 64 // 16 measures at 4/4 time (16 * 4 = 64 beats)
 				}
 			};
 			projectStore.set(newProject);

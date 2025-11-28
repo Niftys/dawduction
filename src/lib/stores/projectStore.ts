@@ -834,7 +834,7 @@ function createProjectStore() {
 		addTimelineClip: (clip: TimelineClip) => {
 			updateFn((project) => {
 				if (!project) return project;
-				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 				const updatedTimeline = {
 					...timeline,
 					clips: [...(timeline.clips || []), clip],
@@ -886,7 +886,7 @@ function createProjectStore() {
 		updateTimelineLength: (length: number) => {
 			updateFn((project) => {
 				if (!project) return project;
-				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 				return {
 					...project,
 					timeline: {
@@ -900,7 +900,7 @@ function createProjectStore() {
 		addTimelineEffect: (effect: TimelineEffect) => {
 			updateFn((project) => {
 				if (!project) return project;
-				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 				const updatedTimeline = {
 					...timeline,
 					effects: [...(timeline.effects || []), effect],
@@ -953,7 +953,7 @@ function createProjectStore() {
 		addTimelineEnvelope: (envelope: TimelineEnvelope) => {
 			updateFn((project) => {
 				if (!project) return project;
-				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 				const updatedTimeline = {
 					...timeline,
 					envelopes: [...(timeline.envelopes || []), envelope],
@@ -1060,7 +1060,7 @@ function createProjectStore() {
 		addTimelineTrack: (track: TimelineTrack) => {
 			updateFn((project) => {
 				if (!project) return project;
-				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 				const updatedTimeline = {
 					...timeline,
 					tracks: [...(timeline.tracks || []), track]

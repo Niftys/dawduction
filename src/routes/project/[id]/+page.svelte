@@ -56,6 +56,7 @@
 
 	// View mode from store
 	$: viewMode = $viewStore;
+	let previousViewMode: string | null = null;
 	
 	// Sidebar state - reduced width to make arrangement editor wider
 	const sidebarWidth = 240;
@@ -120,7 +121,7 @@
 						clips: [],
 						effects: [],
 						envelopes: [],
-						totalLength: 16
+						totalLength: 64 // 16 measures at 4/4 time (16 * 4 = 64 beats)
 					}
 				});
 			}
@@ -144,7 +145,7 @@
 						clips: [],
 						effects: [],
 						envelopes: [],
-						totalLength: 16
+						totalLength: 64 // 16 measures at 4/4 time (16 * 4 = 64 beats)
 					}
 				});
 			}
@@ -167,21 +168,27 @@
 				}
 			}, 100);
 		}
+		
+		// Initialize previous view mode
+		previousViewMode = viewMode;
 	});
 	
-	// Scroll to beginning when switching to arrangement view
-	$: if (viewMode === 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
+	// Scroll to beginning only when switching TO arrangement view (not continuously)
+	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
 		setTimeout(() => {
 			if (timelineAreaElement) {
 				timelineAreaElement.scrollLeft = 0;
 			}
 		}, 50);
+		previousViewMode = viewMode;
+	} else if (previousViewMode !== viewMode) {
+		previousViewMode = viewMode;
 	}
 
 	$: patterns = project?.patterns || [];
 	$: effects = project?.effects || [];
 	$: envelopes = project?.envelopes || [];
-	$: timeline = project?.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 16 };
+	$: timeline = project?.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
 	
 	// Ensure tracks array exists (backward compatibility)
 	$: if (timeline && !timeline.tracks) {
