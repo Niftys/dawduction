@@ -38,6 +38,7 @@
 	let project: any;
 	let playbackState: any;
 	let isLoading = true;
+	let timelineAreaElement: HTMLDivElement | null = null;
 	
 	projectStore.subscribe((p) => {
 		project = p;
@@ -157,7 +158,25 @@
 
 		// Note: Auto-save is handled by the Save button in Toolbar
 		// No need for localStorage auto-save subscription anymore
+		
+		// Scroll timeline to beginning when project loads
+		if (typeof window !== 'undefined' && timelineAreaElement) {
+			setTimeout(() => {
+				if (timelineAreaElement) {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 100);
+		}
 	});
+	
+	// Scroll to beginning when switching to arrangement view
+	$: if (viewMode === 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
+		setTimeout(() => {
+			if (timelineAreaElement) {
+				timelineAreaElement.scrollLeft = 0;
+			}
+		}, 50);
+	}
 
 	$: patterns = project?.patterns || [];
 	$: effects = project?.effects || [];
@@ -1087,6 +1106,7 @@
 			<div class="arrangement-view" class:automation-open={$automationStore.length > 0}>
 				<div 
 					class="timeline-area" 
+					bind:this={timelineAreaElement}
 					role="region"
 					aria-label="Timeline area"
 					on:wheel={(e) => handleTimelineWheel(e)}

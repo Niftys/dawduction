@@ -1049,15 +1049,17 @@
 		>
 			<h3 id="leave-dialog-title">Save Before Leaving?</h3>
 			<p>Your project has unsaved changes. Would you like to save before going to the home page?</p>
-			<div class="dialog-buttons">
-				<button class="leave-without-saving-button" on:click={handleLeaveWithoutSaving}>
-					Leave Without Saving
-				</button>
-				<button class="cancel-button" on:click={() => showLeaveConfirm = false}>
+			<div class="dialog-actions">
+				<div class="dialog-main-actions">
+					<button class="save-and-leave-button" on:click={handleSaveAndLeave}>
+						Save & Leave
+					</button>
+					<button class="leave-without-saving-text" on:click={handleLeaveWithoutSaving}>
+						Leave Without Saving
+					</button>
+				</div>
+				<button class="cancel-text" on:click={() => showLeaveConfirm = false}>
 					Cancel
-				</button>
-				<button class="save-and-leave-button" on:click={handleSaveAndLeave}>
-					Save & Leave
 				</button>
 			</div>
 		</div>
@@ -1123,49 +1125,26 @@
 		line-height: 1.5;
 	}
 
-	.dialog-buttons {
+	.dialog-actions {
+		position: relative;
 		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		padding-bottom: 1.5rem;
+		min-height: 120px;
+	}
+
+	.dialog-main-actions {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
 		gap: 0.75rem;
-		justify-content: flex-end;
-		flex-wrap: wrap;
-	}
-
-	.leave-without-saving-button {
-		padding: 0.75rem 1.5rem;
-		background: transparent;
-		color: rgba(255, 255, 255, 0.6);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 4px;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-size: 0.9rem;
-		font-weight: 500;
-	}
-
-	.leave-without-saving-button:hover {
-		background: rgba(255, 255, 255, 0.05);
-		color: rgba(255, 255, 255, 0.8);
-	}
-
-	.cancel-button {
-		padding: 0.75rem 1.5rem;
-		background: transparent;
-		color: rgba(255, 255, 255, 0.7);
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		border-radius: 4px;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-size: 0.9rem;
-		font-weight: 500;
-	}
-
-	.cancel-button:hover {
-		background: rgba(255, 255, 255, 0.1);
-		color: #ffffff;
+		width: 100%;
 	}
 
 	.save-and-leave-button {
-		padding: 0.75rem 1.5rem;
+		padding: 0.75rem 2rem;
 		background: #00ffff;
 		color: #0f0f0f;
 		border: none;
@@ -1174,6 +1153,50 @@
 		transition: background 0.2s;
 		font-size: 0.9rem;
 		font-weight: 600;
+		width: auto;
+		min-width: 150px;
+	}
+
+	.save-and-leave-button:hover {
+		background: #00e6e6;
+	}
+
+	.leave-without-saving-text {
+		background: none;
+		border: none;
+		color: rgba(255, 255, 255, 0.6);
+		cursor: pointer;
+		transition: color 0.2s;
+		font-size: 0.85rem;
+		font-weight: 400;
+		padding: 0.25rem 0.5rem;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+
+	.leave-without-saving-text:hover {
+		color: rgba(255, 255, 255, 0.9);
+	}
+
+	.cancel-text {
+		position: absolute;
+		bottom: 0;
+		right: 0;
+		background: none;
+		border: none;
+		color: rgba(255, 255, 255, 0.5);
+		cursor: pointer;
+		transition: color 0.2s;
+		font-size: 0.85rem;
+		font-weight: 400;
+		padding: 0.25rem 0.5rem;
+		text-decoration: underline;
+		text-underline-offset: 3px;
+		margin: 0;
+	}
+
+	.cancel-text:hover {
+		color: rgba(255, 255, 255, 0.8);
 	}
 
 	.save-and-leave-button:hover {

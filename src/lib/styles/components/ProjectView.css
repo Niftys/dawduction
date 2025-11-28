@@ -267,6 +267,25 @@
 	overflow-x: auto;
 	overflow-y: hidden;
 	background: #151515;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
+}
+
+.timeline-area::-webkit-scrollbar {
+	height: 12px;
+}
+
+.timeline-area::-webkit-scrollbar-track {
+	background: rgba(0, 0, 0, 0.2);
+}
+
+.timeline-area::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.3);
+	border-radius: 6px;
+}
+
+.timeline-area::-webkit-scrollbar-thumb:hover {
+	background: rgba(255, 255, 255, 0.5);
 }
 
 .timeline-ruler-container {

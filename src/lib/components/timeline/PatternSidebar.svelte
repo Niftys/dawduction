@@ -95,13 +95,15 @@
 					</span>
 				{/if}
 				<span class="pattern-instrument">{pattern.instrumentType}</span>
-				<button 
-					class="pattern-delete" 
-					on:click|stopPropagation={() => deletePattern(pattern.id)} 
-					title="Delete pattern"
-				>
-					×
-				</button>
+				{#if viewMode !== 'arrangement'}
+					<button 
+						class="pattern-delete" 
+						on:click|stopPropagation={() => deletePattern(pattern.id)} 
+						title="Delete pattern"
+					>
+						×
+					</button>
+				{/if}
 			</button>
 		{/each}
 		{#if patterns.length === 0}
