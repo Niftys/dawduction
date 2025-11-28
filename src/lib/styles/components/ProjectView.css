@@ -280,6 +280,8 @@
 	height: 100%;
 	/* Prevent content from extending into sidebar */
 	overflow-clip-margin: 0;
+	/* Ensure scroll container works properly */
+	-webkit-overflow-scrolling: touch;
 }
 
 .timeline-area::-webkit-scrollbar {
@@ -312,6 +314,10 @@
 	background: #1a1a1a;
 	min-width: fit-content;
 	width: max-content;
+	/* Ensure ruler container doesn't shrink and allows horizontal scrolling */
+	flex-shrink: 0;
+	/* Ensure container extends to match pattern rows width */
+	box-sizing: border-box;
 }
 
 .ruler-label-spacer {
@@ -347,7 +353,8 @@
 	flex-shrink: 0;
 	cursor: pointer;
 	user-select: none;
-	width: max-content;
+	/* Width is set inline, ensure it doesn't shrink */
+	box-sizing: border-box;
 }
 
 .timeline-ruler:hover {
@@ -488,6 +495,10 @@
 	/* Ensure vertical scrolling works - allow content to extend beyond viewport */
 	min-height: 100%;
 	height: fit-content;
+	/* Force container to be wide enough for scrolling */
+	flex-shrink: 0;
+	/* Ensure container extends properly */
+	box-sizing: border-box;
 }
 
 .add-track-dropdown-ruler {
@@ -642,12 +653,14 @@
 	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	position: relative;
 	cursor: crosshair;
-	/* Ensure row can extend horizontally */
+	/* Ensure row can extend horizontally - must be at least as wide as label + clips */
 	min-width: fit-content;
 	width: max-content;
 	flex-shrink: 0;
 	/* Prevent row from extending into sidebar area */
 	overflow: visible;
+	/* Ensure row is wide enough to enable scrolling */
+	box-sizing: border-box;
 }
 
 .pattern-row.drag-over {
@@ -698,11 +711,11 @@
 	min-height: 100%;
 	flex-shrink: 0;
 	/* Width is set inline based on beatToPixel(totalLength, pixelsPerBeat) */
-	/* Ensure content can extend for horizontal scrolling */
-	min-width: fit-content;
-	width: max-content;
+	/* Don't set width here - it's set inline to ensure proper calculation */
 	/* Prevent clips from extending into negative space or sidebar */
 	overflow: visible;
+	/* Ensure clips area doesn't shrink */
+	box-sizing: border-box;
 }
 
 .grid-line {
