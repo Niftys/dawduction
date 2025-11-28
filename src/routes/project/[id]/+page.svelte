@@ -44,6 +44,19 @@
 	
 	projectStore.subscribe((p) => {
 		project = p;
+		// ALWAYS scroll to beginning when project is set and timeline is ready
+		if (p && !isLoading && timelineAreaElement && viewMode === 'arrangement' && typeof window !== 'undefined') {
+			// Force scroll to 0 - multiple attempts to ensure it works
+			const forceScroll = () => {
+				if (timelineAreaElement) {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			};
+			setTimeout(forceScroll, 50);
+			setTimeout(forceScroll, 150);
+			setTimeout(forceScroll, 300);
+			setTimeout(forceScroll, 500);
+		}
 		// Stop loading once project is loaded (using local state, not loadingStore)
 		if (project && isLoading) {
 			setTimeout(() => {
@@ -105,15 +118,16 @@
 		if (project && project.id === $page.params.id) {
 			// Project already loaded, skip loading state
 			isLoading = false;
-			// Still need to scroll if we haven't yet
-			if (!hasScrolledToStart && timelineAreaElement && viewMode === 'arrangement') {
-				setTimeout(() => {
-					if (timelineAreaElement) {
-						timelineAreaElement.scrollLeft = 0;
-						hasScrolledToStart = true;
-					}
-				}, 200);
-			}
+			// Force scroll to beginning immediately and with delays
+			const forceScroll = () => {
+				if (timelineAreaElement && typeof window !== 'undefined') {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			};
+			setTimeout(forceScroll, 50);
+			setTimeout(forceScroll, 150);
+			setTimeout(forceScroll, 300);
+			setTimeout(forceScroll, 500);
 			return;
 		}
 		
@@ -146,7 +160,22 @@
 		} else if (loadedProject) {
 			projectStore.set(loadedProject);
 			isLoading = false;
-			// Scroll flag will be reset by project ID check above
+			// Force scroll to beginning after project loads
+			setTimeout(() => {
+				if (timelineAreaElement && typeof window !== 'undefined') {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 100);
+			setTimeout(() => {
+				if (timelineAreaElement && typeof window !== 'undefined') {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 300);
+			setTimeout(() => {
+				if (timelineAreaElement && typeof window !== 'undefined') {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 500);
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {
