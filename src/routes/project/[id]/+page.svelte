@@ -73,12 +73,14 @@
 	}
 
 	onMount(async () => {
-		// Check authentication first
-		const user = await getCurrentUser();
-		if (!user) {
-			// Redirect to home if not authenticated
-			await goto('/');
-			return;
+		// Check authentication first (only in browser)
+		if (typeof window !== 'undefined') {
+			const user = await getCurrentUser();
+			if (!user) {
+				// Redirect to home if not authenticated
+				await goto('/');
+				return;
+			}
 		}
 
 		// Reset loading state to ensure fresh start on each mount

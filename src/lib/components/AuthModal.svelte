@@ -105,8 +105,16 @@
 				}
 			}
 		} catch (err: any) {
-			error = err.message || (isSignIn ? 'Failed to sign in' : 'Failed to create account');
-			console.error('Auth error:', err);
+			// Handle network/CORS errors with user-friendly messages
+			if (err?.name === 'AuthRetryableFetchError' || err?.message?.includes('NetworkError') || err?.message?.includes('CORS')) {
+				error = 'Network error. Please check your internet connection and try again.';
+			} else {
+				error = err.message || (isSignIn ? 'Failed to sign in' : 'Failed to create account');
+			}
+			// Only log non-network errors
+			if (err?.name !== 'AuthRetryableFetchError') {
+				console.error('Auth error:', err);
+			}
 		} finally {
 			loading = false;
 			loadingStore.stopLoading();
@@ -152,7 +160,6 @@
 							required
 							disabled={loading}
 							placeholder="username"
-							pattern="[a-zA-Z0-9_-]+"
 							title="Letters, numbers, hyphens, and underscores only"
 						/>
 					</div>

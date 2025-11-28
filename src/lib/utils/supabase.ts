@@ -30,18 +30,35 @@ export const supabase: SupabaseClient = createClient(
 );
 
 // Helper function to get the current user
+// Only works in browser - returns null on server
 export async function getCurrentUser() {
-	const {
-		data: { user },
-		error
-	} = await supabase.auth.getUser();
-	
-	if (error) {
-		console.error('Error getting current user:', error);
+	// Don't try to get user on server side
+	if (!browser) {
 		return null;
 	}
-	
-	return user;
+
+	try {
+		const {
+			data: { user },
+			error
+		} = await supabase.auth.getUser();
+		
+		if (error) {
+			// Don't log AuthSessionMissingError - it's expected when not logged in
+			if (error.name !== 'AuthSessionMissingError') {
+				console.error('Error getting current user:', error);
+			}
+			return null;
+		}
+		
+		return user;
+	} catch (err: any) {
+		// Silently handle network errors - they're expected in some cases
+		if (err?.name !== 'AuthSessionMissingError' && err?.name !== 'AuthRetryableFetchError') {
+			console.error('Unexpected error getting current user:', err);
+		}
+		return null;
+	}
 }
 
 // Helper function to check if user is authenticated
