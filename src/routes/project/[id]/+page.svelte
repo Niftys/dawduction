@@ -160,22 +160,23 @@
 		} else if (loadedProject) {
 			projectStore.set(loadedProject);
 			isLoading = false;
-			// Force scroll to beginning after project loads
-			setTimeout(() => {
-				if (timelineAreaElement && typeof window !== 'undefined') {
-					timelineAreaElement.scrollLeft = 0;
+			
+			// Force page reload to ensure scrolling works properly
+			// This fixes timing issues with content width calculation on initial load
+			if (typeof window !== 'undefined') {
+				// Check if we've already reloaded for this project to avoid infinite loop
+				const reloadKey = `reloaded_${$page.params.id}`;
+				const hasReloaded = sessionStorage.getItem(reloadKey);
+				
+				if (!hasReloaded) {
+					// Mark that we're about to reload
+					sessionStorage.setItem(reloadKey, 'true');
+					// Small delay to ensure project is set in store before reload
+					setTimeout(() => {
+						window.location.reload();
+					}, 100);
 				}
-			}, 100);
-			setTimeout(() => {
-				if (timelineAreaElement && typeof window !== 'undefined') {
-					timelineAreaElement.scrollLeft = 0;
-				}
-			}, 300);
-			setTimeout(() => {
-				if (timelineAreaElement && typeof window !== 'undefined') {
-					timelineAreaElement.scrollLeft = 0;
-				}
-			}, 500);
+			}
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {

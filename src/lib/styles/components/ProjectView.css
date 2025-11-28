@@ -276,7 +276,7 @@
 	/* Ensure content is not clipped by sidebar */
 	min-width: 0;
 	min-height: 0;
-	/* Ensure scrolling works */
+	/* Ensure scrolling works - use explicit height constraint */
 	height: 100%;
 	/* Prevent content from extending into sidebar */
 	overflow-clip-margin: 0;
@@ -493,12 +493,15 @@
 	min-width: fit-content;
 	width: max-content;
 	/* Ensure vertical scrolling works - allow content to extend beyond viewport */
-	min-height: 100%;
-	height: fit-content;
+	/* Use auto height so it grows with content */
+	height: auto;
+	min-height: 0;
 	/* Force container to be wide enough for scrolling */
 	flex-shrink: 0;
 	/* Ensure container extends properly */
 	box-sizing: border-box;
+	/* Ensure rows actually extend the container */
+	align-items: stretch;
 }
 
 .add-track-dropdown-ruler {
@@ -661,6 +664,9 @@
 	overflow: visible;
 	/* Ensure row is wide enough to enable scrolling */
 	box-sizing: border-box;
+	/* Ensure row has explicit height so pattern-rows can calculate total height */
+	height: 80px;
+	min-height: 80px;
 }
 
 .pattern-row.drag-over {
