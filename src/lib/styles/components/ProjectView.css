@@ -282,6 +282,12 @@
 	overflow-clip-margin: 0;
 	/* Ensure scroll container works properly */
 	-webkit-overflow-scrolling: touch;
+	/* Ensure we can scroll to the beginning (scrollLeft = 0) */
+	direction: ltr;
+	/* Ensure scroll position can reach 0 */
+	scroll-padding: 0;
+	/* Ensure vertical scrolling works when content overflows */
+	max-height: 100%;
 }
 
 .timeline-area::-webkit-scrollbar {
@@ -318,6 +324,9 @@
 	flex-shrink: 0;
 	/* Ensure container extends to match pattern rows width */
 	box-sizing: border-box;
+	/* Ensure container starts at the beginning to allow scrolling to beat 0 */
+	margin-left: 0;
+	padding-left: 0;
 }
 
 .ruler-label-spacer {
@@ -502,6 +511,8 @@
 	box-sizing: border-box;
 	/* Ensure rows actually extend the container */
 	align-items: stretch;
+	/* Ensure container can grow vertically to accommodate all tracks */
+	overflow: visible;
 }
 
 .add-track-dropdown-ruler {

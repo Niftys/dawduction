@@ -49,6 +49,7 @@
 			// Force scroll to 0 - multiple attempts to ensure it works
 			const forceScroll = () => {
 				if (timelineAreaElement) {
+					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
 					timelineAreaElement.scrollLeft = 0;
 				}
 			};
@@ -56,6 +57,8 @@
 			setTimeout(forceScroll, 150);
 			setTimeout(forceScroll, 300);
 			setTimeout(forceScroll, 500);
+			// Reset scroll flag to allow reactive scroll to work
+			hasScrolledToStart = false;
 		}
 		// Stop loading once project is loaded (using local state, not loadingStore)
 		if (project && isLoading) {
@@ -121,6 +124,7 @@
 			// Force scroll to beginning immediately and with delays
 			const forceScroll = () => {
 				if (timelineAreaElement && typeof window !== 'undefined') {
+					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
 					timelineAreaElement.scrollLeft = 0;
 				}
 			};
@@ -128,6 +132,8 @@
 			setTimeout(forceScroll, 150);
 			setTimeout(forceScroll, 300);
 			setTimeout(forceScroll, 500);
+			// Reset scroll flag to allow reactive scroll to work
+			hasScrolledToStart = false;
 			return;
 		}
 		
@@ -222,18 +228,23 @@
 			
 			requestAnimationFrame(() => {
 				if (timelineAreaElement) {
-					// Scroll to 0 to show the beginning (beat 0 should be visible after the sticky spacer)
+					// Force scroll to 0 to show the beginning (beat 0 should be visible after the sticky spacer)
+					// Use scrollTo for better browser compatibility
+					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
 					timelineAreaElement.scrollLeft = 0;
 					
 					// Verify scroll worked and try again if needed
 					if (attempts > 1) {
 						setTimeout(() => {
-							if (timelineAreaElement && timelineAreaElement.scrollLeft > 0) {
-								attemptScroll(attempts - 1);
-							} else {
-								hasScrolledToStart = true;
+							if (timelineAreaElement) {
+								// Check if scroll position is still not at 0
+								if (timelineAreaElement.scrollLeft > 0) {
+									attemptScroll(attempts - 1);
+								} else {
+									hasScrolledToStart = true;
+								}
 							}
-						}, 50);
+						}, 100);
 					} else {
 						hasScrolledToStart = true;
 					}
@@ -241,7 +252,8 @@
 			});
 		};
 		
-		setTimeout(() => attemptScroll(5), 150);
+		// Start scrolling after a short delay to ensure DOM is ready
+		setTimeout(() => attemptScroll(10), 100);
 	}
 
 	onDestroy(() => {
@@ -257,6 +269,7 @@
 		requestAnimationFrame(() => {
 			setTimeout(() => {
 				if (timelineAreaElement) {
+					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
 					timelineAreaElement.scrollLeft = 0;
 					// Reset scroll flag when switching views
 					hasScrolledToStart = false;
