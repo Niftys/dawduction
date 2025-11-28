@@ -616,6 +616,22 @@
 		}
 	}
 
+	function copyPattern(patternId: string) {
+		if (!project) {
+			console.error('Cannot copy pattern: no project exists');
+			return;
+		}
+		try {
+			const duplicatedPattern = projectStore.duplicatePattern(patternId);
+			if (duplicatedPattern) {
+				// Optionally navigate to the new pattern
+				// goto(`/project/${projectId}/pattern/${duplicatedPattern.id}`);
+			}
+		} catch (error) {
+			console.error('Error copying pattern:', error);
+		}
+	}
+
 	function deletePattern(patternId: string) {
 		projectStore.deletePattern(patternId);
 	}
@@ -1671,6 +1687,7 @@
 							pattern={pattern} 
 							onClick={() => selectPattern(pattern.id)}
 							onDelete={deletePattern}
+							onCopy={copyPattern}
 						/>
 					{/each}
 				</div>

@@ -4,6 +4,7 @@
 	export let pattern: Pattern;
 	export let onClick: () => void;
 	export let onDelete: ((patternId: string) => void) | null = null;
+	export let onCopy: ((patternId: string) => void) | null = null;
 	
 	// Helper to mute color for preview
 	function muteColor(color: string): string {
@@ -319,22 +320,43 @@
 		onClick();
 	}
 }}>
-	{#if onDelete}
-		<button 
-			class="pattern-card-delete" 
-			on:click|stopPropagation={(e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				if (onDelete) {
-					onDelete(pattern.id);
-				}
-			}}
-			title="Delete pattern"
-			aria-label="Delete pattern"
-		>
-			×
-		</button>
-	{/if}
+	<div class="pattern-card-actions">
+		{#if onCopy}
+			<button 
+				class="pattern-card-copy" 
+				on:click|stopPropagation={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					if (onCopy) {
+						onCopy(pattern.id);
+					}
+				}}
+				title="Copy pattern"
+				aria-label="Copy pattern"
+			>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M5.5 4.5H3.5C2.67157 4.5 2 5.17157 2 6V12.5C2 13.3284 2.67157 14 3.5 14H10C10.8284 14 11.5 13.3284 11.5 12.5V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M5.5 2H12.5C13.3284 2 14 2.67157 14 3.5V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+		{/if}
+		{#if onDelete}
+			<button 
+				class="pattern-card-delete" 
+				on:click|stopPropagation={(e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					if (onDelete) {
+						onDelete(pattern.id);
+					}
+				}}
+				title="Delete pattern"
+				aria-label="Delete pattern"
+			>
+				×
+			</button>
+		{/if}
+	</div>
 	<div class="pattern-card-preview">
 		<canvas bind:this={canvas} width={400} height={300}></canvas>
 	</div>
@@ -412,34 +434,62 @@
 		text-transform: capitalize;
 	}
 	
-	.pattern-card-delete {
+	.pattern-card-actions {
 		position: absolute;
 		top: 8px;
 		right: 8px;
-		background: rgba(255, 107, 107, 0.2);
-		color: #ff6b6b;
+		display: flex;
+		gap: 4px;
+		z-index: 10;
+	}
+	
+	.pattern-card-copy,
+	.pattern-card-delete {
+		background: rgba(100, 100, 100, 0.2);
+		color: #b0b0b0;
 		border: none;
 		border-radius: 4px;
 		width: 24px;
 		height: 24px;
 		cursor: pointer;
-		font-size: 18px;
-		line-height: 1;
 		opacity: 0;
 		transition: all 0.2s ease;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 10;
+		padding: 0;
 	}
 	
+	.pattern-card-copy {
+		background: rgba(122, 184, 255, 0.2);
+		color: #7ab8ff;
+	}
+	
+	.pattern-card-delete {
+		background: rgba(255, 107, 107, 0.2);
+		color: #ff6b6b;
+		font-size: 18px;
+		line-height: 1;
+	}
+	
+	.pattern-card:hover .pattern-card-copy,
 	.pattern-card:hover .pattern-card-delete {
 		opacity: 1;
+	}
+	
+	.pattern-card-copy:hover {
+		background: rgba(122, 184, 255, 0.3);
+		transform: scale(1.1);
 	}
 	
 	.pattern-card-delete:hover {
 		background: rgba(255, 107, 107, 0.3);
 		transform: scale(1.1);
+	}
+	
+	.pattern-card-copy svg {
+		width: 14px;
+		height: 14px;
 	}
 </style>
 
