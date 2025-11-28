@@ -22,24 +22,24 @@ class EventScheduler {
 		// For arrangement view, we want to schedule events well ahead so they're ready when needed
 		const extendedLookahead = isTimelineMode ? currentBeat + 4.0 : lookaheadBeat; // 4 beats ahead in arrangement view
 
-		// Debug: Log scheduling attempt (throttled to avoid spam)
-		if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
-			this._lastDebugTime = this.processor.currentTime;
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EventScheduler.scheduleEvents',
-				data: {
-					currentBeat: currentBeat.toFixed(3),
-					lookaheadBeat: lookaheadBeat.toFixed(3),
-					extendedLookahead: extendedLookahead.toFixed(3),
-					isTimelineMode,
-					totalEvents: this.processor.projectManager.events.length,
-					scheduledCount: this.scheduledEvents.size,
-					patternLength,
-					timelineLength: this.processor.projectManager.timeline?.totalLength || 0
-				}
-			});
-		}
+		// Debug: Log scheduling attempt (disabled for cleaner logs)
+		// if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
+		// 	this._lastDebugTime = this.processor.currentTime;
+		// 	this.processor.port.postMessage({
+		// 		type: 'debug',
+		// 		message: 'EventScheduler.scheduleEvents',
+		// 		data: {
+		// 			currentBeat: currentBeat.toFixed(3),
+		// 			lookaheadBeat: lookaheadBeat.toFixed(3),
+		// 			extendedLookahead: extendedLookahead.toFixed(3),
+		// 			isTimelineMode,
+		// 			totalEvents: this.processor.projectManager.events.length,
+		// 			scheduledCount: this.scheduledEvents.size,
+		// 			patternLength,
+		// 			timelineLength: this.processor.projectManager.timeline?.totalLength || 0
+		// 		}
+		// 	});
+		// }
 
 		let scheduledThisCall = 0;
 		// Schedule events in the lookahead window
@@ -105,37 +105,37 @@ class EventScheduler {
 					this.scheduledEvents.get(eventSampleTime).push(event);
 					scheduledThisCall++;
 					
-					// Debug: Log first few scheduled events
-					if (scheduledThisCall <= 3) {
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'EventScheduler: Event scheduled',
-							data: {
-								eventTime: eventTime.toFixed(3),
-								eventSampleTime,
-								instrumentId: event.instrumentId,
-								patternId: event.patternId || 'none',
-								pitch: event.pitch,
-								velocity: event.velocity
-							}
-						});
-					}
+					// Debug: Log first few scheduled events (disabled for cleaner logs)
+					// if (scheduledThisCall <= 3) {
+					// 	this.processor.port.postMessage({
+					// 		type: 'debug',
+					// 		message: 'EventScheduler: Event scheduled',
+					// 		data: {
+					// 			eventTime: eventTime.toFixed(3),
+					// 			eventSampleTime,
+					// 			instrumentId: event.instrumentId,
+					// 			patternId: event.patternId || 'none',
+					// 			pitch: event.pitch,
+					// 			velocity: event.velocity
+					// 		}
+					// 	});
+					// }
 				}
 			}
 		}
 		
-		// Debug: Log scheduling summary
-		if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
-			this._lastScheduledCount = scheduledThisCall;
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EventScheduler: Scheduling summary',
-				data: {
-					scheduledThisCall,
-					totalScheduled: this.scheduledEvents.size
-				}
-			});
-		}
+		// Debug: Log scheduling summary (disabled for cleaner logs)
+		// if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
+		// 	this._lastScheduledCount = scheduledThisCall;
+		// 	this.processor.port.postMessage({
+		// 		type: 'debug',
+		// 		message: 'EventScheduler: Scheduling summary',
+		// 		data: {
+		// 			scheduledThisCall,
+		// 			totalScheduled: this.scheduledEvents.size
+		// 		}
+		// 	});
+		// }
 	}
 
 	getEventsAtTime(sampleTime) {
@@ -154,13 +154,49 @@ class EventScheduler {
 		
 		// Otherwise use pattern-based looping
 		let patternLength = 4; // Default fallback
+		let baseMeter = 4; // Default baseMeter
+		
 		if (this.processor.projectManager.baseMeterTrackId) {
 			const baseTrack = this.processor.projectManager.getTrack(this.processor.projectManager.baseMeterTrackId);
 			if (baseTrack) {
-				patternLength = baseTrack.patternTree?.division || 4;
+				const rootDivision = baseTrack.patternTree?.division || 4;
+				
+				// Check if this is a pattern instrument (ID starts with __pattern_)
+				if (baseTrack.id && baseTrack.id.startsWith('__pattern_')) {
+					// Extract pattern ID and get baseMeter
+					const lastUnderscore = baseTrack.id.lastIndexOf('_');
+					if (lastUnderscore > '__pattern_'.length) {
+						const patternId = baseTrack.id.substring('__pattern_'.length, lastUnderscore);
+						const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+						if (pattern) {
+							baseMeter = pattern.baseMeter || 4;
+						}
+					}
+				}
+				
+				// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+				// The hierarchical structure is preserved because children split parent's duration proportionally
+				patternLength = baseMeter;
 			}
 		} else if (this.processor.projectManager.tracks?.[0]) {
-			patternLength = this.processor.projectManager.tracks[0].patternTree?.division || 4;
+			const firstTrack = this.processor.projectManager.tracks[0];
+			const rootDivision = firstTrack.patternTree?.division || 4;
+			
+			// Check if this is a pattern instrument
+			if (firstTrack.id && firstTrack.id.startsWith('__pattern_')) {
+				const lastUnderscore = firstTrack.id.lastIndexOf('_');
+				if (lastUnderscore > '__pattern_'.length) {
+					const patternId = firstTrack.id.substring('__pattern_'.length, lastUnderscore);
+					const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+					if (pattern) {
+						baseMeter = pattern.baseMeter || 4;
+					}
+				}
+			}
+			
+			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+			// The hierarchical structure is preserved because children split parent's duration proportionally
+			patternLength = baseMeter;
 		}
 		return patternLength;
 	}

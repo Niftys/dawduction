@@ -57,7 +57,7 @@
 	$: activeItem = selectedInstrument || selectedTrack;
 	
 	// Check if the selected standalone instrument/instrument is a melodic instrument
-	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck'];
+	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ'];
 	$: isMelodicInstrument = activeItem ? melodicInstruments.includes(activeItem.instrumentType) : false;
 	
 	// Force reactivity for standalone instrument values to ensure sliders update when number inputs change
@@ -166,11 +166,13 @@
 		<div class="sidebar-content">
 			<NoteControls
 				{selectedTrack}
+				selectedPattern={selectedPattern}
 				{selectedNodes}
 				{isMelodicInstrument}
 				{isMultiSelect}
 				{getCommonValue}
 				{hasMixedValues}
+				activeItem={activeItem}
 			/>
 		</div>
 	</div>

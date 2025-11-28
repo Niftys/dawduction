@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { selectionStore } from '$lib/stores/selectionStore';
 	import { projectStore } from '$lib/stores/projectStore';
+	import { editorModeStore } from '$lib/stores/editorModeStore';
 	import type { PatternNode } from '$lib/types/pattern';
 	import '$lib/styles/components/VelocityEditor.css';
 
@@ -19,10 +20,13 @@
 	projectStore.subscribe((p) => (project = p));
 	selectionStore.subscribe((s) => (selection = s));
 	
-	// Non-melodic instruments that support velocity editing
-	const nonMelodicInstruments = ['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'];
+	// Instruments that support pitch editing via MidiEditor (melodic + drums)
+	// VelocityEditor should NOT show for these - MidiEditor handles both pitch and velocity modes
+	const pitchEditableInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ', 'kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'];
 	
 	// Check if we should show the velocity editor
+	// Only show for instruments that DON'T support pitch editing
+	// (MidiEditor handles velocity mode for pitch-editable instruments)
 	$: shouldShow = (() => {
 		if (!project || selection.selectedNodes.size < 2) {
 			return false;
@@ -58,8 +62,9 @@
 		
 		if (!track) return false;
 		
-		// Show for non-melodic instruments
-		return nonMelodicInstruments.includes(track.instrumentType);
+		// Don't show for instruments that support pitch editing
+		// MidiEditor handles both pitch and velocity modes for these instruments
+		return !pitchEditableInstruments.includes(track.instrumentType);
 	})();
 	
 	// Update body class to adjust canvas position

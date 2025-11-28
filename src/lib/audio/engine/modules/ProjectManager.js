@@ -20,6 +20,7 @@ class ProjectManager {
 		this.tracks = null;
 		this.events = [];
 		this.timeline = null;
+		this.patterns = []; // Store patterns to access baseMeter
 		this.effects = [];
 		this.envelopes = [];
 		this.baseMeterTrackId = null;
@@ -28,10 +29,11 @@ class ProjectManager {
 		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track ID to array of audio track IDs
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns) {
 		this.tracks = tracks;
 		this.events = events || [];
 		this.timeline = timeline || null;
+		this.patterns = patterns || []; // Store patterns to access baseMeter
 		this.effects = effects || [];
 		this.envelopes = envelopes || [];
 		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
@@ -121,7 +123,8 @@ class ProjectManager {
 			// Leaf node - create event
 			if (!node.children || node.children.length === 0) {
 				// Check if this is the root node (empty pattern)
-				if (parentDuration === node.division && startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
+				// If startTime is 0, it's the root node - treat as empty if no velocity/pitch
+				if (startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
 					return [];
 				}
 				// Real leaf node - create event
@@ -154,11 +157,28 @@ class ProjectManager {
 			return events;
 		};
 		
-		const flattenTrackPattern = (rootNode, trackId) => {
-			return flattenTree(rootNode, rootNode.division, 0.0, trackId);
+		const flattenTrackPattern = (rootNode, trackId, baseMeter = 4) => {
+			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+			// The hierarchical structure is preserved because children split parent's duration proportionally
+			const patternLength = baseMeter;
+			return flattenTree(rootNode, patternLength, 0.0, trackId);
 		};
 		
-		const newEvents = flattenTrackPattern(track.patternTree, trackId);
+		// Determine baseMeter for this track
+		let baseMeter = 4; // Default for standalone instruments
+		if (trackId && trackId.startsWith('__pattern_')) {
+			// Extract pattern ID and get baseMeter from patterns
+			const lastUnderscore = trackId.lastIndexOf('_');
+			if (lastUnderscore > '__pattern_'.length) {
+				const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+				const pattern = this.patterns?.find(p => p.id === patternId);
+				if (pattern) {
+					baseMeter = pattern.baseMeter || 4;
+				}
+			}
+		}
+		
+		const newEvents = flattenTrackPattern(track.patternTree, trackId, baseMeter);
 		
 		// Add new events
 		this.events.push(...newEvents);
@@ -223,6 +243,24 @@ class ProjectManager {
 			const track = this.timeline.tracks.find(t => t.id === trackId);
 			if (track) {
 				track.volume = volume;
+			}
+		}
+	}
+
+	updateTimelineTrackMute(trackId, mute) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.mute = mute;
+			}
+		}
+	}
+
+	updateTimelineTrackSolo(trackId, solo) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.solo = solo;
 			}
 		}
 	}

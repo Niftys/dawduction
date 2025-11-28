@@ -8,7 +8,7 @@
 	export let node: PatternNode | null;
 	export let isRoot: boolean;
 	export let patternId: string | null = null;
-	export let trackId: string | null = null;
+	export const trackId: string | null = null;
 
 	const dispatch = createEventDispatcher();
 

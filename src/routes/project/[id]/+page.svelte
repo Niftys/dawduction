@@ -4,6 +4,7 @@
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
 	import { viewStore } from '$lib/stores/viewStore';
+	import { loadingStore } from '$lib/stores/loadingStore';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import type { Pattern, PatternNode } from '$lib/types/pattern';
@@ -19,17 +20,37 @@
 	import PatternCard from '$lib/components/PatternCard.svelte';
 	import AutomationCurveEditor from '$lib/components/AutomationCurveEditor.svelte';
 	import { automationStore } from '$lib/stores/automationStore';
+	import SynthPluginWindow from '$lib/components/SynthPluginWindow.svelte';
+	import { synthPluginStore } from '$lib/stores/synthPluginStore';
 	import { engineStore } from '$lib/stores/engineStore';
 	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
 	import { generateAutomationCurvePath } from '$lib/utils/automationCurve';
+	import { TIMELINE_CONSTANTS, beatToPixel, pixelToBeat, snapToBeat, formatZoomDisplay, clampZoomLevel } from '$lib/utils/timelineUtils';
+	import { generateRulerMarks, generateGridLines } from '$lib/utils/timelineRuler';
+	import PatternSidebar from '$lib/components/timeline/PatternSidebar.svelte';
+	import TimelineRuler from '$lib/components/timeline/TimelineRuler.svelte';
+	import TimelineTrackRow from '$lib/components/timeline/TimelineTrackRow.svelte';
+	import ProjectSkeleton from '$lib/components/skeletons/ProjectSkeleton.svelte';
 	import '$lib/styles/components/ProjectView.css';
 	import '$lib/styles/components/ArrangementView.css';
 
 	let project: any;
 	let playbackState: any;
+	let isLoading = true;
 	
-	projectStore.subscribe((p) => (project = p));
+	projectStore.subscribe((p) => {
+		project = p;
+		// Stop loading once project is loaded (using local state, not loadingStore)
+		if (project && isLoading) {
+			setTimeout(() => {
+				isLoading = false;
+			}, 100);
+		}
+	});
 	playbackStore.subscribe((s) => (playbackState = s));
+	
+	// Pages with skeletons use local loading state only
+	// Don't subscribe to loadingStore - that's for overlay operations only
 
 	// View mode from store
 	$: viewMode = $viewStore;
@@ -51,6 +72,21 @@
 	}
 
 	onMount(() => {
+		// Reset loading state to ensure fresh start on each mount
+		isLoading = true;
+		
+		// Use local loading state for skeleton, not loadingStore (which shows overlay)
+		// loadingStore is only for operations like view transitions
+		// Clear any existing loading state
+		loadingStore.stopLoading();
+		
+		// Check if project is already loaded (from previous navigation)
+		if (project && project.id === $page.params.id) {
+			// Project already loaded, skip loading state
+			isLoading = false;
+			return;
+		}
+		
 		// Load project from localStorage
 		const saved = localStorage.getItem(`project_${$page.params.id}`);
 		if (saved) {
@@ -59,27 +95,28 @@
 				projectStore.set(loadedProject);
 			} catch (e) {
 				console.error('Failed to load project:', e);
+				isLoading = false;
 			}
-		}
-
-		// Initialize project if needed
-		if (!project && $page.params.id) {
-			projectStore.set({
-				id: $page.params.id,
-				title: 'New Project',
-				bpm: 120,
-				tracks: [],
-				patterns: [],
-				effects: [],
-				envelopes: [],
-				timeline: {
-					tracks: [], // TimelineTracks (not standalone instruments)
-					clips: [],
+		} else {
+			// Initialize project if needed
+			if (!project && $page.params.id) {
+				projectStore.set({
+					id: $page.params.id,
+					title: 'New Project',
+					bpm: 120,
+					tracks: [],
+					patterns: [],
 					effects: [],
 					envelopes: [],
-					totalLength: 16
-				}
-			});
+					timeline: {
+						tracks: [], // TimelineTracks (not standalone instruments)
+						clips: [],
+						effects: [],
+						envelopes: [],
+						totalLength: 16
+					}
+				});
+			}
 		}
 		
 		// Set initial CSS variable
@@ -132,27 +169,19 @@
 		// No need to select pattern - pattern list view just displays all patterns
 
 	// Timeline settings
-	const ROW_LABEL_WIDTH = 200; // Width of the row label column
-	const BASE_ZOOM = 8; // Base zoom level (8x = what we want to show as 100%)
+	const ROW_LABEL_WIDTH = TIMELINE_CONSTANTS.ROW_LABEL_WIDTH;
+	const BASE_ZOOM = TIMELINE_CONSTANTS.BASE_ZOOM;
 	let zoomLevel = BASE_ZOOM; // Zoom multiplier (8 = 100% display, matching user's comfortable zoom level)
-	const BASE_PIXELS_PER_BEAT = 4; // Base pixels per beat at zoom level 1
-	const RULER_HEIGHT = 50;
-	const PATTERN_ROW_HEIGHT = 80;
-	const BEATS_PER_BAR = 4; // Standard 4/4 time
+	const BASE_PIXELS_PER_BEAT = TIMELINE_CONSTANTS.BASE_PIXELS_PER_BEAT;
+	const RULER_HEIGHT = TIMELINE_CONSTANTS.RULER_HEIGHT;
+	const PATTERN_ROW_HEIGHT = TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT;
+	const BEATS_PER_BAR = TIMELINE_CONSTANTS.BEATS_PER_BAR;
 
 	$: PIXELS_PER_BEAT = BASE_PIXELS_PER_BEAT * zoomLevel;
 	
 	// Declare reactive variables for ruler marks and grid lines
-	let rulerMarks: any[] = [];
-	let gridLines: any[] = [];
-
-	function beatToPixel(beat: number): number {
-		return beat * PIXELS_PER_BEAT;
-	}
-
-	function pixelToBeat(pixel: number): number {
-		return pixel / PIXELS_PER_BEAT;
-	}
+	$: rulerMarks = generateRulerMarks(timeline?.totalLength || 0, PIXELS_PER_BEAT);
+	$: gridLines = generateGridLines(timeline?.totalLength || 0, PIXELS_PER_BEAT);
 
 	function handleTimelineWheel(e: WheelEvent) {
 		if (!e.ctrlKey && !e.metaKey) return; // Only zoom with Ctrl/Cmd
@@ -161,14 +190,19 @@
 		
 		// Use larger delta for more noticeable zoom changes
 		const delta = e.deltaY > 0 ? -0.5 : 0.5;
-		zoomLevel = Math.max(0.25, Math.min(64, zoomLevel + delta)); // Zoom between 0.25x (25%) and 64x (6400%)
+		zoomLevel = clampZoomLevel(zoomLevel, delta);
 	}
 	
 	// Format zoom level for display - normalize so BASE_ZOOM (8x) shows as 100%
-	$: zoomDisplay = `${Math.round((zoomLevel / BASE_ZOOM) * 100)}%`;
+	$: zoomDisplay = formatZoomDisplay(zoomLevel, BASE_ZOOM);
 
-	function snapToBeat(beat: number): number {
-		return Math.round(beat * 4) / 4;
+	// Local wrapper functions that use reactive PIXELS_PER_BEAT
+	function beatToPixelLocal(beat: number): number {
+		return beatToPixel(beat, PIXELS_PER_BEAT);
+	}
+
+	function pixelToBeatLocal(pixel: number): number {
+		return pixelToBeat(pixel, PIXELS_PER_BEAT);
 	}
 
 	function findPatternById(patternId: string | undefined): Pattern | null {
@@ -205,11 +239,16 @@
 		projectStore.deletePattern(patternId);
 	}
 
-	function selectPattern(patternId: string) {
+	async function selectPattern(patternId: string) {
+		// Show loading state while navigating
+		const { loadingStore } = await import('$lib/stores/loadingStore');
+		loadingStore.startLoading('Loading pattern editor...');
+		
 		// Navigate to the dedicated pattern page
 		const projectId = $page.params.id;
 		if (projectId) {
-			goto(`/project/${projectId}/pattern/${patternId}`);
+			await goto(`/project/${projectId}/pattern/${patternId}`);
+			// Loading will be stopped by the pattern editor page when it finishes loading
 		}
 	}
 
@@ -322,7 +361,7 @@
 		if (!target) return;
 		const rect = target.getBoundingClientRect();
 		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
-		const beat = Math.max(0, snapToBeat(pixelToBeat(x)));
+		const beat = Math.max(0, snapToBeat(pixelToBeatLocal(x)));
 		
 		// Check if dragging effect or envelope
 		try {
@@ -371,7 +410,7 @@
 		}
 	}
 	
-	function handleClipMouseDown(e: MouseEvent, clip: TimelineClip, type: 'clip' | 'effect' | 'envelope' = 'clip') {
+	function handleClipMouseDown(e: MouseEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope' = 'clip') {
 		if (e.button !== 0) return; // Only left mouse button
 		e.stopPropagation();
 		
@@ -429,7 +468,7 @@
 			const resize = isResizing; // Capture for type narrowing
 			const currentX = e.clientX - rect.left - ROW_LABEL_WIDTH;
 			const deltaX = currentX - resize.startX;
-			const deltaBeat = pixelToBeat(deltaX);
+			const deltaBeat = pixelToBeatLocal(deltaX);
 			
 			if (resize.type === 'clip') {
 				const clip = timeline.clips?.find((c: TimelineClip) => c.id === resize.id);
@@ -478,7 +517,7 @@
 			const drag = isDraggingClip; // Capture for type narrowing
 			const currentX = e.clientX - rect.left - ROW_LABEL_WIDTH;
 			const deltaX = currentX - drag.startX;
-			const deltaBeat = pixelToBeat(deltaX);
+			const deltaBeat = pixelToBeatLocal(deltaX);
 			const newStart = Math.max(0, snapToBeat(drag.startBeat + deltaBeat));
 			
 			if (drag.type === 'clip') {
@@ -527,9 +566,57 @@
 			if (!rowTarget) return;
 			const rect = rowTarget.getBoundingClientRect();
 			const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
-			const beat = Math.max(0, snapToBeat(pixelToBeat(x)));
+			const beat = Math.max(0, snapToBeat(pixelToBeatLocal(x)));
 			
 			addClipToTimeline(patternId, beat, trackId);
+		}
+	}
+
+	function handleRowDragLeave(e: DragEvent) {
+		const target = e.relatedTarget;
+		const currentTarget = e.currentTarget as HTMLElement;
+		if (!target || !currentTarget.contains(target as Node)) {
+			dragOverRow = null;
+			dragOverTrackId = null;
+		}
+	}
+
+	function handleRowDrop(e: DragEvent, track: TimelineTrack) {
+		e.preventDefault();
+		dragOverRow = null;
+		const target = e.currentTarget as HTMLElement;
+		if (!target) return;
+		const rect = target.getBoundingClientRect();
+		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
+		const beat = Math.max(0, snapToBeat(pixelToBeatLocal(x)));
+		
+		try {
+			const dragData = e.dataTransfer?.getData('application/json');
+			if (dragData) {
+				const data = JSON.parse(dragData);
+				if (data.type === 'pattern' && track.type === 'pattern') {
+					addClipToTimeline(data.id, beat, track.id);
+					draggedPatternId = null;
+				} else if (data.type === 'effect' && track.type === 'effect') {
+					addEffectToTimeline(data.id, beat, 4, undefined, track.id);
+					draggedEffectId = null;
+				} else if (data.type === 'envelope' && track.type === 'envelope') {
+					addEnvelopeToTimeline(data.id, beat, 4, undefined, track.id);
+					draggedEnvelopeId = null;
+				}
+			} else {
+				// Fallback: try text data as pattern ID (but not if it's a track ID)
+				const textData = e.dataTransfer?.getData('text/plain');
+				if (textData && !timeline.tracks?.find((t: any) => t.id === textData)) {
+					const patternIdText = textData;
+					if (patternIdText && track.type === 'pattern' && patterns.find((p) => p.id === patternIdText)) {
+						addClipToTimeline(patternIdText, beat, track.id);
+						draggedPatternId = null;
+					}
+				}
+			}
+		} catch (error) {
+			console.error('Error handling drop:', error);
 		}
 	}
 
@@ -727,8 +814,9 @@
 		projectStore.deleteTimelineTrack(trackId);
 	}
 	
-	function handleTrackVolumeClick(e: MouseEvent, trackId: string) {
+	function handleTrackVolumeMouseDown(e: MouseEvent, trackId: string) {
 		e.stopPropagation();
+		e.preventDefault(); // Prevent text selection
 		const volumeBar = (e.currentTarget as HTMLElement).querySelector('.track-volume-bar') as HTMLElement;
 		if (!volumeBar) return;
 		
@@ -766,6 +854,50 @@
 		const engine = $engineStore;
 		if (engine) {
 			engine.updateTimelineTrackVolume(trackId, volume);
+		}
+	}
+
+	function toggleTrackMute(trackId: string) {
+		if (!project || !project.timeline) return;
+		const track = project.timeline.tracks.find((t: TimelineTrack) => t.id === trackId);
+		if (!track) return;
+		
+		const newMute = !(track.mute ?? false);
+		projectStore.updateTimelineTrack(trackId, { mute: newMute });
+		
+		// Update audio engine in real-time
+		const engine = $engineStore;
+		if (engine) {
+			engine.updateTimelineTrackMute(trackId, newMute);
+		}
+	}
+
+	function toggleTrackSolo(trackId: string) {
+		if (!project || !project.timeline) return;
+		const track = project.timeline.tracks.find((t: TimelineTrack) => t.id === trackId);
+		if (!track) return;
+		
+		const newSolo = !(track.solo ?? false);
+		
+		// If soloing this track, unsolo all other tracks
+		if (newSolo) {
+			project.timeline.tracks.forEach((t: TimelineTrack) => {
+				if (t.id !== trackId && t.type === 'pattern') {
+					projectStore.updateTimelineTrack(t.id, { solo: false });
+					const engine = $engineStore;
+					if (engine) {
+						engine.updateTimelineTrackSolo(t.id, false);
+					}
+				}
+			});
+		}
+		
+		projectStore.updateTimelineTrack(trackId, { solo: newSolo });
+		
+		// Update audio engine in real-time
+		const engine = $engineStore;
+		if (engine) {
+			engine.updateTimelineTrackSolo(trackId, newSolo);
 		}
 	}
 
@@ -814,53 +946,6 @@
 	}
 
 
-	// Generate ruler marks with beats and bars (reactive to zoom)
-	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
-	$: {
-		if (!timeline || !timeline.totalLength) {
-			rulerMarks = [];
-		} else {
-			const marks = [];
-			const pixelsPerBeat = PIXELS_PER_BEAT; // Explicitly reference reactive variable
-			// Only show bars and beats, not sub-beats
-			for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
-				const isBar = beat % BEATS_PER_BAR === 0;
-				const barNumber = Math.floor(beat / BEATS_PER_BAR);
-				const beatInBar = Math.floor(beat % BEATS_PER_BAR);
-				
-				marks.push({
-					beat,
-					x: beat * pixelsPerBeat,
-					isBar,
-					isBeat: true,
-					barNumber,
-					beatInBar
-				});
-			}
-			rulerMarks = marks;
-		}
-	}
-	
-	// Generate grid lines for timeline rows - only bars and beats (reactive to zoom)
-	// Explicitly reference PIXELS_PER_BEAT to ensure reactivity
-	$: {
-		if (!timeline || !timeline.totalLength) {
-			gridLines = [];
-		} else {
-			const lines = [];
-			const pixelsPerBeat = PIXELS_PER_BEAT; // Explicitly reference reactive variable
-			for (let beat = 0; beat <= timeline.totalLength; beat += 1) {
-				const isBar = beat % BEATS_PER_BAR === 0;
-				lines.push({
-					beat,
-					x: beat * pixelsPerBeat,
-					isBar,
-					isBeat: true
-				});
-			}
-			gridLines = lines;
-		}
-	}
 
 	// Get clips for each pattern
 	$: clipsByPattern = (() => {
@@ -956,79 +1041,22 @@
 
 <Toolbar />
 
+{#if isLoading}
+	<ProjectSkeleton viewMode={viewMode} />
+{:else}
 <div class="project-view" style="--sidebar-width: {sidebarWidth}px;">
 	<!-- Pattern Sidebar (only show in arrangement view) -->
 	{#if viewMode === 'arrangement'}
-	<div class="pattern-sidebar" style="width: {sidebarWidth}px;">
-		<div class="sidebar-header">
-			<h3>Patterns</h3>
-			<button class="create-pattern-btn" on:click={createPattern} title="Create new pattern">
-				+
-			</button>
-		</div>
-		<div class="patterns-list">
-			{#each patterns as pattern}
-				<button
-					class="pattern-item {$page.url.pathname.includes(`/pattern/${pattern.id}`) ? 'active' : ''}"
-					on:click={() => {
-						if (editingPatternId !== pattern.id) {
-							selectPattern(pattern.id);
-						}
-					}}
-					on:dragstart={(e) => {
-						if (editingPatternId !== pattern.id) {
-							handleDragStart(e, pattern.id);
-						}
-					}}
-					draggable={viewMode === 'arrangement' && editingPatternId !== pattern.id}
-					tabindex="0"
-				>
-					<div class="pattern-color" style="background: {pattern.color};"></div>
-					{#if editingPatternId === pattern.id}
-						<input
-							type="text"
-							class="pattern-name-input-inline"
-							value={pattern.name}
-							on:blur={(e) => {
-								const newName = e.currentTarget.value.trim() || pattern.name;
-								projectStore.updatePattern(pattern.id, { name: newName });
-								editingPatternId = null;
-							}}
-							on:keydown={(e) => {
-								if (e.key === 'Enter') {
-									e.currentTarget.blur();
-								} else if (e.key === 'Escape') {
-									editingPatternId = null;
-								}
-							}}
-							on:click|stopPropagation
-							autofocus
-						/>
-					{:else}
-						<span 
-							class="pattern-name"
-							on:dblclick|stopPropagation={() => editingPatternId = pattern.id}
-							title="Double-click to rename"
-						>
-							{pattern.name}
-						</span>
-					{/if}
-					<span class="pattern-instrument">{pattern.instrumentType}</span>
-					<button 
-						class="pattern-delete" 
-						on:click|stopPropagation={() => deletePattern(pattern.id)} 
-						title="Delete pattern"
-					>
-						×
-					</button>
-				</button>
-			{/each}
-			{#if patterns.length === 0}
-				<div class="empty-state">No patterns yet. Create one to get started!</div>
-			{/if}
-		</div>
-		<EffectsEnvelopesPanel onDragStart={handleEffectEnvelopeDragStart} />
-	</div>
+		<PatternSidebar
+			{patterns}
+			{sidebarWidth}
+			bind:editingPatternId
+			{viewMode}
+			{createPattern}
+			{deletePattern}
+			{selectPattern}
+			{handleEffectEnvelopeDragStart}
+		/>
 	{/if}
 
 	<!-- Main Content Area -->
@@ -1045,61 +1073,18 @@
 					on:mouseup={() => handleTimelineMouseUp()}
 					on:mouseleave={() => handleTimelineMouseUp()}
 				>
-					<div class="timeline-ruler-container">
-						<div class="ruler-label-spacer" style="width: {ROW_LABEL_WIDTH}px;">
-							{#if Math.round((zoomLevel / BASE_ZOOM) * 100) !== 100}
-								<div class="zoom-indicator" title="Zoom: {zoomDisplay} (Ctrl+Wheel to zoom)">
-									{zoomDisplay}
-								</div>
-							{/if}
-							<div class="add-track-dropdown-ruler">
-								<span 
-									class="add-track-trigger"
-									on:click={() => showAddTrackMenu = !showAddTrackMenu}
-									role="button"
-									tabindex="0"
-									on:keydown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											showAddTrackMenu = !showAddTrackMenu;
-										}
-									}}
-								>
-									+ Add Track
-								</span>
-								{#if showAddTrackMenu}
-									<div class="add-track-menu">
-										<button on:click={() => createTimelineTrack('pattern')}>
-											Pattern Track
-										</button>
-										<button on:click={() => createTimelineTrack('effect')}>
-											Effect Track
-										</button>
-										<button on:click={() => createTimelineTrack('envelope')}>
-											Envelope Track
-										</button>
-									</div>
-								{/if}
-							</div>
-						</div>
-						<div class="timeline-ruler" style="height: {RULER_HEIGHT}px; width: {beatToPixel(timeline.totalLength)}px;">
-							{#each rulerMarks as mark}
-								<div 
-									class="ruler-mark {mark.isBar ? 'bar' : 'beat'}"
-									style="left: {mark.x}px;"
-								>
-									{#if mark.isBar}
-										<span class="ruler-label bar-label">{mark.barNumber + 1}</span>
-									{:else if mark.beatInBar > 0}
-										<span class="ruler-label beat-label">{mark.beatInBar + 1}</span>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					</div>
+					<TimelineRuler
+						totalLength={timeline.totalLength}
+						pixelsPerBeat={PIXELS_PER_BEAT}
+						{zoomLevel}
+						bind:showAddTrackMenu
+						onZoomWheel={handleTimelineWheel}
+						onCreateTrack={createTimelineTrack}
+						onToggleAddTrackMenu={() => showAddTrackMenu = !showAddTrackMenu}
+					/>
 
 					<div class="playhead-container">
-						<div class="playhead" style="left: {ROW_LABEL_WIDTH + beatToPixel(currentBeat)}px;"></div>
+						<div class="playhead" style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"></div>
 					</div>
 
 					<div class="pattern-rows">
@@ -1110,307 +1095,80 @@
 							{@const trackEnvelopes = getEnvelopesForTrack(track.id)}
 							{@const trackPattern = track.type === 'pattern' && track.patternId ? findPatternById(track.patternId) : null}
 							
-							<div 
-								class="pattern-row {track.type}-row {dragOverRow === track.id ? 'drag-over' : ''} {dragOverTrackId === track.id ? 'drag-over-track' : ''}" 
-								style="height: {PATTERN_ROW_HEIGHT}px;"
-								role="region"
-								aria-label="{track.type} timeline track"
-								on:dragover={(e) => {
-									// Check if this is a track reorder first (using stored draggedTrackId)
-									if (draggedTrackId && draggedTrackId !== track.id) {
-										e.preventDefault();
-										if (e.dataTransfer) {
-											e.dataTransfer.dropEffect = 'move';
-										}
-										dragOverTrackId = track.id;
-										return;
-									}
-									
+							<TimelineTrackRow
+								{track}
+								{trackClips}
+								{trackEffects}
+								{trackEnvelopes}
+								{trackPattern}
+								{patterns}
+								{effects}
+								{envelopes}
+								{timeline}
+								pixelsPerBeat={PIXELS_PER_BEAT}
+								totalLength={timeline.totalLength}
+								{dragOverRow}
+								{dragOverTrackId}
+								{draggedTrackId}
+								{isResizing}
+								{isDraggingClip}
+								{selectedEffectId}
+								{selectedEnvelopeId}
+								{getAutomationCurvesForEffect}
+								onTrackDragStart={handleTrackDragStart}
+								onTrackDragOver={handleTrackDragOver}
+								onTrackDragLeave={handleTrackDragLeave}
+								onTrackDrop={handleTrackDrop}
+								onRowDragOver={(e) => {
 									e.preventDefault();
 									if (e.dataTransfer) {
 										e.dataTransfer.dropEffect = 'copy';
 									}
 									dragOverRow = track.id;
 								}}
-								on:dragleave={(e) => {
-									// Only clear dragOverRow if we're leaving the row entirely
-									const target = e.relatedTarget;
-									if (!target || !e.currentTarget.contains(target)) {
-										dragOverRow = null;
-										dragOverTrackId = null;
+								onRowDragLeave={handleRowDragLeave}
+								onRowDrop={(e) => handleRowDrop(e, track)}
+								onRowClick={(e) => handleRowClick(e, track.id, track.patternId)}
+								onTrackVolumeMouseDown={handleTrackVolumeMouseDown}
+								onToggleTrackMute={toggleTrackMute}
+								onToggleTrackSolo={toggleTrackSolo}
+								onDeleteTrack={deleteTimelineTrack}
+								onChangeTrackColor={(trackId, color) => {
+									projectStore.updateTimelineTrack(trackId, { color });
+								}}
+								onClipMouseDown={handleClipMouseDown}
+								onClipClick={(clipId, type) => {
+									if (type === 'effect') {
+										selectedEffectId = clipId;
+										selectedEnvelopeId = null;
+									} else if (type === 'envelope') {
+										selectedEnvelopeId = clipId;
+										selectedEffectId = null;
 									}
 								}}
-								on:drop={(e) => {
-									// Check if this is a track reorder operation first (using stored draggedTrackId)
-									if (draggedTrackId && draggedTrackId !== track.id) {
-										// This is a track reorder
-										handleTrackDrop(e, track.id);
-										return;
-									}
-									
-									e.preventDefault();
-									dragOverRow = null;
-									const target = e.currentTarget;
-									if (!target) return;
-									const rect = target.getBoundingClientRect();
-									const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
-									const beat = Math.max(0, snapToBeat(pixelToBeat(x)));
-									
-									try {
-										const dragData = e.dataTransfer?.getData('application/json');
-										if (dragData) {
-											const data = JSON.parse(dragData);
-											if (data.type === 'pattern' && track.type === 'pattern') {
-												addClipToTimeline(data.id, beat, track.id);
-												draggedPatternId = null;
-											} else if (data.type === 'effect' && track.type === 'effect') {
-												addEffectToTimeline(data.id, beat, 4, undefined, track.id);
-												draggedEffectId = null;
-											} else if (data.type === 'envelope' && track.type === 'envelope') {
-												addEnvelopeToTimeline(data.id, beat, 4, undefined, track.id);
-												draggedEnvelopeId = null;
-											}
-										} else {
-											// Fallback: try text data as pattern ID (but not if it's a track ID)
-											const textData = e.dataTransfer?.getData('text/plain');
-											if (textData && !timeline.tracks?.find((t) => t.id === textData)) {
-												const patternIdText = textData;
-												if (patternIdText && track.type === 'pattern' && patterns.find((p) => p.id === patternIdText)) {
-													addClipToTimeline(patternIdText, beat, track.id);
-													draggedPatternId = null;
-												}
-											}
-										}
-									} catch (error) {
-										console.error('Error handling drop:', error);
+								onClipKeyDown={(clipId, type) => {
+									if (type === 'effect') {
+										selectedEffectId = clipId;
+										selectedEnvelopeId = null;
+									} else if (type === 'envelope') {
+										selectedEnvelopeId = clipId;
+										selectedEffectId = null;
 									}
 								}}
-							>
-								<div 
-									class="row-label" 
-									style="background: {
-										track.type === 'pattern' && trackPattern ? trackPattern.color + '20' :
-										track.type === 'effect' ? 'rgba(155, 89, 182, 0.2)' :
-										'rgba(46, 204, 113, 0.2)'
-									};"
-									draggable="true"
-									role="button"
-									tabindex="0"
-									on:dragstart={(e) => handleTrackDragStart(e, track.id)}
-									on:dragover={(e) => handleTrackDragOver(e, track.id)}
-									on:dragleave={(e) => handleTrackDragLeave(e)}
-									on:drop={(e) => handleTrackDrop(e, track.id)}
-								>
-									<div 
-										class="track-volume-control"
-										on:click={(e) => handleTrackVolumeClick(e, track.id)}
-										on:mousedown|stopPropagation
-										title="Click to set volume: {Math.round((track.volume ?? 1.0) * 100)}%"
-									>
-										<div class="track-volume-bar">
-											<div 
-												class="track-volume-fill"
-												style="height: {((track.volume ?? 1.0) / 2.0) * 100}%"
-											></div>
-										</div>
-									</div>
-									<span class="track-name">{track.name}</span>
-									<button 
-										class="track-delete" 
-										on:click|stopPropagation={() => deleteTimelineTrack(track.id)}
-										on:dragstart|stopPropagation
-										title="Delete track"
-									>
-										×
-									</button>
-								</div>
-								<div class="row-clips" style="width: {beatToPixel(timeline.totalLength)}px;">
-									<!-- Grid lines -->
-									{#each gridLines as line}
-										<div 
-											class="grid-line {line.isBar ? 'bar-line' : 'beat-line'}"
-											style="left: {line.x}px;"
-										></div>
-									{/each}
-									
-									{#if track.type === 'pattern'}
-										<!-- Pattern clips -->
-										{#key PIXELS_PER_BEAT}
-											{#each trackClips as clip}
-												{@const clipPattern = findPatternById(clip.patternId)}
-												{@const clipLeft = beatToPixel(clip.startBeat)}
-												{@const clipWidth = Math.max(20, beatToPixel(clip.duration))}
-											{#if clipPattern}
-												<div
-													class="timeline-clip {isDraggingClip?.id === clip.id && isDraggingClip?.type === 'clip' ? 'dragging' : ''}"
-													style="
-														left: {clipLeft}px;
-														width: {clipWidth}px;
-														background: {clipPattern.color}CC;
-														border-color: {clipPattern.color};
-													"
-													on:mousedown={(e) => handleClipMouseDown(e, clip, 'clip')}
-													on:click|stopPropagation={(e) => {
-														// Only stop propagation if we're not resizing or dragging
-														// This allows clicks to pass through when interacting with resize handles
-														if (!isResizing && !isDraggingClip) {
-															e.stopPropagation();
-														}
-													}}
-												>
-													<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
-													<span class="clip-label">{clipPattern.name}</span>
-													<div class="clip-controls">
-														<button class="clip-delete" on:click|stopPropagation={() => deleteClip(clip.id)} title="Delete">×</button>
-													</div>
-													<div class="clip-resize-handle-right" title="Drag to resize right edge"></div>
-												</div>
-											{/if}
-										{/each}
-										{/key}
-									{:else if track.type === 'effect'}
-										<!-- Effect clips -->
-										{#key PIXELS_PER_BEAT}
-											{#each trackEffects as timelineEffect}
-												{@const effect = effects.find((e) => e.id === timelineEffect.effectId)}
-												{@const assignedPattern = findPatternById(timelineEffect.patternId)}
-												{@const effectLeft = beatToPixel(timelineEffect.startBeat)}
-												{@const effectWidth = Math.max(20, beatToPixel(timelineEffect.duration))}
-											{#if effect}
-												{@const clipHeight = PATTERN_ROW_HEIGHT - 18}
-												{@const automationCurves = (() => {
-													// Explicitly reference $automationStore to make this reactive
-													const _ = $automationStore;
-													return getAutomationCurvesForEffect(effect.id, timelineEffect.id);
-												})()}
-												<div
-													class="timeline-clip timeline-effect {selectedEffectId === timelineEffect.id ? 'selected' : ''} {isDraggingClip?.id === timelineEffect.id && isDraggingClip?.type === 'effect' ? 'dragging' : ''}"
-													style="
-														left: {effectLeft}px;
-														width: {effectWidth}px;
-														background: {effect.color}80;
-														border-color: {effect.color};
-													"
-													role="button"
-													tabindex="0"
-													on:mousedown={(e) => handleClipMouseDown(e, timelineEffect, 'effect')}
-													on:click={() => {
-														if (!isResizing && !isDraggingClip) {
-															selectedEffectId = timelineEffect.id;
-															selectedEnvelopeId = null; // Clear envelope selection
-														}
-													}}
-													on:keydown={(e) => {
-														if (e.key === 'Enter' || e.key === ' ') {
-															e.preventDefault();
-															selectedEffectId = timelineEffect.id;
-															selectedEnvelopeId = null; // Clear envelope selection
-														}
-													}}
-												>
-													<!-- Automation curve visualization overlay -->
-													{#if automationCurves.length > 0}
-														<svg
-															class="envelope-curve-visualization"
-															width={effectWidth}
-															height={clipHeight}
-															style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1;"
-														>
-															{#each automationCurves as curveItem}
-																{@const curvePath = generateAutomationCurvePath(effectWidth, clipHeight, curveItem.automation, timelineEffect.startBeat, timelineEffect.duration)}
-																{#if curvePath}
-																	<path d={curvePath} fill={effect.color} fill-opacity="0.5" />
-																{/if}
-															{/each}
-														</svg>
-													{/if}
-													<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
-													<span class="clip-label">
-														{effect.name}
-														{#if assignedPattern}
-															<span class="pattern-badge">→ {assignedPattern.name}</span>
-														{:else}
-															<span class="pattern-badge global">Global</span>
-														{/if}
-													</span>
-													<div class="clip-controls">
-														<button class="clip-delete" on:click|stopPropagation={() => deleteTimelineEffect(timelineEffect.id)} title="Delete">×</button>
-													</div>
-													<div class="clip-resize-handle-right" title="Drag to resize right edge"></div>
-												</div>
-											{/if}
-											{/each}
-										{/key}
-									{:else if track.type === 'envelope'}
-										<!-- Envelope clips -->
-										{#key PIXELS_PER_BEAT}
-											{#each trackEnvelopes as timelineEnvelope}
-												{@const envelope = envelopes.find((e) => e.id === timelineEnvelope.envelopeId)}
-												{@const isSelected = selectedEnvelopeId === timelineEnvelope.id}
-												{@const assignedPattern = findPatternById(timelineEnvelope.patternId)}
-												{@const envelopeLeft = beatToPixel(timelineEnvelope.startBeat)}
-												{@const envelopeWidth = Math.max(20, beatToPixel(timelineEnvelope.duration))}
-											{#if envelope}
-												{@const clipHeight = PATTERN_ROW_HEIGHT - 18}
-												{@const curvePath = generateEnvelopeCurvePath(envelopeWidth, clipHeight, envelope, timelineEnvelope.duration)}
-												<div
-													class="timeline-clip timeline-envelope {isSelected ? 'selected' : ''} {isDraggingClip?.id === timelineEnvelope.id && isDraggingClip?.type === 'envelope' ? 'dragging' : ''}"
-													style="
-														left: {envelopeLeft}px;
-														width: {envelopeWidth}px;
-														background: {envelope.color}40;
-														border-color: {envelope.color};
-													"
-													role="button"
-													tabindex="0"
-													on:mousedown={(e) => handleClipMouseDown(e, timelineEnvelope, 'envelope')}
-													on:click={() => {
-														if (!isResizing && !isDraggingClip) {
-															selectedEnvelopeId = timelineEnvelope.id;
-															selectedEffectId = null; // Clear effect selection
-														}
-													}}
-													on:keydown={(e) => {
-														if (e.key === 'Enter' || e.key === ' ') {
-															e.preventDefault();
-															selectedEnvelopeId = timelineEnvelope.id;
-															selectedEffectId = null; // Clear effect selection
-														}
-													}}
-												>
-													<!-- Curve visualization overlay -->
-													<svg
-														class="envelope-curve-visualization"
-														width={envelopeWidth}
-														height={clipHeight}
-														style="position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1;"
-													>
-														<path
-															d={curvePath}
-															fill={envelope.color}
-															opacity="0.7"
-														/>
-													</svg>
-													<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
-													<span class="clip-label">
-														{envelope.name}
-														{#if assignedPattern}
-															<span class="pattern-badge">→ {assignedPattern.name}</span>
-														{:else}
-															<span class="pattern-badge global">Global</span>
-														{/if}
-													</span>
-													<div class="clip-controls">
-														<button class="clip-delete" on:click|stopPropagation={() => deleteTimelineEnvelope(timelineEnvelope.id)} title="Delete">×</button>
-													</div>
-													<div class="clip-resize-handle-right" title="Drag to resize right edge"></div>
-												</div>
-											{/if}
-											{/each}
-										{/key}
-									{/if}
-								</div>
-							</div>
+								onDeleteClip={(clipId, type) => {
+									if (type === 'clip') {
+										deleteClip(clipId);
+									} else if (type === 'effect') {
+										deleteTimelineEffect(clipId);
+									} else if (type === 'envelope') {
+										deleteTimelineEnvelope(clipId);
+									}
+								}}
+								onAddClipToTimeline={addClipToTimeline}
+								onAddEffectToTimeline={(effectId, beat, trackId) => addEffectToTimeline(effectId, beat, 4, undefined, trackId)}
+								onAddEnvelopeToTimeline={(envelopeId, beat, trackId) => addEnvelopeToTimeline(envelopeId, beat, 4, undefined, trackId)}
+								{findPatternById}
+							/>
 						{/each}
 					</div>
 				</div>
@@ -1432,6 +1190,7 @@
 					</div>
 				</div>
 			{/if}
+			
 		{:else if viewMode === 'pattern'}
 			<!-- Pattern List View -->
 			<div class="pattern-list-view">
@@ -1454,3 +1213,4 @@
 		{/if}
 	</div>
 </div>
+{/if}

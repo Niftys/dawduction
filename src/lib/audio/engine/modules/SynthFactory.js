@@ -38,9 +38,13 @@ class SynthFactory {
 			return new PluckSynth(settings, this.sampleRate);
 		case 'bass':
 			return new BassSynth(settings, this.sampleRate);
+		case 'pad':
+			return new PadSynth(settings, this.sampleRate);
+		case 'organ':
+			return new OrganSynth(settings, this.sampleRate);
 		default:
 			return null;
-		}
 	}
+}
 }
 

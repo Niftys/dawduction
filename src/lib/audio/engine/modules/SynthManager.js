@@ -143,38 +143,21 @@ class SynthManager {
 	triggerNote(trackId, velocity, pitch, patternId = null) {
 		const synth = this.getOrCreateSynth(trackId, patternId);
 		if (synth && synth.trigger) {
-			// Debug: Log synth trigger
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'SynthManager: Triggering note',
-				data: {
-					trackId,
-					patternId: patternId || 'none',
-					velocity,
-					pitch,
-					synthExists: !!synth,
-					hasTrigger: !!synth.trigger,
-					totalSynths: this.synths.size
-				}
-			});
+			// Debug: Log synth trigger (disabled for cleaner logs)
+			// this.processor.port.postMessage({
+			// 	type: 'debug',
+			// 	message: 'SynthManager: Triggering note',
+			// 	data: {
+			// 		trackId,
+			// 		patternId: patternId || 'none',
+			// 		velocity,
+			// 		pitch,
+			// 		synthExists: !!synth,
+			// 		hasTrigger: !!synth.trigger,
+			// 		totalSynths: this.synths.size
+			// 	}
+			// });
 			synth.trigger(velocity, pitch);
-		} else {
-			// Debug: Log synth creation failure
-			const track = this.processor.projectManager.getTrack(trackId);
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'SynthManager: Failed to trigger note',
-				data: {
-					trackId,
-					patternId: patternId || 'none',
-					velocity,
-					pitch,
-					trackExists: !!track,
-					trackInstrumentType: track?.instrumentType || 'none',
-					synthExists: !!synth,
-					hasTrigger: synth ? !!synth.trigger : false
-				}
-			});
 		}
 	}
 

@@ -7,7 +7,7 @@ import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
 import NumericInput from './NumericInput.svelte';
 	
 	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
+	export const selectedPattern: Pattern | undefined = undefined;
 	export let selectedInstrument: any = undefined;
 	
 	let engine: EngineWorklet | null = null;

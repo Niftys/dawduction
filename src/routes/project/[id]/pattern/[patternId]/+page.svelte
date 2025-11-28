@@ -3,29 +3,45 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
+	import { loadingStore } from '$lib/stores/loadingStore';
 	import Canvas from '$lib/components/Canvas.svelte';
 	import Toolbar from '$lib/components/Toolbar.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import MidiEditor from '$lib/components/MidiEditor.svelte';
 	import VelocityEditor from '$lib/components/VelocityEditor.svelte';
+	import SynthPluginWindow from '$lib/components/SynthPluginWindow.svelte';
+	import { synthPluginStore } from '$lib/stores/synthPluginStore';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import type { Pattern } from '$lib/types/pattern';
 	import { viewStore } from '$lib/stores/viewStore';
 	import { engineStore } from '$lib/stores/engineStore';
+	import ProjectSkeleton from '$lib/components/skeletons/ProjectSkeleton.svelte';
 
 	let project: any;
 	let pattern: Pattern | null = null;
 	let unsubscribeAutoSave: (() => void) | null = null;
 	let engine: any = null;
+	let isLoading = true;
+	
 	engineStore.subscribe((e) => (engine = e));
 
 	projectStore.subscribe((p) => {
 		project = p;
 		if (project && $page.params.patternId) {
 			pattern = project.patterns?.find((pat: Pattern) => pat.id === $page.params.patternId) || null;
+			// Stop loading once pattern is found (both local state and loadingStore)
+			if (pattern && isLoading) {
+				setTimeout(() => {
+					isLoading = false;
+					loadingStore.stopLoading(); // Stop the loading overlay
+				}, 100);
+			}
 		}
 	});
+	
+	// Pages with skeletons use local loading state only
+	// Don't subscribe to loadingStore - that's for overlay operations only
 
 	// Function to save project to localStorage
 	function saveProject() {
@@ -39,13 +55,68 @@
 		}
 	}
 
+	// Trigger reload when pattern changes so engine picks it up
+	// The Toolbar's handleReload will detect we're in pattern editor and load the pattern
+	let lastPatternSnapshot = '';
+	let isInitialLoad = true;
+	let reloadTimeout: ReturnType<typeof setTimeout> | null = null;
+	
+	$: if (pattern && project) {
+		const snapshot = JSON.stringify({
+			id: pattern.id,
+			patternTree: pattern.patternTree,
+			instrumentType: pattern.instrumentType,
+			settings: pattern.settings
+		});
+		
+		if (snapshot !== lastPatternSnapshot) {
+			lastPatternSnapshot = snapshot;
+			// Only trigger reload if not initial load (to avoid double loading)
+			if (!isInitialLoad) {
+				// Clear any pending reload
+				if (reloadTimeout) clearTimeout(reloadTimeout);
+				// Debounce to avoid too many reloads
+				reloadTimeout = setTimeout(() => {
+					window.dispatchEvent(new CustomEvent('reloadProject'));
+					reloadTimeout = null;
+				}, 150);
+			} else {
+				isInitialLoad = false;
+			}
+		}
+	}
+
 	onMount(() => {
+		// Reset loading state to ensure fresh start on each mount
+		isLoading = true;
+		
+		// Use local loading state for skeleton, not loadingStore (which shows overlay)
+		// loadingStore is only for operations like view transitions
+		// Clear any existing loading state
+		loadingStore.stopLoading();
+		
+		// Check if pattern is already loaded (from previous navigation)
+		if (project && $page.params.patternId) {
+			const existingPattern = project.patterns?.find((pat: Pattern) => pat.id === $page.params.patternId);
+			if (existingPattern) {
+				// Pattern already loaded, skip loading state
+				pattern = existingPattern;
+				isLoading = false;
+				loadingStore.stopLoading(); // Stop the loading overlay
+			}
+		}
+		
 		// Set view mode to pattern
 		viewStore.setPattern();
 		// Store the current pattern ID for navigation
 		viewStore.setCurrentPatternId($page.params.patternId);
 		// Select the pattern so sidebar shows parameters
 		selectionStore.selectNode('root', null, true, false, $page.params.patternId);
+		
+		// If already have pattern, skip loading
+		if (pattern) {
+			return;
+		}
 		
 		// Load project from localStorage
 		const saved = localStorage.getItem(`project_${$page.params.id}`);
@@ -55,7 +126,11 @@
 				projectStore.set(loadedProject);
 			} catch (e) {
 				console.error('Failed to load project:', e);
+				isLoading = false;
 			}
+		} else {
+			// If no saved project, stop loading immediately
+			isLoading = false;
 		}
 
 		// Auto-save subscription - save whenever project changes
@@ -79,37 +154,6 @@
 				);
 				projectStore.addPattern(newPattern);
 				// Pattern will be loaded via reactivity
-			}
-		}
-		
-		// Trigger reload when pattern changes so engine picks it up
-		// The Toolbar's handleReload will detect we're in pattern editor and load the pattern
-		let lastPatternSnapshot = '';
-		let isInitialLoad = true;
-		let reloadTimeout: ReturnType<typeof setTimeout> | null = null;
-		
-		$: if (pattern && project) {
-			const snapshot = JSON.stringify({
-				id: pattern.id,
-				patternTree: pattern.patternTree,
-				instrumentType: pattern.instrumentType,
-				settings: pattern.settings
-			});
-			
-			if (snapshot !== lastPatternSnapshot) {
-				lastPatternSnapshot = snapshot;
-				// Only trigger reload if not initial load (to avoid double loading)
-				if (!isInitialLoad) {
-					// Clear any pending reload
-					if (reloadTimeout) clearTimeout(reloadTimeout);
-					// Debounce to avoid too many reloads
-					reloadTimeout = setTimeout(() => {
-						window.dispatchEvent(new CustomEvent('reloadProject'));
-						reloadTimeout = null;
-					}, 150);
-				} else {
-					isInitialLoad = false;
-				}
 			}
 		}
 		
@@ -140,7 +184,10 @@
 	// Patterns are automatically saved when updated through projectStore.updatePattern()
 </script>
 
-{#if pattern}
+{#if isLoading}
+	<ProjectSkeleton viewMode="pattern" isPatternEditor={true} />
+{:else if pattern}
+	<Toolbar />
 	<div class="pattern-editor">
 		<div class="pattern-header">
 		<div class="pattern-header-left">
@@ -244,11 +291,17 @@
 			+ Instrument
 		</button>
 	</div>
-		<Toolbar />
-		<Canvas patternId={pattern.id} />
+	<Canvas patternId={pattern.id} />
 		<Sidebar />
 		<MidiEditor />
 		<VelocityEditor />
+		
+		<!-- Synth Plugin Windows (only in pattern editor) -->
+		{#if $synthPluginStore.length > 0}
+			{#each $synthPluginStore as window}
+				<SynthPluginWindow {window} />
+			{/each}
+		{/if}
 	</div>
 {:else}
 	<div class="loading">Loading pattern...</div>

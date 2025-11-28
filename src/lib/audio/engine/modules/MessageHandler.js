@@ -11,7 +11,7 @@ class MessageHandler {
 	handle(message) {
 		switch (message.type) {
 		case 'loadProject':
-			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId, message.timelineTrackToAudioTracks, message.automation);
+			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId, message.timelineTrackToAudioTracks, message.automation, message.patterns);
 			break;
 			case 'setTransport':
 				this.processor.setTransport(message.state, message.position);
@@ -48,6 +48,12 @@ class MessageHandler {
 			break;
 		case 'updateTimelineTrackVolume':
 			this.processor.updateTimelineTrackVolume(message.trackId, message.volume);
+			break;
+		case 'updateTimelineTrackMute':
+			this.processor.updateTimelineTrackMute(message.trackId, message.mute);
+			break;
+		case 'updateTimelineTrackSolo':
+			this.processor.updateTimelineTrackSolo(message.trackId, message.solo);
 			break;
 		case 'updateEffect':
 			this.processor.updateEffect(message.effectId, message.settings);

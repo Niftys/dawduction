@@ -161,24 +161,24 @@ class EventScheduler {
 		// For arrangement view, we want to schedule events well ahead so they're ready when needed
 		const extendedLookahead = isTimelineMode ? currentBeat + 4.0 : lookaheadBeat; // 4 beats ahead in arrangement view
 
-		// Debug: Log scheduling attempt (throttled to avoid spam)
-		if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
-			this._lastDebugTime = this.processor.currentTime;
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EventScheduler.scheduleEvents',
-				data: {
-					currentBeat: currentBeat.toFixed(3),
-					lookaheadBeat: lookaheadBeat.toFixed(3),
-					extendedLookahead: extendedLookahead.toFixed(3),
-					isTimelineMode,
-					totalEvents: this.processor.projectManager.events.length,
-					scheduledCount: this.scheduledEvents.size,
-					patternLength,
-					timelineLength: this.processor.projectManager.timeline?.totalLength || 0
-				}
-			});
-		}
+		// Debug: Log scheduling attempt (disabled for cleaner logs)
+		// if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
+		// 	this._lastDebugTime = this.processor.currentTime;
+		// 	this.processor.port.postMessage({
+		// 		type: 'debug',
+		// 		message: 'EventScheduler.scheduleEvents',
+		// 		data: {
+		// 			currentBeat: currentBeat.toFixed(3),
+		// 			lookaheadBeat: lookaheadBeat.toFixed(3),
+		// 			extendedLookahead: extendedLookahead.toFixed(3),
+		// 			isTimelineMode,
+		// 			totalEvents: this.processor.projectManager.events.length,
+		// 			scheduledCount: this.scheduledEvents.size,
+		// 			patternLength,
+		// 			timelineLength: this.processor.projectManager.timeline?.totalLength || 0
+		// 		}
+		// 	});
+		// }
 
 		let scheduledThisCall = 0;
 		// Schedule events in the lookahead window
@@ -244,37 +244,37 @@ class EventScheduler {
 					this.scheduledEvents.get(eventSampleTime).push(event);
 					scheduledThisCall++;
 					
-					// Debug: Log first few scheduled events
-					if (scheduledThisCall <= 3) {
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'EventScheduler: Event scheduled',
-							data: {
-								eventTime: eventTime.toFixed(3),
-								eventSampleTime,
-								instrumentId: event.instrumentId,
-								patternId: event.patternId || 'none',
-								pitch: event.pitch,
-								velocity: event.velocity
-							}
-						});
-					}
+					// Debug: Log first few scheduled events (disabled for cleaner logs)
+					// if (scheduledThisCall <= 3) {
+					// 	this.processor.port.postMessage({
+					// 		type: 'debug',
+					// 		message: 'EventScheduler: Event scheduled',
+					// 		data: {
+					// 			eventTime: eventTime.toFixed(3),
+					// 			eventSampleTime,
+					// 			instrumentId: event.instrumentId,
+					// 			patternId: event.patternId || 'none',
+					// 			pitch: event.pitch,
+					// 			velocity: event.velocity
+					// 		}
+					// 	});
+					// }
 				}
 			}
 		}
 		
-		// Debug: Log scheduling summary
-		if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
-			this._lastScheduledCount = scheduledThisCall;
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EventScheduler: Scheduling summary',
-				data: {
-					scheduledThisCall,
-					totalScheduled: this.scheduledEvents.size
-				}
-			});
-		}
+		// Debug: Log scheduling summary (disabled for cleaner logs)
+		// if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
+		// 	this._lastScheduledCount = scheduledThisCall;
+		// 	this.processor.port.postMessage({
+		// 		type: 'debug',
+		// 		message: 'EventScheduler: Scheduling summary',
+		// 		data: {
+		// 			scheduledThisCall,
+		// 			totalScheduled: this.scheduledEvents.size
+		// 		}
+		// 	});
+		// }
 	}
 
 	getEventsAtTime(sampleTime) {
@@ -293,13 +293,49 @@ class EventScheduler {
 		
 		// Otherwise use pattern-based looping
 		let patternLength = 4; // Default fallback
+		let baseMeter = 4; // Default baseMeter
+		
 		if (this.processor.projectManager.baseMeterTrackId) {
 			const baseTrack = this.processor.projectManager.getTrack(this.processor.projectManager.baseMeterTrackId);
 			if (baseTrack) {
-				patternLength = baseTrack.patternTree?.division || 4;
+				const rootDivision = baseTrack.patternTree?.division || 4;
+				
+				// Check if this is a pattern instrument (ID starts with __pattern_)
+				if (baseTrack.id && baseTrack.id.startsWith('__pattern_')) {
+					// Extract pattern ID and get baseMeter
+					const lastUnderscore = baseTrack.id.lastIndexOf('_');
+					if (lastUnderscore > '__pattern_'.length) {
+						const patternId = baseTrack.id.substring('__pattern_'.length, lastUnderscore);
+						const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+						if (pattern) {
+							baseMeter = pattern.baseMeter || 4;
+						}
+					}
+				}
+				
+				// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+				// The hierarchical structure is preserved because children split parent's duration proportionally
+				patternLength = baseMeter;
 			}
 		} else if (this.processor.projectManager.tracks?.[0]) {
-			patternLength = this.processor.projectManager.tracks[0].patternTree?.division || 4;
+			const firstTrack = this.processor.projectManager.tracks[0];
+			const rootDivision = firstTrack.patternTree?.division || 4;
+			
+			// Check if this is a pattern instrument
+			if (firstTrack.id && firstTrack.id.startsWith('__pattern_')) {
+				const lastUnderscore = firstTrack.id.lastIndexOf('_');
+				if (lastUnderscore > '__pattern_'.length) {
+					const patternId = firstTrack.id.substring('__pattern_'.length, lastUnderscore);
+					const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+					if (pattern) {
+						baseMeter = pattern.baseMeter || 4;
+					}
+				}
+			}
+			
+			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+			// The hierarchical structure is preserved because children split parent's duration proportionally
+			patternLength = baseMeter;
 		}
 		return patternLength;
 	}
@@ -1207,6 +1243,7 @@ class ProjectManager {
 		this.tracks = null;
 		this.events = [];
 		this.timeline = null;
+		this.patterns = []; // Store patterns to access baseMeter
 		this.effects = [];
 		this.envelopes = [];
 		this.baseMeterTrackId = null;
@@ -1215,10 +1252,11 @@ class ProjectManager {
 		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track ID to array of audio track IDs
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns) {
 		this.tracks = tracks;
 		this.events = events || [];
 		this.timeline = timeline || null;
+		this.patterns = patterns || []; // Store patterns to access baseMeter
 		this.effects = effects || [];
 		this.envelopes = envelopes || [];
 		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
@@ -1308,7 +1346,8 @@ class ProjectManager {
 			// Leaf node - create event
 			if (!node.children || node.children.length === 0) {
 				// Check if this is the root node (empty pattern)
-				if (parentDuration === node.division && startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
+				// If startTime is 0, it's the root node - treat as empty if no velocity/pitch
+				if (startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
 					return [];
 				}
 				// Real leaf node - create event
@@ -1341,11 +1380,28 @@ class ProjectManager {
 			return events;
 		};
 		
-		const flattenTrackPattern = (rootNode, trackId) => {
-			return flattenTree(rootNode, rootNode.division, 0.0, trackId);
+		const flattenTrackPattern = (rootNode, trackId, baseMeter = 4) => {
+			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+			// The hierarchical structure is preserved because children split parent's duration proportionally
+			const patternLength = baseMeter;
+			return flattenTree(rootNode, patternLength, 0.0, trackId);
 		};
 		
-		const newEvents = flattenTrackPattern(track.patternTree, trackId);
+		// Determine baseMeter for this track
+		let baseMeter = 4; // Default for standalone instruments
+		if (trackId && trackId.startsWith('__pattern_')) {
+			// Extract pattern ID and get baseMeter from patterns
+			const lastUnderscore = trackId.lastIndexOf('_');
+			if (lastUnderscore > '__pattern_'.length) {
+				const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+				const pattern = this.patterns?.find(p => p.id === patternId);
+				if (pattern) {
+					baseMeter = pattern.baseMeter || 4;
+				}
+			}
+		}
+		
+		const newEvents = flattenTrackPattern(track.patternTree, trackId, baseMeter);
 		
 		// Add new events
 		this.events.push(...newEvents);
@@ -1410,6 +1466,24 @@ class ProjectManager {
 			const track = this.timeline.tracks.find(t => t.id === trackId);
 			if (track) {
 				track.volume = volume;
+			}
+		}
+	}
+
+	updateTimelineTrackMute(trackId, mute) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.mute = mute;
+			}
+		}
+	}
+
+	updateTimelineTrackSolo(trackId, solo) {
+		if (this.timeline && this.timeline.tracks) {
+			const track = this.timeline.tracks.find(t => t.id === trackId);
+			if (track) {
+				track.solo = solo;
 			}
 		}
 	}
@@ -1570,38 +1644,21 @@ class SynthManager {
 	triggerNote(trackId, velocity, pitch, patternId = null) {
 		const synth = this.getOrCreateSynth(trackId, patternId);
 		if (synth && synth.trigger) {
-			// Debug: Log synth trigger
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'SynthManager: Triggering note',
-				data: {
-					trackId,
-					patternId: patternId || 'none',
-					velocity,
-					pitch,
-					synthExists: !!synth,
-					hasTrigger: !!synth.trigger,
-					totalSynths: this.synths.size
-				}
-			});
+			// Debug: Log synth trigger (disabled for cleaner logs)
+			// this.processor.port.postMessage({
+			// 	type: 'debug',
+			// 	message: 'SynthManager: Triggering note',
+			// 	data: {
+			// 		trackId,
+			// 		patternId: patternId || 'none',
+			// 		velocity,
+			// 		pitch,
+			// 		synthExists: !!synth,
+			// 		hasTrigger: !!synth.trigger,
+			// 		totalSynths: this.synths.size
+			// 	}
+			// });
 			synth.trigger(velocity, pitch);
-		} else {
-			// Debug: Log synth creation failure
-			const track = this.processor.projectManager.getTrack(trackId);
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'SynthManager: Failed to trigger note',
-				data: {
-					trackId,
-					patternId: patternId || 'none',
-					velocity,
-					pitch,
-					trackExists: !!track,
-					trackInstrumentType: track?.instrumentType || 'none',
-					synthExists: !!synth,
-					hasTrigger: synth ? !!synth.trigger : false
-				}
-			});
 		}
 	}
 
@@ -1632,24 +1689,169 @@ class AudioMixer {
 		this.filterStates = new Map(); // trackId -> {x1, x2, y1, y2}
 		// Per-track pitch envelope state for pitch shifting
 		this.pitchStates = new Map(); // trackId -> {lastSample, phase}
+		
+		// Debug tracking (per-track to avoid infinite loops)
+		this._lastDebugStates = new Map(); // trackId_patternId -> {muted, soloed, beat}
 	}
 
 	mixSynths(synths, masterGain = 0.3, currentBeat = 0, isArrangementView = false) {
 		let leftSample = 0;
 		let rightSample = 0;
 		
+		// Check if any timeline track is soloed (for arrangement view)
+		let hasSoloedTimelineTrack = false;
+		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.tracks) {
+			hasSoloedTimelineTrack = this.processor.projectManager.timeline.tracks.some((t) => t.type === 'pattern' && t.solo === true);
+		}
+		
 		const hasSoloedTrack = this.trackStateManager.hasAnySoloedTrack();
 		
 		for (const [trackId, synth] of synths.entries()) {
 			if (synth.process) {
+				// Find all timeline tracks this audio track belongs to
+				const timelineTracks = [];
+				if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
+					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
+						if (audioTrackIds.includes(trackId)) {
+							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+							if (timelineTrack && timelineTrack.type === 'pattern') {
+								timelineTracks.push(timelineTrack);
+							}
+						}
+					}
+				}
+				
+				// Check timeline track mute/solo state (for arrangement view)
+				// For mute: Check if there's at least one active clip on a non-muted timeline track
+				// For solo: Check if there's at least one active clip on a soloed timeline track
+				let isTimelineMuted = false;
+				let isTimelineSoloed = false;
+				if (isArrangementView && timelineTracks.length > 0) {
+					// Get pattern ID to find active clips
+					let patternId = null;
+					if (trackId && trackId.startsWith('__pattern_')) {
+						const patternPrefix = '__pattern_';
+						const afterPrefix = trackId.substring(patternPrefix.length);
+						const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+						if (uuidMatch) {
+							patternId = uuidMatch[1];
+						}
+					}
+					
+					// Find active clips for this pattern at current beat
+					if (patternId && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
+						const activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
+							return clip.patternId === patternId &&
+							       currentBeat >= clip.startBeat &&
+							       currentBeat < clip.startBeat + clip.duration;
+						});
+						
+						if (activeClips.length > 0) {
+							// Check if all active clips are on muted timeline tracks
+							const allClipsMuted = activeClips.every((clip) => {
+								const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+								return clipTrack && clipTrack.mute === true;
+							});
+							
+							// If any timeline track is soloed, play if ANY active clip is on a soloed track
+							// This allows soloed tracks to play even if other non-soloed clips are active
+							if (hasSoloedTimelineTrack) {
+								// Solo mode: play if ANY active clip is on a soloed track
+								const hasSoloedClip = activeClips.some((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return clipTrack && clipTrack.solo === true;
+								});
+								isTimelineSoloed = hasSoloedClip;
+							} else {
+								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
+								const hasSoloedClip = activeClips.some((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return clipTrack && clipTrack.solo === true;
+								});
+								isTimelineSoloed = hasSoloedClip;
+							}
+							
+							isTimelineMuted = allClipsMuted;
+							
+							// Debug: Log mute/solo decision for this track (track-specific, throttled)
+							const debugKey = `${trackId}_${patternId}`;
+							const lastDebugState = this._lastDebugStates?.get(debugKey);
+							const stateChanged = !lastDebugState || 
+							                    lastDebugState.muted !== isTimelineMuted || 
+							                    lastDebugState.soloed !== isTimelineSoloed ||
+							                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
+							
+							if (stateChanged) {
+								if (!this._lastDebugStates) {
+									this._lastDebugStates = new Map();
+								}
+								this._lastDebugStates.set(debugKey, {
+									muted: isTimelineMuted,
+									soloed: isTimelineSoloed,
+									beat: currentBeat
+								});
+								
+								const clipInfo = activeClips.map((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return {
+										clipId: clip.id,
+										trackId: clip.trackId,
+										trackName: clipTrack?.name || 'unknown',
+										mute: clipTrack?.mute || false,
+										solo: clipTrack?.solo || false,
+										startBeat: clip.startBeat,
+										duration: clip.duration,
+										clipEndBeat: clip.startBeat + clip.duration
+									};
+								});
+								
+								this.processor.port.postMessage({
+									type: 'debug',
+									message: 'AudioMixer: Mute/Solo Check',
+									data: {
+										currentBeat: currentBeat.toFixed(3),
+										trackId,
+										patternId,
+										activeClips: clipInfo,
+										activeClipsCount: activeClips.length,
+										allClipsMuted,
+										isTimelineMuted,
+										isTimelineSoloed,
+										hasSoloedTimelineTrack,
+										willSkip: isTimelineMuted || (hasSoloedTimelineTrack && !isTimelineSoloed),
+										skipReason: isTimelineMuted ? 'muted' : (hasSoloedTimelineTrack && !isTimelineSoloed ? 'not-soloed' : 'none')
+									}
+								});
+							}
+						} else {
+							// No active clips - mute this audio track
+							isTimelineMuted = true;
+						}
+					} else {
+						// Fallback: If any timeline track is muted, mute this audio track
+						isTimelineMuted = timelineTracks.some((t) => t.mute === true);
+						// If any timeline track is soloed, this audio track is soloed
+						isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
+					}
+				}
+				
+				// Check audio track mute/solo state (for pattern view or standalone tracks)
 				const isMuted = this.trackStateManager.isMuted(trackId);
 				const isSoloed = this.trackStateManager.isSoloed(trackId);
 				
-				// Skip if muted
-				if (isMuted) continue;
+				// Combine mute states: muted if audio track is muted OR any timeline track is muted
+				const shouldMute = isMuted || isTimelineMuted;
 				
-				// If any track is soloed, only process soloed tracks
-				if (hasSoloedTrack && !isSoloed) continue;
+				// Skip if muted
+				if (shouldMute) continue;
+				
+				// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
+				// Otherwise, use audio track solo state
+				if (isArrangementView && hasSoloedTimelineTrack) {
+					if (!isTimelineSoloed) continue;
+				} else if (hasSoloedTrack && !isSoloed) {
+					continue;
+				}
 				
 				// Get base track volume and pan
 				let trackVolume = this.trackStateManager.getVolume(trackId);
@@ -2007,23 +2209,23 @@ class AudioProcessor {
 			if (eventsAtTime) {
 				const eventIds = [];
 				for (const event of eventsAtTime) {
-					// Debug: Log event trigger
-					if (!this._lastTriggerTime || (sampleTime - this._lastTriggerTime) > this.processor.sampleRate * 0.1) {
-						this._lastTriggerTime = sampleTime;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'AudioProcessor: Triggering event',
-							data: {
-								sampleTime,
-								currentBeat: currentBeat.toFixed(3),
-								instrumentId: event.instrumentId,
-								patternId: event.patternId || 'none',
-								pitch: event.pitch,
-								velocity: event.velocity,
-								eventTime: event.time
-							}
-						});
-					}
+					// Debug: Log event trigger (disabled for cleaner logs)
+					// if (!this._lastTriggerTime || (sampleTime - this._lastTriggerTime) > this.processor.sampleRate * 0.1) {
+					// 	this._lastTriggerTime = sampleTime;
+					// 	this.processor.port.postMessage({
+					// 		type: 'debug',
+					// 		message: 'AudioProcessor: Triggering event',
+					// 		data: {
+					// 			sampleTime,
+					// 			currentBeat: currentBeat.toFixed(3),
+					// 			instrumentId: event.instrumentId,
+					// 			patternId: event.patternId || 'none',
+					// 			pitch: event.pitch,
+					// 			velocity: event.velocity,
+					// 			eventTime: event.time
+					// 		}
+					// 	});
+					// }
 					this.processor.triggerEvent(event);
 					// Track event IDs for visual feedback
 					eventIds.push(event.instrumentId + ':' + (event.time || 0));
@@ -2092,7 +2294,7 @@ class MessageHandler {
 	handle(message) {
 		switch (message.type) {
 		case 'loadProject':
-			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId, message.timelineTrackToAudioTracks, message.automation);
+			this.processor.loadProject(message.tracks, message.bpm, message.events, message.baseMeterTrackId, message.timeline, message.effects, message.envelopes, message.viewMode, message.patternToTrackId, message.timelineTrackToAudioTracks, message.automation, message.patterns);
 			break;
 			case 'setTransport':
 				this.processor.setTransport(message.state, message.position);
@@ -2129,6 +2331,12 @@ class MessageHandler {
 			break;
 		case 'updateTimelineTrackVolume':
 			this.processor.updateTimelineTrackVolume(message.trackId, message.volume);
+			break;
+		case 'updateTimelineTrackMute':
+			this.processor.updateTimelineTrackMute(message.trackId, message.mute);
+			break;
+		case 'updateTimelineTrackSolo':
+			this.processor.updateTimelineTrackSolo(message.trackId, message.solo);
 			break;
 		case 'updateEffect':
 			this.processor.updateEffect(message.effectId, message.settings);
@@ -2182,10 +2390,14 @@ class SynthFactory {
 			return new PluckSynth(settings, this.sampleRate);
 		case 'bass':
 			return new BassSynth(settings, this.sampleRate);
+		case 'pad':
+			return new PadSynth(settings, this.sampleRate);
+		case 'organ':
+			return new OrganSynth(settings, this.sampleRate);
 		default:
 			return null;
-		}
 	}
+}
 }
 
 
@@ -2235,7 +2447,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		};
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns) {
 		this.playbackController.setTempo(bpm);
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
@@ -2248,10 +2460,14 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 		
 		// Delegate to ProjectManager
-		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation);
+		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns);
 		
 		// Initialize track state
 		this.trackState.initializeTracks(tracks);
+		
+		// Don't initialize timeline track mute/solo on audio tracks
+		// AudioMixer will check timeline track mute/solo state based on active clips
+		// This allows the same pattern on multiple tracks to be muted/soloed independently
 	}
 
 	setTempo(bpm) {
@@ -2340,6 +2556,18 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 
 	updateTimelineTrackVolume(trackId, volume) {
 		this.projectManager.updateTimelineTrackVolume(trackId, volume);
+	}
+
+	updateTimelineTrackMute(trackId, mute) {
+		this.projectManager.updateTimelineTrackMute(trackId, mute);
+		// Don't set mute on audio tracks - AudioMixer will check timeline track mute state based on active clips
+		// This allows the same pattern on multiple tracks to be muted independently
+	}
+
+	updateTimelineTrackSolo(trackId, solo) {
+		this.projectManager.updateTimelineTrackSolo(trackId, solo);
+		// Don't set solo on audio tracks - AudioMixer will check timeline track solo state based on active clips
+		// This allows the same pattern on multiple tracks to be soloed independently
 	}
 
 	updateTrackEvents(trackId, events) {
@@ -2435,21 +2663,30 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 
 /**
  * Kick Drum Synth (procedural)
- * Generates a punchy kick drum with pitch envelope and transient click
+ * Generates an organic, realistic kick drum sound
+ * - Multiple oscillators with slight detuning for character
+ * - Clean tonal body without noise/rattling or clicks
+ * - Realistic pitch envelope (quick drop like real drum head)
+ * - Natural compression/saturation characteristics
  */
 
 class KickSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
 		this.settings = settings || {};
-		this.phase = 0;
+		this.phase = 0; // Continuous phase accumulator (0-2π)
+		this.phase2 = 0; // Second oscillator phase accumulator (0-2π)
 		this.envelopePhase = 0;
 		this.isActive = false;
+		
 		// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// DC blocking filter to prevent DC offset clicks
+		this.dcFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -2461,11 +2698,17 @@ class KickSynth {
 		this.wasActive = this.isActive;
 		
 		// Always reset phase for drums - each hit needs a fresh start
+		// Reset to 0 to start from beginning of waveform
 		this.phase = 0;
+		this.phase2 = 0;
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
+		
+		// Reset DC filter state on trigger to prevent clicks
+		this.dcFilterState.x1 = 0;
+		this.dcFilterState.y1 = 0;
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -2482,63 +2725,101 @@ class KickSynth {
 		const release = (this.settings.release || 0.15) * this.sampleRate;
 		const totalDuration = attack + decay + release;
 
-		// Beefier kick: wider frequency range with punch
-		const startFreq = 80; // Higher initial frequency for punch
-		const midFreq = 50; // Mid frequency
-		const endFreq = 35; // Lower end frequency for body
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60, matching default)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
 		
-		// Two-stage pitch envelope for more character
+		// Realistic kick drum frequencies
+		// Real kick drums have fundamental around 40-60Hz, with quick pitch drop
+		// Higher initial frequency for more punch and impact
+		const startFreq = 75 * pitchMultiplier; // Initial frequency (higher for more attack punch)
+		const fundamentalFreq = 50 * pitchMultiplier; // Main body frequency (typical kick fundamental)
+		const endFreq = 40 * pitchMultiplier; // End frequency (slight drop)
+		
+		// Realistic pitch envelope - quick drop like a real drum head
+		// The head tension releases quickly, causing pitch to drop
+		// Use smooth continuous curve to prevent clicks
 		let freq;
-		if (this.envelopePhase < decay * 0.3) {
-			// Initial punch - quick drop
-			const phase = this.envelopePhase / (decay * 0.3);
-			freq = startFreq * (1 - phase) + midFreq * phase;
+		if (this.envelopePhase < attack + decay) {
+			// Smooth pitch drop throughout attack and decay
+			const totalPhase = this.envelopePhase / (attack + decay);
+			// Use smooth exponential curve for continuous frequency change
+			// Start at startFreq, quickly drop to fundamentalFreq, then slowly to endFreq
+			if (totalPhase < 0.2) {
+				// Quick initial drop (first 20% of total duration)
+				const phase = totalPhase / 0.2;
+				freq = startFreq * Math.exp(-phase * 3) + fundamentalFreq * (1 - Math.exp(-phase * 3));
+			} else {
+				// Slower decay to end frequency
+				const phase = (totalPhase - 0.2) / 0.8;
+				freq = fundamentalFreq * Math.exp(-phase * 1.5) + endFreq * (1 - Math.exp(-phase * 1.5));
+			}
 		} else {
-			// Body - slower decay
-			const phase = (this.envelopePhase - decay * 0.3) / (decay * 0.7);
-			freq = midFreq * Math.exp(-phase * 2) + endFreq * (1 - Math.exp(-phase * 2));
+			// During release, maintain end frequency
+			freq = endFreq;
 		}
 
-		// Generate sine wave with pitch envelope
-		const sine = Math.sin(this.phase * 2 * Math.PI * freq / this.sampleRate);
+		// Multiple oscillators with slight detuning for organic character
+		// Real drums have multiple resonances that create a richer sound
+		const detune1 = 1.0; // Main oscillator
+		const detune2 = 1.02; // Slightly detuned for character (2% detune)
 		
-		// Add a subtle click/punch at the start (high frequency transient)
-		let click = 0;
-		if (this.envelopePhase < attack * 2) {
-			const clickPhase = this.envelopePhase / (attack * 2);
-			const clickFreq = 200 * (1 - clickPhase * 0.8); // Quick high frequency sweep
-			click = Math.sin(this.phase * 2 * Math.PI * clickFreq / this.sampleRate) * (1 - clickPhase) * 0.3;
+		// Calculate phase increments based on current frequency
+		// This ensures smooth phase accumulation even when frequency changes
+		const phaseIncrement1 = 2 * Math.PI * freq * detune1 / this.sampleRate;
+		const phaseIncrement2 = 2 * Math.PI * freq * detune2 / this.sampleRate;
+		
+		// Generate sine waves using continuous phase accumulation
+		const sine1 = Math.sin(this.phase);
+		const sine2 = Math.sin(this.phase2);
+		
+		// Accumulate phase continuously (wrap to prevent overflow)
+		this.phase += phaseIncrement1;
+		this.phase2 += phaseIncrement2;
+		
+		// Wrap phases smoothly using modulo to prevent discontinuities
+		// Use larger range (100 * 2π) before wrapping to maintain precision
+		const twoPi = 2 * Math.PI;
+		const wrapRange = 100 * twoPi;
+		if (this.phase > wrapRange) {
+			this.phase = this.phase % twoPi;
+		}
+		if (this.phase2 > wrapRange) {
+			this.phase2 = this.phase2 % twoPi;
 		}
 		
-		// Combine sine and click
-		const sample = sine + click;
+		// Combine oscillators with slight phase offset for more character
+		const tonalBody = (sine1 * 0.6 + sine2 * 0.4);
 
 		// Extended total duration with long fade-out to prevent clicks
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.3); // 100ms minimum fade-out
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
-		// ADSR envelope - FIXED: Release fades from end-of-decay value, not sustain
+		// ADSR envelope for clean tonal body
+		// Use smoother curves to prevent clicks
 		let envelope = 0;
-		let decayEndValue = sustain; // Value at end of decay phase (will be updated in decay phase)
+		let decayEndValue = sustain;
 		
 		if (this.envelopePhase < attack) {
-			// Smooth attack using cosine curve
-			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
+			// More aggressive attack for punch and impact
+			const attackPhase = this.envelopePhase / attack;
+			// Faster exponential curve for more immediate punch
+			envelope = 1 - Math.exp(-attackPhase * 8);
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
-			envelope = 1 - decayPhase * (1 - sustain);
-			decayEndValue = envelope; // Track the actual value at end of decay
+			
+			// Smooth exponential decay - avoid mixing exponential and linear to prevent clicks
+			// Use pure exponential decay for smoothness
+			envelope = Math.exp(-decayPhase * 3) * (1 - sustain) + sustain;
+			decayEndValue = envelope;
 		} else if (this.envelopePhase < attack + decay + release) {
-			// Release: fade from decayEndValue to 0 (not from sustain!)
-			// If decayEndValue wasn't set (shouldn't happen), use sustain as fallback
+			// Release: fade from decayEndValue to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : sustain;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			// Use exponential curve for smooth release
 			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
-			// Extended smooth fade-out using exponential decay to zero
+			// Extended fade-out
 			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
-			// Continue exponential decay from very small value
 			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : sustain) * Math.exp(-6);
 			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {
@@ -2548,18 +2829,37 @@ class KickSynth {
 		// Ensure envelope is never negative and clamp to [0, 1]
 		envelope = Math.max(0, Math.min(1, envelope));
 
-		this.phase++;
+		// Phase accumulation is done above when calculating sine waves
 		this.envelopePhase++;
 		
-		// Apply envelope
-		let output = sample * envelope * this.velocity * 0.7;
+		// Apply envelope to clean tonal body
+		// Increased gain from 0.7 to 1.0 for more impact and presence
+		let output = tonalBody * envelope * this.velocity * 1.0;
+		
+		// DC blocking filter to remove any DC offset that could cause clicks
+		// Simple one-pole high-pass filter
+		const dcAlpha = 0.995; // Filter coefficient
+		const dcFiltered = output - this.dcFilterState.x1 + dcAlpha * this.dcFilterState.y1;
+		this.dcFilterState.x1 = output;
+		this.dcFilterState.y1 = dcFiltered;
+		output = dcFiltered;
+		
+		// Subtle saturation for organic character (soft clipping)
+		// Real drums have natural compression from the head
+		// Increased saturation threshold to allow more headroom for punch
+		const saturation = 0.4; // Amount of saturation (increased from 0.3)
+		if (Math.abs(output) > saturation) {
+			const sign = output > 0 ? 1 : -1;
+			output = sign * (saturation + (1 - saturation) * Math.tanh((Math.abs(output) - saturation) / (1 - saturation)));
+		}
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
 			const fadeProgress = this.retriggerFadePhase / this.retriggerFadeSamples;
-			// Fade out old sound, fade in new sound
-			const oldGain = 1 - fadeProgress;
-			const newGain = fadeProgress;
+			// Use smooth curve for fade (sine curve for smoother transition)
+			const smoothFade = 0.5 * (1 - Math.cos(Math.PI * fadeProgress));
+			const oldGain = 1 - smoothFade;
+			const newGain = smoothFade;
 			// Smooth the old output to prevent discontinuities
 			this.lastOutput = this.lastOutput * 0.95 + output * 0.05; // Smooth transition
 			output = this.lastOutput * oldGain + output * newGain;
@@ -2567,6 +2867,14 @@ class KickSynth {
 		} else {
 			this.lastOutput = output;
 			this.wasActive = false;
+		}
+		
+		// Additional smoothing: apply a very gentle low-pass to prevent any remaining clicks
+		// This helps smooth out any remaining discontinuities
+		if (this.envelopePhase < 10) {
+			// Very gentle fade-in at the very start (first 10 samples)
+			const startFade = this.envelopePhase / 10;
+			output *= startFade;
 		}
 		
 		// Only stop when envelope is done and we're very close to zero
@@ -2585,7 +2893,10 @@ class KickSynth {
 
 /**
  * Snare Drum Synth
- * Combines tonal body with filtered noise for snare wire character
+ * Based on rimshot structure but with strong snare wire rattle
+ * - Sharp tonal components (like rimshot) for punch
+ * - Strong snare wire rattle (bandpass filtered noise) for snare character
+ * - More transients for the rattling effect
  */
 
 class SnareSynth {
@@ -2620,6 +2931,7 @@ class SnareSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Start retrigger fade if was already active
@@ -2630,65 +2942,110 @@ class SnareSynth {
 
 	process() {
 		if (!this.isActive) return 0;
-		const attack = (this.settings.attack || 0.005) * this.sampleRate;
-		const decay = (this.settings.decay || 0.2) * this.sampleRate;
+		const attack = (this.settings.attack || 0.001) * this.sampleRate;
+		const decay = (this.settings.decay || 0.15) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
 		const totalDuration = attack + decay + release;
 
-		// Real snare = tonal body + filtered noise (snare wires)
+		// Snare = rimshot structure + strong snare wire rattle
 		
-		// 1. Tonal component (drum body) - like a tom
-		const bodyFreq = 180 * Math.exp(-this.envelopePhase / (decay * 0.4));
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// 1. Sharp tonal "ping" - high frequency sine that quickly decays (like rimshot)
+		const pingFreq = 800 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.2));
+		const pingPhase = this.phase * 2 * Math.PI * pingFreq / this.sampleRate;
+		const ping = Math.sin(pingPhase) * 0.4;
+		
+		// 2. Body tone - lower frequency for character (like rimshot)
+		const bodyFreq = 200 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.5));
 		const bodyPhase = this.phase * 2 * Math.PI * bodyFreq / this.sampleRate;
-		const bodyTone = Math.sin(bodyPhase) * 0.3;
+		const body = Math.sin(bodyPhase) * 0.2;
 		
-		// 2. Snare wires - bandpass filtered noise
+		// 3. SNARE WIRES - bandpass filtered noise for rattle (THIS IS THE KEY DIFFERENCE)
+		// This is what makes it a snare, not just a rimshot
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
 		
-		// Simple bandpass filter (centered around 200-800 Hz for snare character)
-		// Use a simple resonant filter approximation
-		const centerFreq = 400;
-		const bandwidth = 300;
-		const filterPhase = this.phase * 2 * Math.PI * centerFreq / this.sampleRate;
-		const filteredNoise = noise * (0.5 + 0.5 * Math.sin(filterPhase)) * 0.7;
+		// Bandpass filter for snare wire rattle (200-800Hz range)
+		// Use multiple bandpass filters at different frequencies for more transients/rattling
+		// Scale all frequencies proportionally with pitch
+		const snareWireCenter1 = 400 * pitchMultiplier; // Hz - main snare wire resonance
+		const snareWireCenter2 = 550 * pitchMultiplier; // Hz - secondary resonance for more transients
+		const snareWireBandwidth = 300 * pitchMultiplier; // Hz - bandwidth also scales to maintain character
 		
-		// Mix body and snare wires
-		let sample = bodyTone + filteredNoise;
-
-		// ADSR envelope - FIXED: Release fades from end-of-decay value
-		let envelope = 0;
+		// Simple bandpass approximation for snare wires
+		// Create resonant peaks for rattling effect
+		const snarePhase1 = this.phase * 2 * Math.PI * snareWireCenter1 / this.sampleRate;
+		const snarePhase2 = this.phase * 2 * Math.PI * snareWireCenter2 / this.sampleRate;
+		
+		// Modulate noise with resonant frequencies to create snare wire rattle
+		const snareWire1 = noise * (0.5 + 0.5 * Math.sin(snarePhase1)) * 0.6;
+		const snareWire2 = noise * (0.5 + 0.5 * Math.sin(snarePhase2)) * 0.4;
+		const snareWireNoise = snareWire1 + snareWire2;
+		
+		// 4. Bright filtered noise for snappy character (like rimshot, but less)
+		const hpfFreq = 2000 * pitchMultiplier;
+		const hpfPhase = this.phase * 2 * Math.PI * hpfFreq / this.sampleRate;
+		const filteredNoise = noise * (0.3 + 0.7 * Math.abs(Math.sin(hpfPhase))) * 0.3;
+		
+		// Separate envelopes for different components
+		// Body tone needs to decay very fast to avoid melodic tone
+		let bodyEnvelope = 0;
+		let mainEnvelope = 0;
 		let decayEndValue = 0;
-		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
+		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
 		if (this.envelopePhase < attack) {
-			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
+			// Very fast attack for sharp transient
+			const attackPhase = this.envelopePhase / attack;
+			bodyEnvelope = 0.5 * (1 - Math.cos(Math.PI * attackPhase));
+			mainEnvelope = 0.5 * (1 - Math.cos(Math.PI * attackPhase));
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
-			envelope = Math.exp(-decayPhase * 3);
-			decayEndValue = envelope; // Track the actual value at end of decay
+			
+			// Body: extremely fast decay - only first 10% of decay to avoid melodic tone
+			if (decayPhase < 0.1) {
+				bodyEnvelope = Math.exp(-decayPhase * 20) * (1 - decayPhase / 0.1);
+			} else {
+				bodyEnvelope = 0; // Cut off body tone early
+			}
+			
+			// Main envelope: quick exponential decay for other components
+			mainEnvelope = Math.exp(-decayPhase * 4);
+			decayEndValue = mainEnvelope;
 		} else if (this.envelopePhase < attack + decay + release) {
 			// Release: fade from decayEndValue to 0
-			// Use decayEndValue if set, otherwise fallback to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
+			bodyEnvelope = 0; // Body is gone by release
+			// Use exponential decay for smooth release
+			mainEnvelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended fade-out
 			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
-			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-6);
-			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
+			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-8);
+			bodyEnvelope = 0;
+			mainEnvelope = fadeStartValue * Math.exp(-fadePhase * 12);
 		} else {
-			envelope = 0;
+			bodyEnvelope = 0;
+			mainEnvelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		bodyEnvelope = Math.max(0, Math.min(1, bodyEnvelope));
+		mainEnvelope = Math.max(0, Math.min(1, mainEnvelope));
+
+		// Apply separate envelopes - body decays much faster
+		const bodyComponent = body * bodyEnvelope;
+		const otherComponents = (ping + snareWireNoise + filteredNoise) * mainEnvelope;
+		let sample = bodyComponent + otherComponents;
 
 		this.phase++;
 		this.envelopePhase++;
 		
-		let output = sample * envelope * this.velocity * 0.5;
+		let output = sample * this.velocity * 0.7;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -2716,7 +3073,6 @@ class SnareSynth {
 }
 
 
-
 /**
  * Hi-Hat Synth
  * High-frequency filtered noise for metallic cymbal character
@@ -2739,6 +3095,9 @@ class HiHatSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -2754,7 +3113,14 @@ class HiHatSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -2766,17 +3132,43 @@ class HiHatSynth {
 		if (!this.isActive) return 0;
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.05) * this.sampleRate;
-		const totalDuration = attack + decay;
+		const release = (this.settings.release || 0.01) * this.sampleRate;
+		const totalDuration = attack + decay + release;
 
 		// High-frequency noise (metallic)
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
 		
-		// High-pass filter simulation (emphasize high frequencies)
-		let sample = noise * (1 + Math.sin(this.phase * 2 * Math.PI * 10000 / this.sampleRate) * 0.3);
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, more metallic sound
+		const baseCutoff = 8000; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// High-pass filter coefficient
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		let sample = filtered;
 
 		// Extended fade-out to prevent clicks
-		const fadeOutSamples = Math.max(0.05 * this.sampleRate, decay * 0.3);
+		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
 		let envelope = 0;
@@ -2788,10 +3180,17 @@ class HiHatSynth {
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			envelope = Math.exp(-decayPhase * 5);
 			decayEndValue = envelope;
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from decayEndValue to 0
+			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - totalDuration) / fadeOutSamples;
-			envelope = decayEndValue * Math.exp(-fadePhase * 10);
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-8);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {
 			envelope = 0;
 		}
@@ -2833,6 +3232,9 @@ class HiHatSynth {
 /**
  * Clap Synth
  * Multiple delayed noise bursts to simulate multiple hands clapping
+ * - 2-3 percussive impacts very close together (1-3ms delays)
+ * - Bright, sharp noise bursts with bandpass filtering
+ * - Short, percussive envelopes
  */
 
 class ClapSynth {
@@ -2862,16 +3264,22 @@ class ClapSynth {
 		// Check if we're retriggering while still active
 		this.wasActive = this.isActive;
 		
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.bursts = [];
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
-		// Multiple bursts with pre-delay (like multiple hands clapping)
-		for (let i = 0; i < 5; i++) {
+		
+		// 2-3 percussive impacts very close together (like hands clapping)
+		// Use tight timing to create that characteristic clap sound
+		const numBursts = 3;
+		for (let i = 0; i < numBursts; i++) {
+			// Very tight delays: 1-3ms between impacts for that clapping sound
+			const delayMs = 0.001 + (i * 0.001) + (Math.random() * 0.001); // 1-3ms total spread
 			this.bursts.push({
-				delay: i * 0.008 * this.sampleRate, // Slight delay between bursts
+				delay: Math.floor(delayMs * this.sampleRate),
 				phase: 0,
 				envelopePhase: 0,
-				velocity: velocity * (1 - i * 0.12),
-				noiseIndex: this.noiseIndex + i * 1000 // Offset noise for variation
+				velocity: velocity * (1 - i * 0.3), // More velocity reduction for later bursts
+				noiseIndex: this.noiseIndex + i * 3000 // More offset for variation
 			});
 		}
 		this.isActive = true;
@@ -2885,53 +3293,134 @@ class ClapSynth {
 	process() {
 		if (!this.isActive || this.bursts.length === 0) return 0;
 		
+		// Use settings with defaults for clap (very short, percussive)
+		const attack = (this.settings.attack || 0.0005) * this.sampleRate; // Even faster attack
+		const decay = (this.settings.decay || 0.02) * this.sampleRate; // Much shorter decay for sharp clap
+		const release = (this.settings.release || 0.01) * this.sampleRate; // Very short release
+		const totalDuration = attack + decay + release;
+		const fadeOutSamples = Math.max(0.005 * this.sampleRate, release * 0.3);
+		const extendedDuration = totalDuration + fadeOutSamples;
+		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
 		let sample = 0;
 		for (let burst of this.bursts) {
+			// Handle delay - decrement and skip processing but don't increment phase yet
 			if (burst.delay > 0) {
 				burst.delay--;
 				continue;
 			}
 			
 			// Use pre-generated noise buffer
-			const noiseIdx = (burst.noiseIndex + burst.envelopePhase) % this.noiseBuffer.length;
+			const noiseIdx = (burst.noiseIndex + burst.phase) % this.noiseBuffer.length;
 			let noise = this.noiseBuffer[noiseIdx];
 			
-			// High-pass emphasis for clap character (bright, sharp)
-			// Simple high-pass: emphasize high frequencies
-			const highFreq = 5000;
-			const filterPhase = burst.phase * 2 * Math.PI * highFreq / this.sampleRate;
-			noise = noise * (0.3 + 0.7 * (1 + Math.sin(filterPhase)) * 0.5);
+			// Add a sharp transient "click" at the very start (like hands smacking together)
+			// Use lower frequency to avoid squeaking
+			let click = 0;
+			if (burst.envelopePhase < attack * 3) {
+				const clickPhase = burst.envelopePhase / (attack * 3);
+				// Lower frequency sine wave that quickly sweeps down - less squeaky
+				const clickFreq = 6000 * pitchMultiplier * (1 - clickPhase * 0.9);
+				click = Math.sin(burst.phase * 2 * Math.PI * clickFreq / this.sampleRate) * (1 - clickPhase) * 0.4;
+			}
 			
-			// Sharp, short envelope with extended fade-out
-			const decay = 0.08 * this.sampleRate;
-			const fadeOutSamples = decay * 0.3;
-			const totalBurstDuration = decay + fadeOutSamples;
-			
+			// Sharp, percussive ADSR envelope
 			let envelope = 0;
-			if (burst.envelopePhase < decay) {
-				envelope = Math.exp(-burst.envelopePhase / (decay * 0.25));
-			} else if (burst.envelopePhase < totalBurstDuration) {
+			let decayEndValue = 0;
+			
+			if (burst.envelopePhase < attack) {
+				// Instant attack for sharp transient
+				envelope = 1.0; // Full volume immediately
+			} else if (burst.envelopePhase < attack + decay) {
+				const decayPhase = (burst.envelopePhase - attack) / decay;
+				// Very quick exponential decay for sharp clap
+				envelope = Math.exp(-decayPhase * 10); // Faster decay
+				decayEndValue = envelope; // Track the value continuously during decay
+			} else if (burst.envelopePhase < attack + decay + release) {
+				// Release: fade from decayEndValue to 0
+				// Use the value from the last sample of decay phase for smooth transition
+				// If decayEndValue wasn't captured (shouldn't happen), calculate it
+				let releaseStartValue = decayEndValue;
+				if (releaseStartValue <= 0) {
+					// Fallback: calculate what the envelope should be at end of decay
+					releaseStartValue = Math.exp(-1.0 * 10); // End of decay phase value
+				}
+				const releasePhase = (burst.envelopePhase - attack - decay) / release;
+				// Use exponential decay for smooth release
+				envelope = releaseStartValue * Math.exp(-releasePhase * 4);
+			} else if (burst.envelopePhase < extendedDuration) {
 				// Extended fade-out
-				const fadePhase = (burst.envelopePhase - decay) / fadeOutSamples;
-				const fadeStartValue = Math.exp(-decay / (decay * 0.25));
-				envelope = fadeStartValue * Math.exp(-fadePhase * 10);
+				const fadePhase = (burst.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+				const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-12);
+				envelope = fadeStartValue * Math.exp(-fadePhase * 15);
 			}
 			
-			if (envelope > 0.001) {
-				sample += noise * envelope * burst.velocity;
-				burst.envelopePhase++;
-				burst.phase++;
+			envelope = Math.max(0, Math.min(1, envelope));
+			
+			// Bandpass filtering for clap character (emphasize mid-high frequencies)
+			// Initialize filter states for this burst if needed
+			if (!burst.hpFilterState) {
+				burst.hpFilterState = { x1: 0, y1: 0 };
 			}
+			if (!burst.lpFilterState) {
+				burst.lpFilterState = { x1: 0, y1: 0 };
+			}
+			
+			// High-pass filter for brightness - claps are bright and mid-high focused
+			const hpCutoff = 2000 * pitchMultiplier; // Higher for more brightness
+			const rcHp = 1.0 / (2.0 * Math.PI * hpCutoff);
+			const dt = 1.0 / this.sampleRate;
+			const alphaHp = rcHp / (rcHp + dt);
+			const hpFiltered = alphaHp * (burst.hpFilterState.y1 + noise - burst.hpFilterState.x1);
+			burst.hpFilterState.x1 = noise;
+			burst.hpFilterState.y1 = hpFiltered;
+			
+			// Low-pass filter to cut very high frequencies (bandpass effect)
+			// Claps have energy in 2-5kHz range - lower cutoff to remove squeaking
+			const lpCutoff = 5000 * pitchMultiplier; // Lower to filter out squeaking
+			const rcLp = 1.0 / (2.0 * Math.PI * lpCutoff);
+			const alphaLp = dt / (rcLp + dt);
+			const lpFiltered = alphaLp * hpFiltered + (1 - alphaLp) * burst.lpFilterState.y1;
+			burst.lpFilterState.y1 = lpFiltered;
+			
+			// Add some raw noise for extra body and punch - more for clap character
+			const rawBody = noise * 0.2;
+			
+			// Filter the click through the low-pass as well to remove high-frequency squeaking
+			// Apply low-pass to click to smooth it out
+			if (!burst.clickLpState) {
+				burst.clickLpState = { y1: 0 };
+			}
+			const clickFiltered = alphaLp * click + (1 - alphaLp) * burst.clickLpState.y1;
+			burst.clickLpState.y1 = clickFiltered;
+			
+			// Combine filtered noise with filtered click - less emphasis on click
+			const finalNoise = lpFiltered * 0.75 + clickFiltered * 0.5 + rawBody;
+			
+			// Add to sample with envelope and velocity
+			if (envelope > 0.001) {
+				sample += finalNoise * envelope * burst.velocity;
+			}
+			
+			// Always increment phases
+			burst.envelopePhase++;
+			burst.phase++;
 		}
 		
-		const maxBurstDuration = 0.08 * this.sampleRate * 1.3; // Include fade-out
-		this.bursts = this.bursts.filter(b => b.envelopePhase < maxBurstDuration);
+		// Remove finished bursts
+		this.bursts = this.bursts.filter(b => b.envelopePhase < extendedDuration);
 		if (this.bursts.length === 0) {
 			this.isActive = false;
-			return 0;
+			// Only return 0 if we're truly done, otherwise continue processing
+			if (Math.abs(sample) < 0.0001) {
+				return 0;
+			}
 		}
 		
-		let output = sample * 0.4;
+		let output = sample * 1.0; // Full gain for maximum clap punch
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -2999,9 +3488,13 @@ class TomSynth {
 		const release = (this.settings.release || 0.1) * this.sampleRate;
 		const totalDuration = attack + decay + release;
 
+		// Calculate pitch multiplier (base pitch is D3 = MIDI 50)
+		const basePitch = 50;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
 		// Descending pitch envelope
-		const startFreq = 100;
-		const endFreq = 50;
+		const startFreq = 100 * pitchMultiplier;
+		const endFreq = 50 * pitchMultiplier;
 		const freq = startFreq * Math.exp(-this.envelopePhase / (decay * 0.6));
 
 		const sample = Math.sin(this.phase * 2 * Math.PI * freq / this.sampleRate);
@@ -3025,6 +3518,7 @@ class TomSynth {
 			// Use decayEndValue if set, otherwise fallback to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
 			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
@@ -3071,7 +3565,7 @@ class TomSynth {
 
 /**
  * Cymbal Synth
- * Ring-modulated noise for cymbal shimmer
+ * High-pass filtered noise for tight, ringing cymbal character
  */
 
 class CymbalSynth {
@@ -3091,6 +3585,9 @@ class CymbalSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state for thin, high-pitched character
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -3106,7 +3603,14 @@ class CymbalSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -3117,18 +3621,44 @@ class CymbalSynth {
 	process() {
 		if (!this.isActive) return 0;
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
-		const decay = (this.settings.decay || 0.5) * this.sampleRate;
-		const totalDuration = attack + decay;
+		const decay = (this.settings.decay || 0.25) * this.sampleRate; // Tighter decay
+		const release = (this.settings.release || 0.2) * this.sampleRate;
+		const totalDuration = attack + decay + release;
 
-		// Ring-modulated noise
+		// Clean noise source
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
-		const modFreq = 200;
-		const modulator = Math.sin(this.phase * 2 * Math.PI * modFreq / this.sampleRate);
-		let sample = noise * (1 + modulator * 0.5);
+		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, more ringing sound
+		const baseCutoff = 3500; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// High-pass filter coefficient
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		let sample = filtered;
 
-		// Extended fade-out to prevent clicks
-		const fadeOutSamples = Math.max(0.1 * this.sampleRate, decay * 0.5);
+		// Tighter fade-out for cleaner sound
+		const fadeOutSamples = Math.max(0.04 * this.sampleRate, release * 0.25);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
 		let envelope = 0;
@@ -3138,22 +3668,30 @@ class CymbalSynth {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
-			envelope = Math.exp(-decayPhase * 3);
+			// Faster decay for tighter sound
+			envelope = Math.exp(-decayPhase * 5);
 			decayEndValue = envelope;
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from decayEndValue to 0
+			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - totalDuration) / fadeOutSamples;
-			envelope = decayEndValue * Math.exp(-fadePhase * 10);
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-6);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 12);
 		} else {
 			envelope = 0;
 		}
 
 		envelope = Math.max(0, Math.min(1, envelope));
 
-		this.phase++;
 		this.envelopePhase++;
 		
-		let output = sample * envelope * this.velocity * 0.3;
+		// Output gain (gain compensation already applied to sample)
+		let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -3204,6 +3742,9 @@ class ShakerSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -3219,7 +3760,14 @@ class ShakerSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -3231,15 +3779,42 @@ class ShakerSynth {
 		if (!this.isActive) return 0;
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.3) * this.sampleRate;
-		const totalDuration = attack + decay;
+		const release = (this.settings.release || 0.1) * this.sampleRate;
+		const totalDuration = attack + decay + release;
 
 		// Transient-shaped noise
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
-		let sample = noise;
+		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, more rattling sound
+		const baseCutoff = 2500; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
+		
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		let sample = filtered;
 
 		// Extended fade-out to prevent clicks
-		const fadeOutSamples = Math.max(0.05 * this.sampleRate, decay * 0.3);
+		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
 		let envelope = 0;
@@ -3251,10 +3826,17 @@ class ShakerSynth {
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			envelope = Math.exp(-decayPhase * 4);
 			decayEndValue = envelope;
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from decayEndValue to 0
+			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - totalDuration) / fadeOutSamples;
-			envelope = decayEndValue * Math.exp(-fadePhase * 10);
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-6);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {
 			envelope = 0;
 		}
@@ -3315,6 +3897,9 @@ class RimshotSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -3330,7 +3915,14 @@ class RimshotSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -3347,13 +3939,17 @@ class RimshotSynth {
 
 		// Rimshot = sharp transient + bright tonal component + filtered noise
 		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
 		// 1. Sharp tonal "ping" - high frequency sine that quickly decays
-		const pingFreq = 800 * Math.exp(-this.envelopePhase / (decay * 0.2));
+		const pingFreq = 800 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.2));
 		const pingPhase = this.phase * 2 * Math.PI * pingFreq / this.sampleRate;
 		const ping = Math.sin(pingPhase) * 0.4;
 		
 		// 2. Body tone - lower frequency for character
-		const bodyFreq = 200 * Math.exp(-this.envelopePhase / (decay * 0.5));
+		const bodyFreq = 200 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.5));
 		const bodyPhase = this.phase * 2 * Math.PI * bodyFreq / this.sampleRate;
 		const body = Math.sin(bodyPhase) * 0.2;
 		
@@ -3361,13 +3957,30 @@ class RimshotSynth {
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
 		
-		// High-pass filtered noise for brightness
-		// Simple HPF approximation using phase modulation
-		const hpfFreq = 2000;
-		const hpfPhase = this.phase * 2 * Math.PI * hpfFreq / this.sampleRate;
-		const filteredNoise = noise * (0.3 + 0.7 * Math.abs(Math.sin(hpfPhase))) * 0.5;
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, snappier sound
+		const baseCutoff = 1800; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
 		
-		// Mix components
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		const filteredNoise = filtered;
+		
+		// Mix components (tonal components scale naturally with pitch)
 		let sample = ping + body + filteredNoise;
 
 		// ADSR envelope - very quick attack and decay for snappy character
@@ -3388,7 +4001,8 @@ class RimshotSynth {
 			// Release: fade from decayEndValue to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			envelope = releaseStartValue * Math.exp(-releasePhase * 8);
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended fade-out
 			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
@@ -4384,6 +4998,434 @@ class BassSynth {
 			default:
 				return Math.sin(phase);
 		}
+	}
+
+	lowpass(input, cutoff, resonance) {
+		// Clamp cutoff to prevent instability
+		const nyquist = this.sampleRate * 0.45;
+		const safeCutoff = Math.max(20, Math.min(nyquist, cutoff));
+		
+		const c = 1.0 / Math.tan(Math.PI * safeCutoff / this.sampleRate);
+		const a1 = 1.0 / (1.0 + resonance * c + c * c);
+		const a2 = 2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (1.0 - c * c) * a1;
+		const b2 = (1.0 - resonance * c + c * c) * a1;
+
+		const output = a1 * input + a2 * this.filterState.x1 + a3 * this.filterState.x2
+			- b1 * this.filterState.y1 - b2 * this.filterState.y2;
+
+		this.filterState.x2 = this.filterState.x1;
+		this.filterState.x1 = input;
+		this.filterState.y2 = this.filterState.y1;
+		this.filterState.y1 = output;
+
+		return output;
+	}
+}
+
+
+
+/**
+ * Pad Synth
+ * Atmospheric pad synthesis with multiple detuned oscillators, LFO modulation, and filter sweeps
+ * Perfect for ambient textures, evolving pads, and atmospheric soundscapes
+ */
+
+class PadSynth {
+	constructor(settings, sampleRate) {
+		this.sampleRate = sampleRate;
+		this.settings = settings || {};
+		this.phase = []; // Array of phases for each oscillator
+		this.envelopePhase = 0;
+		this.isActive = false;
+		this.lfoPhase = 0;
+		this.filterLfoPhase = 0;
+		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
+		
+		// Initialize oscillator phases
+		const numOscillators = this.settings.numOscillators || 8;
+		for (let i = 0; i < numOscillators; i++) {
+			this.phase.push(Math.random() * 2 * Math.PI); // Random phase for each oscillator
+		}
+		
+		// Retrigger fade state
+		this.wasActive = false;
+		this.retriggerFadePhase = 0;
+		this.lastOutput = 0;
+		this.retriggerFadeSamples = Math.floor(0.01 * sampleRate); // 10ms fade for melodic synths
+	}
+
+	updateSettings(settings) {
+		this.settings = { ...this.settings, ...settings };
+		// Resize phase array if number of oscillators changed
+		const numOscillators = this.settings.numOscillators || 8;
+		while (this.phase.length < numOscillators) {
+			this.phase.push(Math.random() * 2 * Math.PI);
+		}
+		while (this.phase.length > numOscillators) {
+			this.phase.pop();
+		}
+	}
+
+	trigger(velocity, pitch) {
+		// Check if we're retriggering while still active
+		this.wasActive = this.isActive;
+		
+		// Only reset phases if not currently active to prevent clicks
+		if (!this.isActive) {
+			for (let i = 0; i < this.phase.length; i++) {
+				this.phase[i] = Math.random() * 2 * Math.PI; // Random phase for each oscillator
+			}
+		}
+		this.envelopePhase = 0;
+		this.lfoPhase = 0;
+		this.filterLfoPhase = 0;
+		this.isActive = true;
+		this.velocity = velocity;
+		this.pitch = pitch || 60;
+		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
+		
+		// Start retrigger fade if was already active
+		if (this.wasActive) {
+			this.retriggerFadePhase = 0;
+		}
+	}
+
+	process() {
+		if (!this.isActive) return 0;
+		
+		const attack = (this.settings.attack || 0.5) * this.sampleRate; // Slow attack for pads
+		const decay = (this.settings.decay || 0.3) * this.sampleRate;
+		const sustain = this.settings.sustain || 0.9; // High sustain for pads
+		const release = (this.settings.release || 1.5) * this.sampleRate; // Long release for pads
+		const totalDuration = attack + decay + release;
+
+		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
+		const numOscillators = this.settings.numOscillators || 8;
+		const detune = this.settings.detune || 0.15; // Detune amount in semitones
+		const spread = this.settings.spread || 0.7; // Spread amount (0-1)
+		const oscType = this.settings.oscType || 'saw'; // Waveform type
+		
+		// Generate multiple detuned oscillators
+		let sample = 0;
+		const centerIndex = Math.floor(numOscillators / 2);
+		
+		for (let i = 0; i < numOscillators; i++) {
+			// Calculate detune offset: center oscillator is in tune, others detune symmetrically
+			const offset = (i - centerIndex) * detune * spread;
+			const oscFreq = freq * Math.pow(2, offset / 12);
+			
+			// Add LFO pitch modulation for movement
+			const pitchLfoRate = this.settings.pitchLfoRate || 0.5; // Hz
+			const pitchLfoAmount = this.settings.pitchLfoAmount || 0.02; // Semitones
+			const pitchLfo = Math.sin(this.lfoPhase) * pitchLfoAmount;
+			const modulatedFreq = oscFreq * Math.pow(2, pitchLfo / 12);
+			
+			// Generate waveform
+			const normalizedPhase = (this.phase[i] % (2 * Math.PI)) / (2 * Math.PI);
+			let osc = 0;
+			switch (oscType) {
+				case 'saw':
+					osc = 2 * normalizedPhase - 1;
+					break;
+				case 'square':
+					osc = normalizedPhase < 0.5 ? 1 : -1;
+					break;
+				case 'sine':
+					osc = Math.sin(this.phase[i]);
+					break;
+				case 'triangle':
+					osc = normalizedPhase < 0.5 ? 4 * normalizedPhase - 1 : 3 - 4 * normalizedPhase;
+					break;
+				default:
+					osc = 2 * normalizedPhase - 1;
+			}
+			
+			// Mix oscillators (center gets full volume, outer ones slightly quieter for balance)
+			const distanceFromCenter = Math.abs(i - centerIndex);
+			const gain = 1.0 - (distanceFromCenter * 0.08); // Slight volume reduction for outer oscillators
+			sample += osc * gain;
+			
+			// Update phase
+			this.phase[i] += (modulatedFreq / this.sampleRate) * 2 * Math.PI;
+			if (this.phase[i] >= 2 * Math.PI) this.phase[i] -= 2 * Math.PI;
+		}
+		
+		// Normalize by number of oscillators
+		sample = sample / numOscillators;
+		
+		// Apply low-pass filter with LFO modulation
+		let cutoff = this.settings.filterCutoff || 4000;
+		const resonance = this.settings.filterResonance || 0.3;
+		
+		// Filter LFO modulation for evolving texture
+		const filterLfoRate = this.settings.filterLfoRate || 0.3; // Hz
+		const filterLfoAmount = this.settings.filterLfoAmount || 1000; // Hz
+		if (filterLfoRate > 0 && filterLfoAmount > 0) {
+			const filterLfo = Math.sin(this.filterLfoPhase) * filterLfoAmount;
+			cutoff = Math.max(20, Math.min(20000, cutoff + filterLfo));
+			this.filterLfoPhase += (filterLfoRate / this.sampleRate) * 2 * Math.PI;
+			if (this.filterLfoPhase >= 2 * Math.PI) this.filterLfoPhase -= 2 * Math.PI;
+		}
+		
+		// Update pitch LFO
+		if (this.settings.pitchLfoRate > 0) {
+			this.lfoPhase += (this.settings.pitchLfoRate / this.sampleRate) * 2 * Math.PI;
+			if (this.lfoPhase >= 2 * Math.PI) this.lfoPhase -= 2 * Math.PI;
+		}
+		
+		sample = this.lowpass(sample, cutoff, resonance);
+		
+		// ADSR envelope - optimized for pads (slow attack, long release)
+		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
+		const extendedDuration = totalDuration + fadeOutSamples;
+		
+		let envelope = 0;
+		if (this.envelopePhase < attack) {
+			// Slow, smooth attack
+			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
+		} else if (this.envelopePhase < attack + decay) {
+			const decayPhase = (this.envelopePhase - attack) / decay;
+			envelope = 1 - decayPhase * (1 - sustain);
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from sustain to 0
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			envelope = sustain * Math.exp(-releasePhase * 4); // Slower decay for pads
+		} else if (this.envelopePhase < extendedDuration) {
+			// Extended exponential fade-out
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = sustain * Math.exp(-4);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 8);
+		} else {
+			envelope = 0;
+		}
+
+		envelope = Math.max(0, Math.min(1, envelope));
+
+		this.envelopePhase++;
+		
+		let output = sample * envelope * this.velocity * 0.25; // Lower gain for pads
+		
+		// Handle retrigger fade: crossfade from old sound to new sound
+		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
+			const fadeProgress = this.retriggerFadePhase / this.retriggerFadeSamples;
+			const oldGain = 1 - fadeProgress;
+			const newGain = fadeProgress;
+			this.lastOutput = this.lastOutput * 0.95 + output * 0.05;
+			output = this.lastOutput * oldGain + output * newGain;
+			this.retriggerFadePhase++;
+		} else {
+			this.lastOutput = output;
+			this.wasActive = false;
+		}
+		
+		// Only stop when envelope is done and we're very close to zero
+		if (this.envelopePhase >= extendedDuration) {
+			if (Math.abs(output) < 0.0001) {
+				this.isActive = false;
+				return 0;
+			}
+		}
+		
+		return output;
+	}
+
+	lowpass(input, cutoff, resonance) {
+		// Clamp cutoff to prevent instability
+		const nyquist = this.sampleRate * 0.45;
+		const safeCutoff = Math.max(20, Math.min(nyquist, cutoff));
+		
+		const c = 1.0 / Math.tan(Math.PI * safeCutoff / this.sampleRate);
+		const a1 = 1.0 / (1.0 + resonance * c + c * c);
+		const a2 = 2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (1.0 - c * c) * a1;
+		const b2 = (1.0 - resonance * c + c * c) * a1;
+
+		const output = a1 * input + a2 * this.filterState.x1 + a3 * this.filterState.x2
+			- b1 * this.filterState.y1 - b2 * this.filterState.y2;
+
+		this.filterState.x2 = this.filterState.x1;
+		this.filterState.x1 = input;
+		this.filterState.y2 = this.filterState.y1;
+		this.filterState.y1 = output;
+
+		return output;
+	}
+}
+
+
+
+/**
+ * Organ Synth
+ * Drawbar-style organ synthesis with multiple harmonic oscillators
+ * Features rotary speaker simulation (chorus/vibrato) for classic organ sound
+ */
+
+class OrganSynth {
+	constructor(settings, sampleRate) {
+		this.sampleRate = sampleRate;
+		this.settings = settings || {};
+		this.phase = []; // Array of phases for each harmonic
+		this.envelopePhase = 0;
+		this.isActive = false;
+		this.rotaryPhase = 0; // Rotary speaker LFO phase
+		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
+		
+		// Initialize harmonic phases (9 drawbars: 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1')
+		// Harmonic ratios: 0.5, 0.75, 1, 2, 3, 4, 5, 6, 8
+		const numHarmonics = 9;
+		for (let i = 0; i < numHarmonics; i++) {
+			this.phase.push(Math.random() * 2 * Math.PI); // Random phase for each harmonic
+		}
+		
+		// Retrigger fade state
+		this.wasActive = false;
+		this.retriggerFadePhase = 0;
+		this.lastOutput = 0;
+		this.retriggerFadeSamples = Math.floor(0.01 * sampleRate); // 10ms fade for melodic synths
+	}
+
+	updateSettings(settings) {
+		this.settings = { ...this.settings, ...settings };
+	}
+
+	trigger(velocity, pitch) {
+		// Check if we're retriggering while still active
+		this.wasActive = this.isActive;
+		
+		// Only reset phases if not currently active to prevent clicks
+		if (!this.isActive) {
+			for (let i = 0; i < this.phase.length; i++) {
+				this.phase[i] = Math.random() * 2 * Math.PI; // Random phase for each harmonic
+			}
+		}
+		this.envelopePhase = 0;
+		this.rotaryPhase = 0;
+		this.isActive = true;
+		this.velocity = velocity;
+		this.pitch = pitch || 60;
+		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
+		
+		// Start retrigger fade if was already active
+		if (this.wasActive) {
+			this.retriggerFadePhase = 0;
+		}
+	}
+
+	process() {
+		if (!this.isActive) return 0;
+		
+		const attack = (this.settings.attack || 0.01) * this.sampleRate; // Fast attack for organ
+		const decay = (this.settings.decay || 0.1) * this.sampleRate;
+		const sustain = this.settings.sustain || 1.0; // Full sustain for organ
+		const release = (this.settings.release || 0.2) * this.sampleRate;
+		const totalDuration = attack + decay + release;
+
+		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
+		
+		// Drawbar levels (0-1) - default to classic organ sound
+		const drawbars = this.settings.drawbars || [0.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.4, 0.0, 0.2];
+		
+		// Harmonic ratios for each drawbar (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1')
+		const harmonicRatios = [0.5, 0.75, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0];
+		
+		// Generate harmonics
+		let sample = 0;
+		for (let i = 0; i < drawbars.length && i < harmonicRatios.length; i++) {
+			if (drawbars[i] > 0) {
+				const harmonicFreq = freq * harmonicRatios[i];
+				const harmonic = Math.sin(this.phase[i]) * drawbars[i];
+				sample += harmonic;
+				
+				// Update phase
+				this.phase[i] += (harmonicFreq / this.sampleRate) * 2 * Math.PI;
+				if (this.phase[i] >= 2 * Math.PI) this.phase[i] -= 2 * Math.PI;
+			}
+		}
+		
+		// Normalize by sum of active drawbars
+		const activeDrawbars = drawbars.filter(d => d > 0).length || 1;
+		sample = sample / Math.max(1, activeDrawbars * 0.5); // Scale down for safety
+		
+		// Rotary speaker simulation (chorus/vibrato effect)
+		const rotarySpeed = this.settings.rotarySpeed || 4.0; // Hz (typical rotary speed)
+		const rotaryDepth = this.settings.rotaryDepth || 0.3; // Depth (0-1)
+		
+		// Rotary speaker creates pitch modulation (vibrato) and amplitude modulation (tremolo)
+		const rotaryLfo = Math.sin(this.rotaryPhase);
+		const vibratoAmount = rotaryLfo * rotaryDepth * 0.05; // Small pitch modulation (5 cents max)
+		
+		// Apply vibrato by slightly modulating the sample (simplified)
+		// In a real rotary speaker, this would affect each harmonic differently
+		sample = sample * (1 + vibratoAmount * 0.1);
+		
+		// Tremolo (amplitude modulation)
+		const tremoloAmount = (Math.sin(this.rotaryPhase * 2) * 0.5 + 0.5) * rotaryDepth * 0.2 + (1 - rotaryDepth * 0.2);
+		sample = sample * tremoloAmount;
+		
+		// Update rotary phase
+		this.rotaryPhase += (rotarySpeed / this.sampleRate) * 2 * Math.PI;
+		if (this.rotaryPhase >= 2 * Math.PI) this.rotaryPhase -= 2 * Math.PI;
+		
+		// Apply low-pass filter (organ tone control)
+		const cutoff = this.settings.filterCutoff || 8000;
+		const resonance = this.settings.filterResonance || 0.2;
+		sample = this.lowpass(sample, cutoff, resonance);
+		
+		// ADSR envelope - optimized for organ (fast attack, full sustain)
+		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
+		const extendedDuration = totalDuration + fadeOutSamples;
+		
+		let envelope = 0;
+		if (this.envelopePhase < attack) {
+			// Fast attack for organ
+			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
+		} else if (this.envelopePhase < attack + decay) {
+			const decayPhase = (this.envelopePhase - attack) / decay;
+			envelope = 1 - decayPhase * (1 - sustain);
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from sustain to 0
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			envelope = sustain * Math.exp(-releasePhase * 6);
+		} else if (this.envelopePhase < extendedDuration) {
+			// Extended exponential fade-out
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = sustain * Math.exp(-6);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
+		} else {
+			envelope = 0;
+		}
+
+		envelope = Math.max(0, Math.min(1, envelope));
+
+		this.envelopePhase++;
+		
+		let output = sample * envelope * this.velocity * 0.3;
+		
+		// Handle retrigger fade: crossfade from old sound to new sound
+		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
+			const fadeProgress = this.retriggerFadePhase / this.retriggerFadeSamples;
+			const oldGain = 1 - fadeProgress;
+			const newGain = fadeProgress;
+			this.lastOutput = this.lastOutput * 0.95 + output * 0.05;
+			output = this.lastOutput * oldGain + output * newGain;
+			this.retriggerFadePhase++;
+		} else {
+			this.lastOutput = output;
+			this.wasActive = false;
+		}
+		
+		// Only stop when envelope is done and we're very close to zero
+		if (this.envelopePhase >= extendedDuration) {
+			if (Math.abs(output) < 0.0001) {
+				this.isActive = false;
+				return 0;
+			}
+		}
+		
+		return output;
 	}
 
 	lowpass(input, cutoff, resonance) {

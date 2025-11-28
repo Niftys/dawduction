@@ -114,7 +114,10 @@ function updatePatternInstrument(
 	// Create the pattern instrument track ID (format: __pattern_{patternId}_{instrumentId})
 	const patternTrackId = `__pattern_${patternId}_${instrument.id}`;
 
-	engine.updatePatternTree(patternTrackId, instrument.patternTree);
+	// Get baseMeter from pattern (defaults to 4)
+	const baseMeter = pattern.baseMeter || 4;
+
+	engine.updatePatternTree(patternTrackId, instrument.patternTree, baseMeter);
 	return true;
 }
 

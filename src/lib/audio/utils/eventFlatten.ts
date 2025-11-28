@@ -28,7 +28,8 @@ export function flattenTree(
 	if (!node.children || node.children.length === 0) {
 		// Check if this is the root node (empty pattern)
 		// Root node in empty pattern won't have velocity/pitch set
-		if (parentDuration === node.division && startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
+		// If startTime is 0, it's the root node - treat as empty if no velocity/pitch
+		if (startTime === 0 && node.velocity === undefined && node.pitch === undefined) {
 			// This is the root node with no children - empty pattern, return no events
 			return [];
 		}
@@ -67,12 +68,25 @@ export function flattenTree(
 
 /**
  * Flatten a complete track's pattern tree
- * Root node's division value = pattern length in beats (user-defined)
+ * Root node's division value determines the pattern structure
+ * Base meter scales the pattern speed: patternLength = root.division * (baseMeter / root.division) = baseMeter
+ * When baseMeter = root.division, patternLength = root.division (normal speed)
+ * When baseMeter < root.division, patternLength < root.division (faster)
+ * When baseMeter > root.division, patternLength > root.division (slower)
  * 
- * Usage: `flattenTree(rootNode, rootNode.division, 0.0, trackId)`
- * This makes the root division value the total pattern length in beats
+ * Examples:
+ * - baseMeter=6, root=6: patternLength = 6 beats (normal speed)
+ * - baseMeter=3, root=6: patternLength = 3 beats (double speed)
+ * - baseMeter=12, root=6: patternLength = 12 beats (half speed)
+ * 
+ * @param rootNode - The root pattern node
+ * @param trackId - Track/instrument ID
+ * @param baseMeter - Base meter (denominator X in Y/X time signature), defaults to 4
  */
-export function flattenTrackPattern(rootNode: PatternNode, trackId: string): AudioEvent[] {
-	return flattenTree(rootNode, rootNode.division, 0.0, trackId);
+export function flattenTrackPattern(rootNode: PatternNode, trackId: string, baseMeter: number = 4): AudioEvent[] {
+	// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+	// The hierarchical structure is preserved because children split parent's duration proportionally
+	const patternLength = baseMeter;
+	return flattenTree(rootNode, patternLength, 0.0, trackId);
 }
 

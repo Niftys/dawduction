@@ -15,6 +15,13 @@ export class EngineWorklet {
 		this.audioContext = new AudioContext({ sampleRate: 44100 });
 	}
 
+	/**
+	 * Get the AudioContext (for recording/export)
+	 */
+	getAudioContext(): AudioContext {
+		return this.audioContext;
+	}
+
 	async initialize(): Promise<void> {
 		if (this.isInitialized) return;
 
@@ -203,9 +210,11 @@ export class EngineWorklet {
 						continue;
 					}
 					
-					const patternLength = patternTree.division || pattern.baseMeter || 4;
+					const baseMeter = pattern.baseMeter || 4;
+					// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+					const patternLength = baseMeter;
 					
-					const patternEvents = flattenTrackPattern(patternTree, trackId);
+					const patternEvents = flattenTrackPattern(patternTree, trackId, baseMeter);
 					
 					// Apply offset if specified
 					const offset = clip.offsetBeats || 0;
@@ -306,6 +315,7 @@ export class EngineWorklet {
 					envelopes: timeline.envelopes || [],
 					totalLength: safeTimelineLength
 				},
+				patterns: patterns || [], // Send patterns so EventScheduler can access baseMeter
 				effects: effects || [],
 				envelopes: envelopes || [],
 				automation: automation || null,
@@ -317,10 +327,28 @@ export class EngineWorklet {
 		}
 
 		// Pattern loop mode (original behavior)
+		// Create pattern map for looking up baseMeter
+		const patternMap = patterns ? new Map(patterns.map((p: any) => [p.id, p])) : new Map();
+		
 		// Find base meter instrument to determine pattern length
 		const baseMeterId = baseMeterTrackId || standaloneInstruments[0]?.id;
 		const baseMeterInstrument = standaloneInstruments.find(i => i.id === baseMeterId);
-		const baseMeterLength = baseMeterInstrument?.patternTree?.division || 4;
+		
+		// Determine baseMeter for the base meter instrument
+		let baseMeterForBaseTrack = 4;
+		if (baseMeterInstrument?.id?.startsWith('__pattern_')) {
+			const lastUnderscore = baseMeterInstrument.id.lastIndexOf('_');
+			if (lastUnderscore > '__pattern_'.length) {
+				const patternId = baseMeterInstrument.id.substring('__pattern_'.length, lastUnderscore);
+				const pattern = patternMap.get(patternId);
+				if (pattern) {
+					baseMeterForBaseTrack = pattern.baseMeter || 4;
+				}
+			}
+		}
+		
+		// Base meter length = baseMeter, which preserves structure when baseMeter = root.division
+		const baseMeterLength = baseMeterForBaseTrack;
 
 		// Flatten all pattern trees, repeating shorter patterns
 		const allEvents: AudioEvent[] = [];
@@ -328,10 +356,29 @@ export class EngineWorklet {
 			const instrumentPatternLength = instrument.patternTree?.division;
 			if (!instrumentPatternLength || instrumentPatternLength <= 0) continue;
 			
+			// Determine baseMeter for this instrument (for flattening, though it's not used for scaling anymore)
+			// If it's a pattern instrument (ID starts with __pattern_), extract pattern ID and use pattern's baseMeter
+			let baseMeter = 4; // Default for standalone instruments
+			if (instrument.id.startsWith('__pattern_')) {
+				// Extract pattern ID from track ID format: __pattern_{patternId}_{instrumentId}
+				// Pattern ID is everything between __pattern_ and the last _ (instrument ID is after last _)
+				const lastUnderscore = instrument.id.lastIndexOf('_');
+				if (lastUnderscore > '__pattern_'.length) {
+					const patternId = instrument.id.substring('__pattern_'.length, lastUnderscore);
+					const pattern = patternMap.get(patternId);
+					if (pattern) {
+						baseMeter = pattern.baseMeter || 4;
+					}
+				}
+			}
+			
+			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+			const patternLength = baseMeter;
+			
 			// If instrument's pattern is shorter than base meter, repeat it until base meter loops
-			if (instrumentPatternLength < baseMeterLength) {
+			if (patternLength < baseMeterLength) {
 				// Generate pattern once, then repeat with offsets until we reach base meter length
-				const baseEvents = flattenTrackPattern(instrument.patternTree, instrument.id);
+				const baseEvents = flattenTrackPattern(instrument.patternTree, instrument.id, baseMeter);
 				
 				if (baseEvents.length > 0) {
 					// Keep repeating until we've covered the entire base meter length
@@ -348,12 +395,12 @@ export class EngineWorklet {
 								});
 							}
 						}
-						offset += instrumentPatternLength;
+						offset += patternLength;
 					}
 				}
 			} else {
 				// Pattern is same length or longer, just flatten once
-				const events = flattenTrackPattern(instrument.patternTree, instrument.id);
+				const events = flattenTrackPattern(instrument.patternTree, instrument.id, baseMeter);
 				if (events.length > 0) {
 					allEvents.push(...events);
 				}
@@ -371,6 +418,7 @@ export class EngineWorklet {
 			events: allEvents,
 			baseMeterTrackId: baseMeterId,
 			timeline: undefined,
+			patterns: patterns || [], // Send patterns so EventScheduler can access baseMeter
 			effects: effects || [],
 			envelopes: envelopes || [],
 			automation: automation || null, // Send automation data
@@ -393,7 +441,7 @@ export class EngineWorklet {
 		});
 	}
 
-	updatePatternTree(trackId: string, patternTree: any) {
+	updatePatternTree(trackId: string, patternTree: any, baseMeter: number = 4) {
 		// Update the pattern tree in the worklet
 		this.sendMessage({
 			type: 'updatePatternTree',
@@ -402,12 +450,12 @@ export class EngineWorklet {
 		});
 		
 		// Re-flatten events for this track and update the worklet
-		this.updateTrackEvents(trackId, patternTree);
+		this.updateTrackEvents(trackId, patternTree, baseMeter);
 	}
 	
-	private updateTrackEvents(trackId: string, patternTree: any) {
-		// Re-flatten events for this track
-		const newEvents = flattenTrackPattern(patternTree, trackId);
+	private updateTrackEvents(trackId: string, patternTree: any, baseMeter: number = 4) {
+		// Re-flatten events for this track with baseMeter scaling
+		const newEvents = flattenTrackPattern(patternTree, trackId, baseMeter);
 		
 		// For pattern mode, we need to handle base meter repetition if the pattern is shorter than base meter
 		// But we don't have access to base meter info here, so we'll just send the events as-is
@@ -490,6 +538,30 @@ export class EngineWorklet {
 	updateTrackSolo(trackId: string, solo: boolean) {
 		this.sendMessage({
 			type: 'updateTrackSolo',
+			trackId,
+			solo
+		});
+	}
+
+	updateTimelineTrackVolume(trackId: string, volume: number) {
+		this.sendMessage({
+			type: 'updateTimelineTrackVolume',
+			trackId,
+			volume
+		});
+	}
+
+	updateTimelineTrackMute(trackId: string, mute: boolean) {
+		this.sendMessage({
+			type: 'updateTimelineTrackMute',
+			trackId,
+			mute
+		});
+	}
+
+	updateTimelineTrackSolo(trackId: string, solo: boolean) {
+		this.sendMessage({
+			type: 'updateTimelineTrackSolo',
 			trackId,
 			solo
 		});

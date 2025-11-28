@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { projectStore } from '$lib/stores/projectStore';
 	import { page } from '$app/stores';
+	import { onMount, onDestroy } from 'svelte';
 	import type { Effect, Envelope } from '$lib/types/effects';
 	import '$lib/styles/components/EffectsEnvelopesPanel.css';
 
@@ -12,6 +13,20 @@
 	// Rename state
 	let editingEffectId: string | null = null;
 	let editingEnvelopeId: string | null = null;
+	let editingEffectInput: HTMLInputElement | null = null;
+	let editingEnvelopeInput: HTMLInputElement | null = null;
+	
+	// Focus inputs when editing starts
+	$: if (editingEffectId && editingEffectInput) {
+		setTimeout(() => editingEffectInput?.focus(), 0);
+	}
+	$: if (editingEnvelopeId && editingEnvelopeInput) {
+		setTimeout(() => editingEnvelopeInput?.focus(), 0);
+	}
+	
+	// Dropdown state
+	let showEffectDropdown = false;
+	let showEnvelopeDropdown = false;
 	
 	$: effects = project?.effects || [];
 	$: envelopes = project?.envelopes || [];
@@ -78,6 +93,39 @@
 	function deleteEnvelope(envelopeId: string) {
 		projectStore.deleteEnvelope(envelopeId);
 	}
+	
+	function handleCreateEffect(type: Effect['type']) {
+		createEffect(type);
+		showEffectDropdown = false;
+	}
+	
+	function handleCreateEnvelope(type: Envelope['type']) {
+		createEnvelope(type);
+		showEnvelopeDropdown = false;
+	}
+	
+	function closeDropdowns() {
+		showEffectDropdown = false;
+		showEnvelopeDropdown = false;
+	}
+	
+	// Close dropdowns when clicking outside
+	function handleClickOutside(event: MouseEvent) {
+		if (!showEffectDropdown && !showEnvelopeDropdown) return;
+		
+		const target = event.target as HTMLElement;
+		if (!target.closest('.create-dropdown-wrapper')) {
+			closeDropdowns();
+		}
+	}
+	
+	// Listen for clicks outside when dropdown is open
+	onMount(() => {
+		document.addEventListener('click', handleClickOutside, true);
+		return () => {
+			document.removeEventListener('click', handleClickOutside, true);
+		};
+	});
 
 	export let onDragStart: ((e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
 </script>
@@ -101,16 +149,40 @@
 	<div class="panel-content">
 		{#if activeTab === 'effects'}
 			<div class="effects-section">
-				<div class="create-buttons">
-					{#each effectTypes as type}
-						<button 
-							class="create-effect-btn"
-							on:click={() => createEffect(type.value)}
-							title="Create {type.label}"
+				<div class="create-dropdown-wrapper">
+					<button 
+						class="create-dropdown-trigger"
+						on:click={() => {
+							showEffectDropdown = !showEffectDropdown;
+							showEnvelopeDropdown = false;
+						}}
+						title="Create new effect"
+					>
+						<span>+ Create Effect</span>
+						<svg 
+							class="dropdown-arrow {showEffectDropdown ? 'open' : ''}" 
+							width="12" 
+							height="12" 
+							viewBox="0 0 12 12" 
+							fill="none" 
+							xmlns="http://www.w3.org/2000/svg"
 						>
-							+ {type.label}
-						</button>
-					{/each}
+							<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
+					</button>
+					{#if showEffectDropdown}
+						<div class="create-dropdown-menu">
+							{#each effectTypes as type}
+								<button 
+									class="dropdown-menu-item"
+									on:click={() => handleCreateEffect(type.value)}
+									title="Create {type.label}"
+								>
+									{type.label}
+								</button>
+							{/each}
+						</div>
+					{/if}
 				</div>
 				<div class="items-list">
 					{#each effects as effect}
@@ -137,6 +209,7 @@
 									type="text"
 									class="item-name-input"
 									value={effect.name}
+									bind:this={editingEffectInput}
 									on:blur={(e) => {
 										const newName = e.currentTarget.value.trim() || effect.name;
 										projectStore.updateEffect(effect.id, { name: newName });
@@ -150,12 +223,20 @@
 										}
 									}}
 									on:click|stopPropagation
-									autofocus
 								/>
 							{:else}
 								<span 
 									class="item-name"
+									role="button"
+									tabindex="0"
+									aria-label="Double-click to rename effect"
 									on:dblclick|stopPropagation={() => editingEffectId = effect.id}
+									on:keydown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											editingEffectId = effect.id;
+										}
+									}}
 									title="Double-click to rename"
 								>
 									{effect.name}
@@ -178,16 +259,40 @@
 			</div>
 		{:else}
 			<div class="envelopes-section">
-				<div class="create-buttons">
-					{#each envelopeTypes as type}
-						<button 
-							class="create-envelope-btn"
-							on:click={() => createEnvelope(type.value)}
-							title="Create {type.label}"
+				<div class="create-dropdown-wrapper">
+					<button 
+						class="create-dropdown-trigger"
+						on:click={() => {
+							showEnvelopeDropdown = !showEnvelopeDropdown;
+							showEffectDropdown = false;
+						}}
+						title="Create new envelope"
+					>
+						<span>+ Create Envelope</span>
+						<svg 
+							class="dropdown-arrow {showEnvelopeDropdown ? 'open' : ''}" 
+							width="12" 
+							height="12" 
+							viewBox="0 0 12 12" 
+							fill="none" 
+							xmlns="http://www.w3.org/2000/svg"
 						>
-							+ {type.label}
-						</button>
-					{/each}
+							<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
+					</button>
+					{#if showEnvelopeDropdown}
+						<div class="create-dropdown-menu">
+							{#each envelopeTypes as type}
+								<button 
+									class="dropdown-menu-item"
+									on:click={() => handleCreateEnvelope(type.value)}
+									title="Create {type.label}"
+								>
+									{type.label}
+								</button>
+							{/each}
+						</div>
+					{/if}
 				</div>
 				<div class="items-list">
 					{#each envelopes as envelope}
@@ -214,6 +319,7 @@
 									type="text"
 									class="item-name-input"
 									value={envelope.name}
+									bind:this={editingEnvelopeInput}
 									on:blur={(e) => {
 										const newName = e.currentTarget.value.trim() || envelope.name;
 										projectStore.updateEnvelope(envelope.id, { name: newName });
@@ -227,12 +333,20 @@
 										}
 									}}
 									on:click|stopPropagation
-									autofocus
 								/>
 							{:else}
 								<span 
 									class="item-name"
+									role="button"
+									tabindex="0"
+									aria-label="Double-click to rename envelope"
 									on:dblclick|stopPropagation={() => editingEnvelopeId = envelope.id}
+									on:keydown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											editingEnvelopeId = envelope.id;
+										}
+									}}
 									title="Double-click to rename"
 								>
 									{envelope.name}

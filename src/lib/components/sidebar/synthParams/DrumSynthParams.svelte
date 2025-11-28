@@ -15,6 +15,20 @@
 	engineStore.subscribe((e) => (engine = e));
 
 	$: activeItem = selectedInstrument || selectedTrack;
+	
+	// Get default values for this instrument type
+	$: instrumentDefaults = {
+		kick: { attack: 0.005, decay: 0.4, release: 0.15 },
+		snare: { attack: 0.005, decay: 0.2, release: 0.1 },
+		hihat: { attack: 0.001, decay: 0.05, release: 0.01 },
+		clap: { attack: 0.01, decay: 0.15, release: 0.05 },
+		tom: { attack: 0.01, decay: 0.4, release: 0.1 },
+		cymbal: { attack: 0.01, decay: 0.5, release: 0.2 },
+		shaker: { attack: 0.01, decay: 0.3, release: 0.1 },
+		rimshot: { attack: 0.001, decay: 0.08, release: 0.05 }
+	};
+	
+	$: defaults = activeItem?.instrumentType ? instrumentDefaults[activeItem.instrumentType as keyof typeof instrumentDefaults] : null;
 
 	function updateSetting(key: string, value: any) {
 		if (!activeItem) return;
@@ -63,6 +77,8 @@
 	min={0}
 	max={1}
 	step={0.01}
+	resetValue={defaults?.attack ?? 0.01}
+	onReset={() => updateSetting('attack', defaults?.attack ?? 0.01)}
 	onUpdate={(v) => updateSetting('attack', v)}
 />
 <ParamControl
@@ -72,6 +88,8 @@
 	min={0}
 	max={1}
 	step={0.01}
+	resetValue={defaults?.decay ?? 0.3}
+	onReset={() => updateSetting('decay', defaults?.decay ?? 0.3)}
 	onUpdate={(v) => updateSetting('decay', v)}
 />
 <ParamControl
@@ -81,6 +99,8 @@
 	min={0}
 	max={1}
 	step={0.01}
+	resetValue={defaults?.release ?? 0.1}
+	onReset={() => updateSetting('release', defaults?.release ?? 0.1)}
 	onUpdate={(v) => updateSetting('release', v)}
 />
 

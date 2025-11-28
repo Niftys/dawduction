@@ -1,13 +1,54 @@
 <script lang="ts">
-	import type { Pattern, PatternNode } from '$lib/types/pattern';
+	import type { Pattern, PatternNode, Instrument } from '$lib/types/pattern';
 	
 	export let pattern: Pattern;
 	export let onClick: () => void;
 	export let onDelete: ((patternId: string) => void) | null = null;
 	
-	// Simple canvas preview - render nodes as circles
-	// This is a simplified version for preview purposes
-	function renderPreview(node: PatternNode, ctx: CanvasRenderingContext2D, scale: number, offsetX: number, offsetY: number) {
+	// Helper to mute color for preview
+	function muteColor(color: string): string {
+		if (color.startsWith('#')) {
+			const num = parseInt(color.slice(1), 16);
+			const r = (num >> 16) & 0xff;
+			const g = (num >> 8) & 0xff;
+			const b = num & 0xff;
+			const mutedR = Math.floor(r * 0.6 + 100 * 0.4);
+			const mutedG = Math.floor(g * 0.6 + 100 * 0.4);
+			const mutedB = Math.floor(b * 0.6 + 100 * 0.4);
+			return `rgb(${mutedR}, ${mutedG}, ${mutedB})`;
+		}
+		return color;
+	}
+	
+	// Helper to convert color to rgba
+	function colorToRgba(color: string, alpha: number): string {
+		if (color.startsWith('#')) {
+			const num = parseInt(color.slice(1), 16);
+			const r = (num >> 16) & 0xff;
+			const g = (num >> 8) & 0xff;
+			const b = num & 0xff;
+			return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+		} else if (color.startsWith('rgb(')) {
+			// Extract rgb values and convert to rgba
+			const match = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
+			if (match) {
+				return `rgba(${match[1]}, ${match[2]}, ${match[3]}, ${alpha})`;
+			}
+		}
+		return color;
+	}
+	
+	// Render preview node with proper styling matching the canvas
+	function renderPreviewNode(
+		node: PatternNode, 
+		ctx: CanvasRenderingContext2D, 
+		scale: number, 
+		offsetX: number, 
+		offsetY: number,
+		instrumentColor: string,
+		depth: number,
+		instrumentType?: string
+	) {
 		const nodeX = node.x || 0;
 		const nodeY = node.y || 0;
 		
@@ -19,14 +60,18 @@
 		const x = nodeX * scale + offsetX;
 		const y = nodeY * scale + offsetY;
 		
-		// Calculate radius based on scale (minimum 2px, maximum 8px)
-		const baseRadius = 6;
-		const radius = Math.max(2, Math.min(8, baseRadius * scale));
+		// Calculate radius based on depth (matching NodeRenderer)
+		// Root (depth 0) = larger, others = smaller
+		const baseRadius = depth === 0 ? 50 : 18;
+		const radius = baseRadius * scale;
 		
 		// Draw connections to children first (so they appear behind nodes)
 		if (node.children && node.children.length > 0) {
-			ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+			const mutedColor = muteColor(instrumentColor);
+			ctx.strokeStyle = colorToRgba(mutedColor, 0.2); // ~20% opacity
 			ctx.lineWidth = Math.max(0.5, 1 * scale);
+			ctx.lineCap = 'round';
+			
 			for (const child of node.children) {
 				const childX = (child.x || 0) * scale + offsetX;
 				const childY = (child.y || 0) * scale + offsetY;
@@ -40,18 +85,128 @@
 				}
 				
 				// Recursively render children
-				renderPreview(child, ctx, scale, offsetX, offsetY);
+				renderPreviewNode(child, ctx, scale, offsetX, offsetY, instrumentColor, depth + 1, instrumentType);
 			}
 		}
+		
+		// Check if this is a leaf node with velocity
+		const hasVelocity = node.velocity !== undefined && node.velocity !== null && node.children.length === 0;
+		const velocity = hasVelocity ? (node.velocity ?? 1.0) : 1.0;
+		const mutedColor = muteColor(instrumentColor);
 		
 		// Draw node circle
 		ctx.beginPath();
 		ctx.arc(x, y, radius, 0, Math.PI * 2);
-		ctx.fillStyle = pattern.color || '#7ab8ff';
-		ctx.fill();
-		ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-		ctx.lineWidth = Math.max(0.5, 1 * scale);
+		
+		if (hasVelocity && velocity < 1.0) {
+			// Draw empty circle background
+			ctx.strokeStyle = colorToRgba(mutedColor, 0.3); // ~30% opacity
+			ctx.lineWidth = Math.max(1, 2 * scale);
+			ctx.stroke();
+			
+			// Draw the filled portion from bottom up
+			const fillHeight = radius * 2 * velocity;
+			const fillTop = y + radius - fillHeight;
+			
+			ctx.save();
+			ctx.beginPath();
+			ctx.arc(x, y, radius, 0, Math.PI * 2);
+			ctx.clip();
+			
+			// Draw filled rectangle from bottom
+			if (depth === 0) {
+				// Root: use gradient
+				const fillGradient = ctx.createLinearGradient(x, fillTop, x, y + radius);
+				fillGradient.addColorStop(0, mutedColor);
+				fillGradient.addColorStop(1, colorToRgba(mutedColor, 0.8));
+				ctx.fillStyle = fillGradient;
+			} else {
+				// Non-root: solid color with opacity
+				ctx.fillStyle = colorToRgba(mutedColor, 0.5); // ~50% opacity
+			}
+			ctx.fillRect(x - radius, fillTop, radius * 2, fillHeight);
+			ctx.restore();
+		} else {
+			// Full fill
+			if (depth === 0) {
+				// Root: gradient
+				const gradient = ctx.createRadialGradient(
+					x - radius * 0.2, 
+					y - radius * 0.2, 
+					0, 
+					x, 
+					y, 
+					radius
+				);
+				gradient.addColorStop(0, colorToRgba(mutedColor, 1.0));
+				gradient.addColorStop(0.7, mutedColor);
+				gradient.addColorStop(1, colorToRgba(mutedColor, 0.8));
+				ctx.fillStyle = gradient;
+			} else {
+				// Non-root: solid color with opacity
+				ctx.fillStyle = colorToRgba(mutedColor, 0.5); // ~50% opacity
+			}
+			ctx.fill();
+		}
+		
+		// Draw border
+		ctx.strokeStyle = depth === 0 
+			? 'rgba(255, 255, 255, 0.3)' 
+			: 'rgba(255, 255, 255, 0.2)';
+		ctx.lineWidth = depth === 0 
+			? Math.max(1, 2 * scale) 
+			: Math.max(0.5, 1 * scale);
 		ctx.stroke();
+		
+		// Draw number
+		let displayValue: number;
+		if (depth === 1 && node.children.length > 0) {
+			displayValue = node.children.length; // Show number of subdivisions
+		} else {
+			displayValue = node.division; // Show division value
+		}
+		
+		const fontSize = depth === 0 ? 18 * scale : 10 * scale;
+		ctx.fillStyle = depth === 0 ? '#e8e8e8' : 'rgba(255, 255, 255, 0.8)';
+		ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillText(displayValue.toString(), x, y);
+		
+		// Draw instrument label for root nodes
+		if (depth === 0 && instrumentType) {
+			const labelY = y + radius + 20 * scale;
+			const labelFontSize = 12 * scale;
+			ctx.font = `${labelFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+			ctx.fillStyle = '#b0b0b0';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'top';
+			// Capitalize first letter
+			const label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+			ctx.fillText(label, x, labelY);
+		}
+	}
+	
+	// Get all instruments from pattern (handles both new and legacy formats)
+	function getPatternInstruments(pattern: Pattern): Instrument[] {
+		if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
+			return pattern.instruments;
+		} else if (pattern.instrumentType && pattern.patternTree) {
+			// Legacy format: convert single instrument
+			return [{
+				id: pattern.id,
+				instrumentType: pattern.instrumentType,
+				patternTree: pattern.patternTree,
+				settings: pattern.settings || {},
+				instrumentSettings: pattern.instrumentSettings,
+				color: pattern.color || '#7ab8ff',
+				volume: pattern.volume ?? 1.0,
+				pan: pattern.pan ?? 0.0,
+				mute: pattern.mute,
+				solo: pattern.solo
+			}];
+		}
+		return [];
 	}
 	
 	let canvas: HTMLCanvasElement;
@@ -67,73 +222,92 @@
 			canvasContext.fillStyle = '#1a1a1a';
 			canvasContext.fillRect(0, 0, canvas.width, canvas.height);
 			
-			// Calculate bounds of pattern tree (including all nodes)
-			let minX = Infinity, maxX = -Infinity;
-			let minY = Infinity, maxY = -Infinity;
-			let hasNodes = false;
+			// Get all instruments from pattern
+			const instruments = getPatternInstruments(pattern);
 			
-			function calculateBounds(node: PatternNode) {
-				const x = node.x || 0;
-				const y = node.y || 0;
+			// Only proceed if we have instruments
+			if (instruments.length > 0) {
+				// Calculate bounds of all pattern trees (including all nodes from all instruments)
+				let minX = Infinity, maxX = -Infinity;
+				let minY = Infinity, maxY = -Infinity;
+				let hasNodes = false;
 				
-				// Only consider nodes that have valid coordinates
-				if (x !== undefined && y !== undefined && !isNaN(x) && !isNaN(y)) {
-					hasNodes = true;
-					minX = Math.min(minX, x);
-					maxX = Math.max(maxX, x);
-					minY = Math.min(minY, y);
-					maxY = Math.max(maxY, y);
-				}
-				
-				// Recursively check children
-				if (node.children && node.children.length > 0) {
-					for (const child of node.children) {
-						calculateBounds(child);
+				function calculateBounds(node: PatternNode) {
+					const x = node.x || 0;
+					const y = node.y || 0;
+					
+					// Only consider nodes that have valid coordinates
+					if (x !== undefined && y !== undefined && !isNaN(x) && !isNaN(y)) {
+						hasNodes = true;
+						minX = Math.min(minX, x);
+						maxX = Math.max(maxX, x);
+						minY = Math.min(minY, y);
+						maxY = Math.max(maxY, y);
+					}
+					
+					// Recursively check children
+					if (node.children && node.children.length > 0) {
+						for (const child of node.children) {
+							calculateBounds(child);
+						}
 					}
 				}
-			}
-			
-			// Get the first instrument's pattern tree to render (or legacy patternTree)
-			const patternTree = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
-				? pattern.instruments[0].patternTree
-				: (pattern.patternTree || { id: crypto.randomUUID(), division: 4, children: [], x: 0, y: 0 });
-			
-			calculateBounds(patternTree);
-			
-			// Only render if we have valid nodes
-			if (hasNodes && minX !== Infinity && maxX !== -Infinity) {
-				// Calculate content dimensions
-				const contentWidth = maxX - minX;
-				const contentHeight = maxY - minY;
 				
-				// Add padding (as a percentage of content size, with minimum)
-				const paddingPercent = 0.2; // 20% padding
-				const minPadding = 30;
-				const paddingX = Math.max(minPadding, contentWidth * paddingPercent);
-				const paddingY = Math.max(minPadding, contentHeight * paddingPercent);
+				// Calculate bounds for all instruments
+				for (const instrument of instruments) {
+					if (instrument.patternTree) {
+						calculateBounds(instrument.patternTree);
+					}
+				}
 				
-				const totalWidth = contentWidth + paddingX * 2;
-				const totalHeight = contentHeight + paddingY * 2;
-				
-				// Calculate scale to fit in canvas (with some margin)
-				const canvasWidth = canvas.width;
-				const canvasHeight = canvas.height;
-				const margin = 10; // Small margin from edges
-				const availableWidth = canvasWidth - margin * 2;
-				const availableHeight = canvasHeight - margin * 2;
-				
-				const scaleX = availableWidth / totalWidth;
-				const scaleY = availableHeight / totalHeight;
-				const scale = Math.min(scaleX, scaleY); // Use the smaller scale to fit both dimensions
-				
-				// Calculate offset to center the content
-				const scaledWidth = totalWidth * scale;
-				const scaledHeight = totalHeight * scale;
-				const offsetX = (canvasWidth - scaledWidth) / 2 - (minX - paddingX) * scale;
-				const offsetY = (canvasHeight - scaledHeight) / 2 - (minY - paddingY) * scale;
-				
-				// Render pattern tree (first instrument)
-				renderPreview(patternTree, canvasContext, scale, offsetX, offsetY);
+				// Only render if we have valid nodes
+				if (hasNodes && minX !== Infinity && maxX !== -Infinity) {
+					// Calculate content dimensions
+					const contentWidth = maxX - minX;
+					const contentHeight = maxY - minY;
+					
+					// Add padding (as a percentage of content size, with minimum)
+					const paddingPercent = 0.2; // 20% padding
+					const minPadding = 30;
+					const paddingX = Math.max(minPadding, contentWidth * paddingPercent);
+					const paddingY = Math.max(minPadding, contentHeight * paddingPercent);
+					
+					const totalWidth = contentWidth + paddingX * 2;
+					const totalHeight = contentHeight + paddingY * 2;
+					
+					// Calculate scale to fit in canvas (with some margin)
+					const canvasWidth = canvas.width;
+					const canvasHeight = canvas.height;
+					const margin = 10; // Small margin from edges
+					const availableWidth = canvasWidth - margin * 2;
+					const availableHeight = canvasHeight - margin * 2;
+					
+					const scaleX = availableWidth / totalWidth;
+					const scaleY = availableHeight / totalHeight;
+					const scale = Math.min(scaleX, scaleY); // Use the smaller scale to fit both dimensions
+					
+					// Calculate offset to center the content
+					const scaledWidth = totalWidth * scale;
+					const scaledHeight = totalHeight * scale;
+					const offsetX = (canvasWidth - scaledWidth) / 2 - (minX - paddingX) * scale;
+					const offsetY = (canvasHeight - scaledHeight) / 2 - (minY - paddingY) * scale;
+					
+					// Render all instruments
+					for (const instrument of instruments) {
+						if (instrument.patternTree) {
+							renderPreviewNode(
+								instrument.patternTree, 
+								canvasContext, 
+								scale, 
+								offsetX, 
+								offsetY,
+								instrument.color || '#7ab8ff',
+								0, // Start at depth 0
+								instrument.instrumentType
+							);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -162,7 +336,7 @@
 		</button>
 	{/if}
 	<div class="pattern-card-preview">
-		<canvas bind:this={canvas} width={200} height={150}></canvas>
+		<canvas bind:this={canvas} width={400} height={300}></canvas>
 	</div>
 	<div class="pattern-card-info">
 		<h3 class="pattern-card-title">{pattern.name}</h3>

@@ -220,24 +220,38 @@
 	min-width: 200px;
 	display: flex;
 	align-items: center;
-	justify-content: flex-start;
+	justify-content: center;
 	padding: 0 8px;
 	border-right: 1px solid rgba(255, 255, 255, 0.1);
 	font-size: 12px;
 	font-weight: 500;
 	text-transform: capitalize;
-	gap: 4px;
+	gap: 8px;
 	overflow: visible;
+	position: relative;
+}
+
+.track-controls-group {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.track-buttons-vertical {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	flex-shrink: 0;
 }
 
 .track-name {
-	flex: 0 1 auto;
+	flex: 1;
 	min-width: 0;
-	text-align: left;
+	text-align: center;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	max-width: 80px;
 }
 
 .track-volume-control {
@@ -250,7 +264,7 @@
 	justify-content: center;
 	cursor: pointer;
 	flex-shrink: 0 !important;
-	margin: 0 8px 0 0;
+	margin: 0;
 	position: relative;
 	z-index: 10;
 	opacity: 1 !important;
@@ -292,22 +306,64 @@
 	background: linear-gradient(to top, #8ac8ff 0%, #6aa9ff 50%, #5a99ff 100%);
 }
 
+.track-mute,
+.track-solo {
+	background: rgba(255, 255, 255, 0.1);
+	color: #b8b8b8;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 4px;
+	width: 24px;
+	height: 24px;
+	cursor: pointer;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.2s ease;
+	flex-shrink: 0;
+	margin: 0;
+}
+
+.track-mute:hover,
+.track-solo:hover {
+	background: rgba(255, 255, 255, 0.15);
+	border-color: rgba(255, 255, 255, 0.25);
+}
+
+.track-mute.active {
+	background: rgba(255, 107, 107, 0.3);
+	color: #ff6b6b;
+	border-color: rgba(255, 107, 107, 0.5);
+}
+
+.track-solo.active {
+	background: rgba(255, 193, 7, 0.3);
+	color: #ffc107;
+	border-color: rgba(255, 193, 7, 0.5);
+}
+
 .track-delete {
-	background: rgba(255, 107, 107, 0.2);
+	background: transparent;
 	color: #ff6b6b;
 	border: none;
 	border-radius: 4px;
 	width: 20px;
 	height: 20px;
 	cursor: pointer;
-	font-size: 14px;
+	font-size: 16px;
 	line-height: 1;
 	opacity: 0;
-	transition: opacity 0.2s ease;
+	transition: opacity 0.2s ease, color 0.2s ease;
 	flex-shrink: 0;
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	position: absolute;
+	right: 8px;
+	top: 8px;
+	transform: none;
 }
 
 .row-label:hover .track-delete {
@@ -315,7 +371,8 @@
 }
 
 .track-delete:hover {
-	background: rgba(255, 107, 107, 0.3);
+	background: transparent;
+	color: #ff4444;
 }
 
 .row-label-link {
@@ -359,6 +416,12 @@
 .timeline-clip.dragging {
 	opacity: 0.8;
 	z-index: 100;
+}
+
+.timeline-clip.greyed-out {
+	opacity: 0.5;
+	filter: grayscale(100%);
+}
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 

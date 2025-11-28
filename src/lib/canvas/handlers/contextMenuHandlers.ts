@@ -43,7 +43,7 @@ export function handleContextAction(
 	
 	switch (type) {
 		case 'copy':
-			handleCopy(menu);
+			handleCopy(menu, engine);
 			break;
 		case 'addChild':
 			handleAddChild(menu, node, engine);
@@ -69,11 +69,66 @@ export function handleContextAction(
 /**
  * Handles copy action
  */
-function handleCopy(menu: ContextMenu): void {
+function handleCopy(menu: ContextMenu, engine: EngineWorklet | null): void {
 	if (menu.patternId && menu.isRoot) {
-		// Copy pattern
-		projectStore.copyPattern(menu.patternId);
-		window.dispatchEvent(new CustomEvent('reloadProject'));
+		// If instrumentId is provided, copy just that instrument within the pattern
+		if (menu.instrumentId) {
+			const originalRootNodeId = menu.node?.id;
+			projectStore.copyPatternInstrument(menu.patternId, menu.instrumentId);
+			
+			// After copying, select the new instrument and update the engine
+			setTimeout(() => {
+				// Get the updated project
+				let currentProject: any = null;
+				projectStore.subscribe((p) => (currentProject = p))();
+				if (!currentProject) return;
+				
+				const pattern = currentProject.patterns?.find((p: Pattern) => p.id === menu.patternId);
+				if (!pattern) return;
+				
+				// Get all instruments from pattern
+				const patternInstruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: [];
+				
+				// Find the new instrument (it will have a different root node ID than the original)
+				const newInstrument = patternInstruments.find((inst: any) => 
+					inst.patternTree?.id && inst.patternTree.id !== originalRootNodeId && inst.id !== menu.instrumentId
+				);
+				
+				if (newInstrument) {
+					// Select the new instrument
+					selectionStore.selectNode(newInstrument.patternTree.id, null, true, false, menu.patternId, newInstrument.id);
+					
+					// Update the engine with the new instrument
+					if (engine) {
+						const patternTrackId = `__pattern_${menu.patternId}_${newInstrument.id}`;
+						const trackForEngine = {
+							id: patternTrackId,
+							projectId: pattern.projectId,
+							instrumentType: newInstrument.instrumentType,
+							patternTree: newInstrument.patternTree,
+							settings: newInstrument.settings || {},
+							instrumentSettings: newInstrument.instrumentSettings,
+							volume: newInstrument.volume ?? 1.0,
+							pan: newInstrument.pan ?? 0.0,
+							color: newInstrument.color,
+							mute: newInstrument.mute ?? false,
+							solo: newInstrument.solo ?? false
+						};
+						
+						// Add the track to the engine - updateTrack will add it if it doesn't exist
+						engine.updateTrack(patternTrackId, trackForEngine);
+					}
+				}
+			}, 0);
+			
+			window.dispatchEvent(new CustomEvent('reloadProject'));
+		} else {
+			// Copy entire pattern (all instruments) to standalone instruments
+			projectStore.copyPattern(menu.patternId);
+			window.dispatchEvent(new CustomEvent('reloadProject'));
+		}
 	} else if (menu.trackId && menu.isRoot) {
 		// Copy track
 		projectStore.copyTrack(menu.trackId);

@@ -1015,20 +1015,45 @@ function createProjectStore() {
 				envelope: 'Envelope Track'
 			};
 			
-			// Get next order number
+			// Default colors for each track type
+			const defaultColors = {
+				pattern: '#7ab8ff', // Blue
+				effect: '#9b59b6', // Purple
+				envelope: '#2ecc71' // Green
+			};
+			
+			// Get order number based on track type
 			const project = getCurrent();
 			const existingTracks: TimelineTrack[] = project?.timeline?.tracks || [];
-			const maxOrder = existingTracks.length > 0 
-				? Math.max(...existingTracks.map((t: TimelineTrack) => t.order))
-				: -1;
+			
+			let order: number;
+			if (type === 'pattern') {
+				// Pattern tracks go at the top - use negative or low positive numbers
+				const patternTracks = existingTracks.filter((t: TimelineTrack) => t.type === 'pattern');
+				if (patternTracks.length === 0) {
+					order = 0; // First pattern track
+				} else {
+					const minPatternOrder = Math.min(...patternTracks.map((t: TimelineTrack) => t.order));
+					order = minPatternOrder - 1; // Insert at the top
+				}
+			} else {
+				// Effect and envelope tracks go at the bottom - use high positive numbers
+				const maxOrder = existingTracks.length > 0 
+					? Math.max(...existingTracks.map((t: TimelineTrack) => t.order))
+					: 999; // Start at 1000 if no tracks exist
+				order = maxOrder + 1; // Insert at the bottom
+			}
 			
 			return {
 				id: crypto.randomUUID(),
 				type,
 				name: name || `${defaultNames[type]} ${existingTracks.filter((t: TimelineTrack) => t.type === type).length + 1}`,
 				patternId,
-				order: maxOrder + 1,
+				order,
 				volume: 1.0, // Default volume
+				mute: false, // Default mute state
+				solo: false, // Default solo state
+				color: defaultColors[type], // Default color based on track type
 				createdAt: now
 			};
 		},
@@ -1365,6 +1390,104 @@ function createProjectStore() {
 					})
 				};
 			}, skipHistory);
+		},
+		/**
+		 * Copy a single instrument within a pattern
+		 * Creates a duplicate instrument in the same pattern with all properties copied
+		 */
+		copyPatternInstrument: (patternId: string, instrumentId: string) => {
+			updateFn((project) => {
+				if (!project) return project;
+				const pattern = (project.patterns || []).find((p: Pattern) => p.id === patternId);
+				if (!pattern) return project;
+				
+				// Get all instruments from pattern
+				const patternInstruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: (pattern.instrumentType && pattern.patternTree ? [{
+						id: pattern.id,
+						instrumentType: pattern.instrumentType,
+						patternTree: pattern.patternTree,
+						settings: pattern.settings || {},
+						instrumentSettings: pattern.instrumentSettings,
+						color: pattern.color || '#7ab8ff',
+						volume: pattern.volume ?? 1.0,
+						pan: pattern.pan ?? 0.0,
+						mute: pattern.mute,
+						solo: pattern.solo
+					}] : []);
+				
+				// Find the instrument to copy
+				const instrumentToCopy = patternInstruments.find((inst: Instrument) => inst.id === instrumentId);
+				if (!instrumentToCopy) return project;
+				
+				// Deep clone helper functions
+				const deepCopyPatternTree = (node: PatternNode): PatternNode => {
+					return JSON.parse(JSON.stringify(node));
+				};
+				
+				const regenerateIds = (node: PatternNode): PatternNode => ({
+					...node,
+					id: crypto.randomUUID(),
+					children: node.children.map(regenerateIds)
+				});
+				
+				const deepCopySettings = (settings: Record<string, any>): Record<string, any> => {
+					return JSON.parse(JSON.stringify(settings));
+				};
+				
+				// Deep clone the pattern tree with new IDs
+				const clonedTree = deepCopyPatternTree(instrumentToCopy.patternTree);
+				const newTree = regenerateIds(clonedTree);
+				
+				// Recursively offset all nodes to preserve spatial relationships
+				const offsetX = 300;
+				const offsetY = 100;
+				const offsetTree = (node: PatternNode): PatternNode => ({
+					...node,
+					x: (node.x ?? 0) + offsetX,
+					y: (node.y ?? 0) + offsetY,
+					children: node.children.map(offsetTree)
+				});
+				const offsetNewTree = offsetTree(newTree);
+				
+				// Create new instrument with all properties copied
+				const newInstrument: Instrument = {
+					id: crypto.randomUUID(),
+					instrumentType: instrumentToCopy.instrumentType,
+					patternTree: offsetNewTree,
+					settings: deepCopySettings(instrumentToCopy.settings || {}),
+					instrumentSettings: instrumentToCopy.instrumentSettings 
+						? Object.keys(instrumentToCopy.instrumentSettings).reduce((acc, key) => {
+							acc[key] = deepCopySettings(instrumentToCopy.instrumentSettings![key]);
+							return acc;
+						}, {} as Record<string, Record<string, any>>)
+						: undefined,
+					color: instrumentToCopy.color,
+					volume: instrumentToCopy.volume,
+					pan: instrumentToCopy.pan,
+					mute: instrumentToCopy.mute ?? false,
+					solo: instrumentToCopy.solo ?? false
+				};
+				
+				// Add the new instrument to the pattern
+				return {
+					...project,
+					patterns: (project.patterns || []).map((p: Pattern) => {
+						if (p.id !== patternId) return p;
+						
+						// Normalize pattern to ensure it has instruments array
+						const normalized = projectStore.normalizePattern(p);
+						const instruments = [...(normalized.instruments || []), newInstrument];
+						
+						return {
+							...normalized,
+							instruments,
+							updatedAt: Date.now()
+						};
+					})
+				};
+			});
 		},
 		/**
 		 * Copy an INSTRUMENT stored as Pattern (legacy name: "copyPattern")

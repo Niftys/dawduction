@@ -21,6 +21,9 @@ class RimshotSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -36,7 +39,14 @@ class RimshotSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -53,13 +63,17 @@ class RimshotSynth {
 
 		// Rimshot = sharp transient + bright tonal component + filtered noise
 		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
 		// 1. Sharp tonal "ping" - high frequency sine that quickly decays
-		const pingFreq = 800 * Math.exp(-this.envelopePhase / (decay * 0.2));
+		const pingFreq = 800 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.2));
 		const pingPhase = this.phase * 2 * Math.PI * pingFreq / this.sampleRate;
 		const ping = Math.sin(pingPhase) * 0.4;
 		
 		// 2. Body tone - lower frequency for character
-		const bodyFreq = 200 * Math.exp(-this.envelopePhase / (decay * 0.5));
+		const bodyFreq = 200 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.5));
 		const bodyPhase = this.phase * 2 * Math.PI * bodyFreq / this.sampleRate;
 		const body = Math.sin(bodyPhase) * 0.2;
 		
@@ -67,13 +81,30 @@ class RimshotSynth {
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
 		
-		// High-pass filtered noise for brightness
-		// Simple HPF approximation using phase modulation
-		const hpfFreq = 2000;
-		const hpfPhase = this.phase * 2 * Math.PI * hpfFreq / this.sampleRate;
-		const filteredNoise = noise * (0.3 + 0.7 * Math.abs(Math.sin(hpfPhase))) * 0.5;
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, snappier sound
+		const baseCutoff = 1800; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
 		
-		// Mix components
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		const filteredNoise = filtered;
+		
+		// Mix components (tonal components scale naturally with pitch)
 		let sample = ping + body + filteredNoise;
 
 		// ADSR envelope - very quick attack and decay for snappy character
@@ -94,7 +125,8 @@ class RimshotSynth {
 			// Release: fade from decayEndValue to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			envelope = releaseStartValue * Math.exp(-releasePhase * 8);
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended fade-out
 			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;

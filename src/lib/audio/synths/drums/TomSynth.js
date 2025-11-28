@@ -45,9 +45,13 @@ class TomSynth {
 		const release = (this.settings.release || 0.1) * this.sampleRate;
 		const totalDuration = attack + decay + release;
 
+		// Calculate pitch multiplier (base pitch is D3 = MIDI 50)
+		const basePitch = 50;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
 		// Descending pitch envelope
-		const startFreq = 100;
-		const endFreq = 50;
+		const startFreq = 100 * pitchMultiplier;
+		const endFreq = 50 * pitchMultiplier;
 		const freq = startFreq * Math.exp(-this.envelopePhase / (decay * 0.6));
 
 		const sample = Math.sin(this.phase * 2 * Math.PI * freq / this.sampleRate);
@@ -71,6 +75,7 @@ class TomSynth {
 			// Use decayEndValue if set, otherwise fallback to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
 			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out

@@ -32,25 +32,30 @@
 }
 
 .play-button {
-	min-width: 80px;
+	min-width: 44px;
+	width: 44px;
 	height: 44px;
 	background: #2d2d2d;
 	color: #e8e8e8;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 6px;
-	font-size: 13px;
 	cursor: pointer;
-	font-weight: 500;
 	transition: all 0.2s ease;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	padding: 0 12px;
+	padding: 0;
 }
 
 .play-button:hover {
 	background: #333333;
 	border-color: rgba(255, 255, 255, 0.2);
+}
+
+.play-button svg {
+	width: 16px;
+	height: 16px;
+	flex-shrink: 0;
 }
 
 .bpm-control {
@@ -241,92 +246,74 @@
 	flex-shrink: 0;
 }
 
-.new-track-button {
-	background: #2d2d2d;
-	color: #e8e8e8;
-	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 6px;
-	padding: 8px 16px;
-	cursor: pointer;
-	font-weight: 500;
-	font-size: 13px;
-	transition: all 0.2s ease;
-}
-
-.new-track-button:hover {
-	background: #333333;
-	border-color: rgba(255, 255, 255, 0.2);
-}
-
 .mute-solo-controls {
 	display: flex;
 	align-items: center;
-	gap: 4px;
-	background: #2d2d2d;
+	gap: 6px;
+	background: rgba(255, 255, 255, 0.05);
 	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 6px;
-	padding: 2px;
+	border-radius: 8px;
+	padding: 4px;
 }
 
-.mute-button,
-.solo-button {
-	background: transparent;
-	color: #b8b8b8;
-	border: none;
-	border-radius: 4px;
-	padding: 0;
-	width: 36px;
-	height: 36px;
+.mute-solo-controls .track-mute,
+.mute-solo-controls .track-solo {
+	background: rgba(255, 255, 255, 0.08);
+	color: #d0d0d0;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 6px;
+	width: 32px;
+	height: 32px;
 	cursor: pointer;
-	transition: all 0.2s ease;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	position: relative;
+	transition: all 0.2s ease;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
-.mute-button:hover:not(:disabled),
-.solo-button:hover:not(:disabled) {
-	background: #333333;
-	color: #e8e8e8;
+.mute-solo-controls .track-mute:hover,
+.mute-solo-controls .track-solo:hover {
+	background: rgba(255, 255, 255, 0.12);
+	border-color: rgba(255, 255, 255, 0.25);
+	color: #ffffff;
+	transform: translateY(-1px);
+	box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
-.mute-button:active:not(:disabled),
-.solo-button:active:not(:disabled) {
-	background: #3a3a3a;
-	transform: scale(0.95);
+.mute-solo-controls .track-mute:active,
+.mute-solo-controls .track-solo:active {
+	transform: translateY(0);
+	box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
-.mute-button.active {
-	background: rgba(255, 107, 107, 0.2);
+.mute-solo-controls .track-mute.active {
+	background: rgba(255, 107, 107, 0.25);
 	color: #ff6b6b;
-	border: 1px solid rgba(255, 107, 107, 0.4);
-	box-shadow: 0 0 8px rgba(255, 107, 107, 0.3);
-}
-
-.solo-button.active {
-	background: rgba(107, 255, 107, 0.2);
-	color: #6bff6b;
-	border: 1px solid rgba(107, 255, 107, 0.4);
-	box-shadow: 0 0 8px rgba(107, 255, 107, 0.3);
-}
-
-.mute-button.active:hover {
-	background: rgba(255, 107, 107, 0.3);
 	border-color: rgba(255, 107, 107, 0.6);
-	box-shadow: 0 0 12px rgba(255, 107, 107, 0.4);
+	box-shadow: 0 0 12px rgba(255, 107, 107, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-.solo-button.active:hover {
-	background: rgba(107, 255, 107, 0.3);
-	border-color: rgba(107, 255, 107, 0.6);
-	box-shadow: 0 0 12px rgba(107, 255, 107, 0.4);
+.mute-solo-controls .track-solo.active {
+	background: rgba(255, 193, 7, 0.25);
+	color: #ffc107;
+	border-color: rgba(255, 193, 7, 0.6);
+	box-shadow: 0 0 12px rgba(255, 193, 7, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
-.mute-button svg,
-.solo-button svg {
-	width: 16px;
-	height: 16px;
+.mute-solo-controls .track-mute.active:hover {
+	background: rgba(255, 107, 107, 0.35);
+	border-color: rgba(255, 107, 107, 0.8);
+	box-shadow: 0 0 16px rgba(255, 107, 107, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+.mute-solo-controls .track-solo.active:hover {
+	background: rgba(255, 193, 7, 0.35);
+	border-color: rgba(255, 193, 7, 0.8);
+	box-shadow: 0 0 16px rgba(255, 193, 7, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .view-toggle {

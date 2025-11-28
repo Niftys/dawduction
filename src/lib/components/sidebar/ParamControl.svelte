@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import { getInputValue } from './sidebarUtils';
 	import { automationStore } from '$lib/stores/automationStore';
 	import { projectStore } from '$lib/stores/projectStore';
@@ -24,13 +25,21 @@
 	export let automationLabel: string | null = null;
 
 	let isDragging = false;
+	let sliderElement: HTMLInputElement;
+	let globalMouseUpHandler: (() => void) | null = null;
 
+	// Enforce minimum value - prevent sliders from going to 0
+	const MIN_VALUE = 0.01;
+	const effectiveMin = min === 0 ? MIN_VALUE : min;
+	
 	const handleUpdate = (val: number) => {
+		// Clamp value to prevent going below effective minimum
+		const clampedVal = Math.max(effectiveMin, val);
 		if (typeof onUpdate === 'function') {
-			onUpdate(val);
+			onUpdate(clampedVal);
 		}
 		if (typeof onChange === 'function') {
-			onChange(val);
+			onChange(clampedVal);
 		}
 	};
 
@@ -38,15 +47,35 @@
 		if (!isDragging) {
 			isDragging = true;
 			projectStore.startBatch();
+			
+			// Add global mouseup listener to stop dragging when mouse is released anywhere
+			const handleGlobalMouseUp = () => {
+				if (isDragging) {
+					isDragging = false;
+					projectStore.endBatch();
+					if (globalMouseUpHandler) {
+						window.removeEventListener('mouseup', globalMouseUpHandler);
+						globalMouseUpHandler = null;
+					}
+				}
+			};
+			
+			globalMouseUpHandler = handleGlobalMouseUp;
+			window.addEventListener('mouseup', globalMouseUpHandler);
 		}
 	};
 
-	const handleMouseUp = () => {
+	// Cleanup on component destroy
+	onDestroy(() => {
+		if (globalMouseUpHandler) {
+			window.removeEventListener('mouseup', globalMouseUpHandler);
+			globalMouseUpHandler = null;
+		}
 		if (isDragging) {
 			isDragging = false;
 			projectStore.endBatch();
 		}
-	};
+	});
 
 	function openAutomation() {
 		if (!automationTargetType || !automationTargetId || !automationParameterKey) return;
@@ -89,23 +118,22 @@
 	</div>
 	<div class="param-controls">
 		<input
+			bind:this={sliderElement}
 			id={id}
 			type="range"
-			{min}
+			min={effectiveMin}
 			{max}
 			{step}
-			value={value}
+			value={Math.max(effectiveMin, value)}
 			on:mousedown={handleMouseDown}
-			on:mouseup={handleMouseUp}
-			on:mouseleave={handleMouseUp}
 			on:input={(e) => handleUpdate(Number(getInputValue(e)))}
 		/>
 		<NumericInput
 			id={`${id}-number`}
-			{min}
+			min={effectiveMin}
 			{max}
 			{step}
-			{value}
+			value={Math.max(effectiveMin, value)}
 			onInput={handleUpdate}
 		/>
 	</div>

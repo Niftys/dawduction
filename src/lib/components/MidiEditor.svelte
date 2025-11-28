@@ -26,59 +26,38 @@
 	selectionStore.subscribe((s) => (selection = s));
 	
 	// Melodic instruments that support pitch editing
-	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck'];
+	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ'];
+	// Drum instruments that also support pitch editing
+	const drumInstruments = ['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'];
+	// All instruments that support pitch editing (melodic + drums)
+	const pitchEditableInstruments = [...melodicInstruments, ...drumInstruments];
 	
 	// Editor mode: 'pitch' or 'velocity' - use shared store to sync with NoteControls
 	$: editorMode = $editorModeStore;
 	
 	// Check if we should show the MIDI editor
-	// Show when 2+ nodes are selected (multiselect) for melodic instruments
-	$: shouldShow = (() => {
-		if (!project) {
-			return false;
-		}
-		
-		// Need at least 2 nodes selected for multiselect editor
-		if (selection.selectedNodes.size < 2) {
-			return false;
-		}
-		
-		// Check if we have a track (standalone instrument) or pattern instrument
-		let track = null;
-		if (selection.selectedTrackId) {
-			track = project.standaloneInstruments?.find((i: any) => i.id === selection.selectedTrackId);
-		}
-		
-		// If no standalone track, check if we have a pattern instrument
-		if (!track && selection.selectedPatternId && selection.selectedInstrumentId) {
-			const pattern = project.patterns?.find((p: any) => p.id === selection.selectedPatternId);
-			if (pattern) {
-				const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
-					? pattern.instruments
-					: (pattern.instrumentType && pattern.patternTree ? [{
-						id: pattern.id,
-						instrumentType: pattern.instrumentType,
-						patternTree: pattern.patternTree,
-						settings: pattern.settings || {},
-						instrumentSettings: pattern.instrumentSettings,
-						color: pattern.color || '#7ab8ff',
-						volume: pattern.volume ?? 1.0,
-						pan: pattern.pan ?? 0.0,
-						mute: pattern.mute,
-						solo: pattern.solo
-					}] : []);
-				track = instruments.find((inst: any) => inst.id === selection.selectedInstrumentId) || instruments[0] || null;
-			}
-		}
-		
-		if (!track) return false;
-		
-		// Only show for melodic instruments
-		return melodicInstruments.includes(track.instrumentType);
-	})();
+	// Show when 2+ nodes are selected (multiselect) for instruments that support pitch editing
+	// Use selectedNodes.length instead of duplicating the logic
+	// Note: We check selectedNodes (all nodes) for showing the editor, but use selectedNodesForPitch in pitch mode
+	$: shouldShow = selectedNodes.length >= 2;
 	
-	// Show pitch editor when mode is 'pitch'
-	$: showPitchEditor = shouldShow && editorMode === 'pitch';
+	// Ensure editor mode is set to 'pitch' when editor should show
+	// This needs to happen before showPitchEditor/showVelocityEditor are computed
+	$: if (shouldShow && !previousShouldShow && selectedNodes.length > 0) {
+		// Editor is opening - ensure it starts in pitch mode
+		// Set mode synchronously to avoid race conditions
+		// Only set to pitch mode if there are non-muted nodes to show
+		if (selectedNodesForPitch.length > 0) {
+			editorModeStore.setMode('pitch');
+		} else {
+			// If all nodes are muted, default to velocity mode
+			editorModeStore.setMode('velocity');
+		}
+		previousShouldShow = true;
+	}
+	
+	// Show pitch editor when mode is 'pitch' and there are non-muted nodes
+	$: showPitchEditor = shouldShow && editorMode === 'pitch' && selectedNodesForPitch.length > 0;
 	
 	// Show velocity editor when mode is 'velocity'
 	$: showVelocityEditor = shouldShow && editorMode === 'velocity';
@@ -121,8 +100,14 @@
 	}
 	
 	// Get selected nodes for the current instrument (standalone or pattern)
+	// Compute this independently of shouldShow to avoid circular dependency
 	$: selectedNodes = (() => {
-		if (!shouldShow || !project) return [];
+		if (!project || !selection) return [];
+		
+		// Need at least 2 nodes selected for multiselect editor
+		if (selection.selectedNodes.size < 2) {
+			return [];
+		}
 		
 		// Get track (standalone instrument) or pattern instrument
 		let track = null;
@@ -154,6 +139,11 @@
 		
 		if (!track || !track.patternTree) return [];
 		
+		// Check if this instrument type supports pitch editing
+		if (!pitchEditableInstruments.includes(track.instrumentType)) {
+			return [];
+		}
+		
 		const nodes: Array<{ node: PatternNode; nodeId: string; index: number }> = [];
 		let index = 0;
 		
@@ -174,6 +164,12 @@
 		return nodes;
 	})();
 	
+	// Filtered nodes for pitch editor: exclude nodes with velocity === 0 (muted)
+	$: selectedNodesForPitch = selectedNodes.filter(({ node }) => {
+		const velocity = node.velocity ?? 1.0;
+		return velocity > 0;
+	});
+	
 	// Full pitch range (C0 to C8 = MIDI 12 to 108)
 	const FULL_PITCH_RANGE = { min: 12, max: 108 };
 	
@@ -191,16 +187,15 @@
 	// Total height of all keys (for scrolling)
 	$: totalKeysHeight = allPianoKeys.length * KEY_HEIGHT;
 	
-	// Auto-scroll to center on selected notes ONLY when editor first opens
-	$: if (shouldShow && !previousShouldShow && selectedNodes.length > 0) {
-		// Editor just opened - reset auto-scroll flag and scroll to notes
+	// Auto-scroll to center on selected notes ONLY when editor first opens (pitch mode)
+	$: if (showPitchEditor && previousShouldShow && !hasAutoScrolled && selectedNodesForPitch.length > 0) {
+		// Editor just opened in pitch mode - scroll to notes
 		hasAutoScrolled = false;
-		previousShouldShow = true;
 		
 		// Wait for DOM to be ready, then scroll
 		setTimeout(() => {
-			if (gridContainer && pianoKeysContainer && selectedNodes.length > 0) {
-				const pitches = selectedNodes.map(({ node }) => node.pitch ?? 60);
+			if (gridContainer && pianoKeysContainer && selectedNodesForPitch.length > 0) {
+				const pitches = selectedNodesForPitch.map(({ node }) => node.pitch ?? 60);
 				const centerPitch = Math.round((Math.min(...pitches) + Math.max(...pitches)) / 2);
 				const centerRow = FULL_PITCH_RANGE.max - centerPitch;
 				const targetScroll = Math.max(0, (centerRow * KEY_HEIGHT) - (gridContainer.clientHeight / 2));
@@ -214,9 +209,6 @@
 		// Editor just closed - reset flags
 		previousShouldShow = false;
 		hasAutoScrolled = false;
-	} else if (shouldShow) {
-		// Editor is open - keep tracking state
-		previousShouldShow = true;
 	}
 	
 	// Get note position for a given pitch (relative to full range)
@@ -242,9 +234,9 @@
 	
 	// Handle click on grid cell (pitch mode)
 	function handleGridClick(columnIndex: number, pitch: number, event: MouseEvent) {
-		if (columnIndex >= selectedNodes.length) return;
+		if (columnIndex >= selectedNodesForPitch.length) return;
 		
-		const { nodeId } = selectedNodes[columnIndex];
+		const { nodeId } = selectedNodesForPitch[columnIndex];
 		updateNodePitch(nodeId, pitch);
 	}
 	
@@ -316,15 +308,17 @@
 	$: totalVelocityRowsHeight = velocityRows.length * KEY_HEIGHT;
 	
 	// Calculate column width based on number of selected notes
+	// Use appropriate node list based on editor mode
+	$: nodesForColumnWidth = showPitchEditor ? selectedNodesForPitch : selectedNodes;
 	function updateColumnWidth() {
-		if (gridArea && selectedNodes.length > 0) {
-			columnWidth = Math.max(40, gridArea.clientWidth / selectedNodes.length);
+		if (gridArea && nodesForColumnWidth.length > 0) {
+			columnWidth = Math.max(40, gridArea.clientWidth / nodesForColumnWidth.length);
 		} else {
 			columnWidth = 60;
 		}
 	}
 	
-	$: if (gridArea && selectedNodes.length > 0) {
+	$: if (gridArea && nodesForColumnWidth.length > 0) {
 		updateColumnWidth();
 	}
 	
@@ -429,7 +423,7 @@
 				<div class="grid-area" bind:this={gridArea}>
 					<div class="grid-container" bind:this={gridContainer} on:scroll={handleScroll}>
 						<div class="grid-content" style="height: {totalKeysHeight}px">
-							{#each selectedNodes as { node, nodeId }, columnIndex (nodeId)}
+							{#each selectedNodesForPitch as { node, nodeId }, columnIndex (nodeId)}
 								{@const currentPitch = node.pitch ?? 60}
 								<div class="grid-column" style="width: {columnWidth}px">
 									{#each allPianoKeys as key (key.pitch)}

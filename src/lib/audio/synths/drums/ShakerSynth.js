@@ -20,6 +20,9 @@ class ShakerSynth {
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// High-pass filter state
+		this.hpFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -35,7 +38,14 @@ class ShakerSynth {
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
+		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		
+		// Reset filter state for clean retrigger
+		if (this.hpFilterState) {
+			this.hpFilterState.x1 = 0;
+			this.hpFilterState.y1 = 0;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -47,15 +57,42 @@ class ShakerSynth {
 		if (!this.isActive) return 0;
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.3) * this.sampleRate;
-		const totalDuration = attack + decay;
+		const release = (this.settings.release || 0.1) * this.sampleRate;
+		const totalDuration = attack + decay + release;
 
 		// Transient-shaped noise
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
 		this.noiseIndex++;
-		let sample = noise;
+		
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// Use high-pass filtering with cutoff that scales with pitch
+		// This creates a clear pitch shift by moving the spectral content up/down
+		// Higher pitch = higher cutoff = brighter, more rattling sound
+		const baseCutoff = 2500; // Base cutoff frequency for C4
+		const cutoffFreq = baseCutoff * pitchMultiplier;
+		
+		// Initialize filter state if needed
+		if (!this.hpFilterState) {
+			this.hpFilterState = { x1: 0, y1: 0 };
+		}
+		
+		// Simple one-pole high-pass filter for pitch shifting
+		const rc = 1.0 / (2.0 * Math.PI * cutoffFreq);
+		const dt = 1.0 / this.sampleRate;
+		const alpha = rc / (rc + dt);
+		
+		// Apply high-pass filter
+		const filtered = alpha * (this.hpFilterState.y1 + noise - this.hpFilterState.x1);
+		this.hpFilterState.x1 = noise;
+		this.hpFilterState.y1 = filtered;
+		
+		let sample = filtered;
 
 		// Extended fade-out to prevent clicks
-		const fadeOutSamples = Math.max(0.05 * this.sampleRate, decay * 0.3);
+		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
 		let envelope = 0;
@@ -67,10 +104,17 @@ class ShakerSynth {
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			envelope = Math.exp(-decayPhase * 4);
 			decayEndValue = envelope;
+		} else if (this.envelopePhase < attack + decay + release) {
+			// Release: fade from decayEndValue to 0
+			const releaseStartValue = decayEndValue > 0 ? decayEndValue : 0;
+			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			// Use exponential decay for smooth release
+			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - totalDuration) / fadeOutSamples;
-			envelope = decayEndValue * Math.exp(-fadePhase * 10);
+			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : 0) * Math.exp(-6);
+			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {
 			envelope = 0;
 		}

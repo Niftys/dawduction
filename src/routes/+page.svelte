@@ -1,44 +1,54 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { projectStore } from '$lib/stores/projectStore';
+	import { loadingStore } from '$lib/stores/loadingStore';
 	import '$lib/styles/pages/Home.css';
 
 	const circleText = 'DAWDUCTION • '.repeat(5);
 
-	function createNewProject() {
-		const projectId = crypto.randomUUID();
-		const newProject = {
-			id: projectId,
-			title: 'New Project',
-			bpm: 120,
-			standaloneInstruments: [],
-			patterns: [],
-			effects: [],
-			envelopes: [],
-			timeline: {
-				tracks: [], // TimelineTracks (not standalone instruments)
-				clips: [],
+	async function createNewProject() {
+		loadingStore.startLoading('Creating new project...');
+		
+		try {
+			// Small delay to show loading state
+			await new Promise(resolve => setTimeout(resolve, 100));
+			
+			const projectId = crypto.randomUUID();
+			const newProject = {
+				id: projectId,
+				title: 'New Project',
+				bpm: 120,
+				standaloneInstruments: [],
+				patterns: [],
 				effects: [],
 				envelopes: [],
-				totalLength: 16
-			}
-		};
-		projectStore.set(newProject);
-		
-		// Automatically create Pattern 1 (empty, no default instruments)
-		const defaultPattern = projectStore.createPattern(projectId, 'Pattern 1');
-		projectStore.addPattern(defaultPattern);
-		
-		// Create default timeline tracks
-		const patternTrack = projectStore.createTimelineTrack('pattern', defaultPattern.id, 'Pattern 1');
-		const effectTrack = projectStore.createTimelineTrack('effect', undefined, 'Effects');
-		const envelopeTrack = projectStore.createTimelineTrack('envelope', undefined, 'Envelopes');
-		
-		projectStore.addTimelineTrack(patternTrack);
-		projectStore.addTimelineTrack(effectTrack);
-		projectStore.addTimelineTrack(envelopeTrack);
-		
-		goto(`/project/${projectId}`);
+				timeline: {
+					tracks: [], // TimelineTracks (not standalone instruments)
+					clips: [],
+					effects: [],
+					envelopes: [],
+					totalLength: 16
+				}
+			};
+			projectStore.set(newProject);
+			
+			// Automatically create Pattern 1 (empty, no default instruments)
+			const defaultPattern = projectStore.createPattern(projectId, 'Pattern 1');
+			projectStore.addPattern(defaultPattern);
+			
+			// Create default timeline tracks
+			const patternTrack = projectStore.createTimelineTrack('pattern', defaultPattern.id, 'Pattern 1');
+			const effectTrack = projectStore.createTimelineTrack('effect', undefined, 'Effects');
+			const envelopeTrack = projectStore.createTimelineTrack('envelope', undefined, 'Envelopes');
+			
+			projectStore.addTimelineTrack(patternTrack);
+			projectStore.addTimelineTrack(effectTrack);
+			projectStore.addTimelineTrack(envelopeTrack);
+			
+			await goto(`/project/${projectId}`);
+		} finally {
+			// Loading will be stopped by the project page once it's loaded
+		}
 	}
 </script>
 

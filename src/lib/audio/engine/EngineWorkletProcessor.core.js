@@ -43,7 +43,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		};
 	}
 
-	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation) {
+	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns) {
 		this.playbackController.setTempo(bpm);
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
@@ -56,10 +56,14 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 		
 		// Delegate to ProjectManager
-		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation);
+		this.projectManager.loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns);
 		
 		// Initialize track state
 		this.trackState.initializeTracks(tracks);
+		
+		// Don't initialize timeline track mute/solo on audio tracks
+		// AudioMixer will check timeline track mute/solo state based on active clips
+		// This allows the same pattern on multiple tracks to be muted/soloed independently
 	}
 
 	setTempo(bpm) {
@@ -148,6 +152,18 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 
 	updateTimelineTrackVolume(trackId, volume) {
 		this.projectManager.updateTimelineTrackVolume(trackId, volume);
+	}
+
+	updateTimelineTrackMute(trackId, mute) {
+		this.projectManager.updateTimelineTrackMute(trackId, mute);
+		// Don't set mute on audio tracks - AudioMixer will check timeline track mute state based on active clips
+		// This allows the same pattern on multiple tracks to be muted independently
+	}
+
+	updateTimelineTrackSolo(trackId, solo) {
+		this.projectManager.updateTimelineTrackSolo(trackId, solo);
+		// Don't set solo on audio tracks - AudioMixer will check timeline track solo state based on active clips
+		// This allows the same pattern on multiple tracks to be soloed independently
 	}
 
 	updateTrackEvents(trackId, events) {

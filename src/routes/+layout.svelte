@@ -1,10 +1,14 @@
 <script lang="ts">
 	import '../app.css';
+	import LoadingOverlay from '$lib/components/LoadingOverlay.svelte';
 </script>
 
 <main>
 	<slot />
 </main>
+
+<!-- Global loading overlay - appears for any loading state -->
+<LoadingOverlay />
 
 <style>
 	:global(body) {

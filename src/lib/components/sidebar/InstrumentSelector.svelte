@@ -46,7 +46,9 @@
 		{ value: 'fm', label: 'FM', color: '#cc00ff' },
 		{ value: 'wavetable', label: 'Wavetable', color: '#ffcc00' },
 		{ value: 'supersaw', label: 'Supersaw', color: '#ff3366' },
-		{ value: 'pluck', label: 'Pluck', color: '#66ff99' }
+		{ value: 'pluck', label: 'Pluck', color: '#66ff99' },
+		{ value: 'pad', label: 'Pad', color: '#9966ff' },
+		{ value: 'organ', label: 'Organ', color: '#ff9966' }
 	];
 
 	const instrumentDefaults = {
@@ -63,7 +65,9 @@
 		wavetable: { color: '#ffcc00', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3 } },
 		supersaw: { color: '#ff3366', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3, numOscillators: 7, detune: 0.1, spread: 0.5, filterCutoff: 8000, filterResonance: 0.5, lfoRate: 0, lfoAmount: 0 } },
 		pluck: { color: '#66ff99', settings: { attack: 0.01, decay: 0.3, sustain: 0.0, release: 0.4, damping: 0.96 } },
-		bass: { color: '#0066ff', settings: { attack: 0.05, decay: 0.2, sustain: 0.8, release: 0.3, osc1Type: 'saw', subLevel: 0.6, saturation: 0.3, filterCutoff: 2000, filterResonance: 0.3 } }
+		bass: { color: '#0066ff', settings: { attack: 0.05, decay: 0.2, sustain: 0.8, release: 0.3, osc1Type: 'saw', subLevel: 0.6, saturation: 0.3, filterCutoff: 2000, filterResonance: 0.3 } },
+		pad: { color: '#9966ff', settings: { attack: 0.5, decay: 0.3, sustain: 0.9, release: 1.5, numOscillators: 8, detune: 0.15, spread: 0.7, oscType: 'saw', filterCutoff: 4000, filterResonance: 0.3, pitchLfoRate: 0.5, pitchLfoAmount: 0.02, filterLfoRate: 0.3, filterLfoAmount: 1000 } },
+		organ: { color: '#ff9966', settings: { attack: 0.01, decay: 0.1, sustain: 1.0, release: 0.2, drawbars: [0.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.4, 0.0, 0.2], rotarySpeed: 4.0, rotaryDepth: 0.3, filterCutoff: 8000, filterResonance: 0.2 } }
 	};
 
 	// Get the active item (selected instrument from pattern, or standalone instrument)

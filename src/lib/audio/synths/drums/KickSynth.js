@@ -1,20 +1,29 @@
 /**
  * Kick Drum Synth (procedural)
- * Generates a punchy kick drum with pitch envelope and transient click
+ * Generates an organic, realistic kick drum sound
+ * - Multiple oscillators with slight detuning for character
+ * - Clean tonal body without noise/rattling or clicks
+ * - Realistic pitch envelope (quick drop like real drum head)
+ * - Natural compression/saturation characteristics
  */
 
 class KickSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
 		this.settings = settings || {};
-		this.phase = 0;
+		this.phase = 0; // Continuous phase accumulator (0-2π)
+		this.phase2 = 0; // Second oscillator phase accumulator (0-2π)
 		this.envelopePhase = 0;
 		this.isActive = false;
+		
 		// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
 		this.retriggerFadeSamples = Math.floor(0.005 * sampleRate); // 5ms fade for drums
+		
+		// DC blocking filter to prevent DC offset clicks
+		this.dcFilterState = { x1: 0, y1: 0 };
 	}
 
 	updateSettings(settings) {
@@ -26,11 +35,17 @@ class KickSynth {
 		this.wasActive = this.isActive;
 		
 		// Always reset phase for drums - each hit needs a fresh start
+		// Reset to 0 to start from beginning of waveform
 		this.phase = 0;
+		this.phase2 = 0;
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
+		
+		// Reset DC filter state on trigger to prevent clicks
+		this.dcFilterState.x1 = 0;
+		this.dcFilterState.y1 = 0;
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -47,63 +62,101 @@ class KickSynth {
 		const release = (this.settings.release || 0.15) * this.sampleRate;
 		const totalDuration = attack + decay + release;
 
-		// Beefier kick: wider frequency range with punch
-		const startFreq = 80; // Higher initial frequency for punch
-		const midFreq = 50; // Mid frequency
-		const endFreq = 35; // Lower end frequency for body
+		// Calculate pitch multiplier (base pitch is C4 = MIDI 60, matching default)
+		const basePitch = 60;
+		const pitchMultiplier = Math.pow(2, (this.pitch - basePitch) / 12);
 		
-		// Two-stage pitch envelope for more character
+		// Realistic kick drum frequencies
+		// Real kick drums have fundamental around 40-60Hz, with quick pitch drop
+		// Higher initial frequency for more punch and impact
+		const startFreq = 75 * pitchMultiplier; // Initial frequency (higher for more attack punch)
+		const fundamentalFreq = 50 * pitchMultiplier; // Main body frequency (typical kick fundamental)
+		const endFreq = 40 * pitchMultiplier; // End frequency (slight drop)
+		
+		// Realistic pitch envelope - quick drop like a real drum head
+		// The head tension releases quickly, causing pitch to drop
+		// Use smooth continuous curve to prevent clicks
 		let freq;
-		if (this.envelopePhase < decay * 0.3) {
-			// Initial punch - quick drop
-			const phase = this.envelopePhase / (decay * 0.3);
-			freq = startFreq * (1 - phase) + midFreq * phase;
+		if (this.envelopePhase < attack + decay) {
+			// Smooth pitch drop throughout attack and decay
+			const totalPhase = this.envelopePhase / (attack + decay);
+			// Use smooth exponential curve for continuous frequency change
+			// Start at startFreq, quickly drop to fundamentalFreq, then slowly to endFreq
+			if (totalPhase < 0.2) {
+				// Quick initial drop (first 20% of total duration)
+				const phase = totalPhase / 0.2;
+				freq = startFreq * Math.exp(-phase * 3) + fundamentalFreq * (1 - Math.exp(-phase * 3));
+			} else {
+				// Slower decay to end frequency
+				const phase = (totalPhase - 0.2) / 0.8;
+				freq = fundamentalFreq * Math.exp(-phase * 1.5) + endFreq * (1 - Math.exp(-phase * 1.5));
+			}
 		} else {
-			// Body - slower decay
-			const phase = (this.envelopePhase - decay * 0.3) / (decay * 0.7);
-			freq = midFreq * Math.exp(-phase * 2) + endFreq * (1 - Math.exp(-phase * 2));
+			// During release, maintain end frequency
+			freq = endFreq;
 		}
 
-		// Generate sine wave with pitch envelope
-		const sine = Math.sin(this.phase * 2 * Math.PI * freq / this.sampleRate);
+		// Multiple oscillators with slight detuning for organic character
+		// Real drums have multiple resonances that create a richer sound
+		const detune1 = 1.0; // Main oscillator
+		const detune2 = 1.02; // Slightly detuned for character (2% detune)
 		
-		// Add a subtle click/punch at the start (high frequency transient)
-		let click = 0;
-		if (this.envelopePhase < attack * 2) {
-			const clickPhase = this.envelopePhase / (attack * 2);
-			const clickFreq = 200 * (1 - clickPhase * 0.8); // Quick high frequency sweep
-			click = Math.sin(this.phase * 2 * Math.PI * clickFreq / this.sampleRate) * (1 - clickPhase) * 0.3;
+		// Calculate phase increments based on current frequency
+		// This ensures smooth phase accumulation even when frequency changes
+		const phaseIncrement1 = 2 * Math.PI * freq * detune1 / this.sampleRate;
+		const phaseIncrement2 = 2 * Math.PI * freq * detune2 / this.sampleRate;
+		
+		// Generate sine waves using continuous phase accumulation
+		const sine1 = Math.sin(this.phase);
+		const sine2 = Math.sin(this.phase2);
+		
+		// Accumulate phase continuously (wrap to prevent overflow)
+		this.phase += phaseIncrement1;
+		this.phase2 += phaseIncrement2;
+		
+		// Wrap phases smoothly using modulo to prevent discontinuities
+		// Use larger range (100 * 2π) before wrapping to maintain precision
+		const twoPi = 2 * Math.PI;
+		const wrapRange = 100 * twoPi;
+		if (this.phase > wrapRange) {
+			this.phase = this.phase % twoPi;
+		}
+		if (this.phase2 > wrapRange) {
+			this.phase2 = this.phase2 % twoPi;
 		}
 		
-		// Combine sine and click
-		const sample = sine + click;
+		// Combine oscillators with slight phase offset for more character
+		const tonalBody = (sine1 * 0.6 + sine2 * 0.4);
 
 		// Extended total duration with long fade-out to prevent clicks
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.3); // 100ms minimum fade-out
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
-		// ADSR envelope - FIXED: Release fades from end-of-decay value, not sustain
+		// ADSR envelope for clean tonal body
+		// Use smoother curves to prevent clicks
 		let envelope = 0;
-		let decayEndValue = sustain; // Value at end of decay phase (will be updated in decay phase)
+		let decayEndValue = sustain;
 		
 		if (this.envelopePhase < attack) {
-			// Smooth attack using cosine curve
-			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
+			// More aggressive attack for punch and impact
+			const attackPhase = this.envelopePhase / attack;
+			// Faster exponential curve for more immediate punch
+			envelope = 1 - Math.exp(-attackPhase * 8);
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
-			envelope = 1 - decayPhase * (1 - sustain);
-			decayEndValue = envelope; // Track the actual value at end of decay
+			
+			// Smooth exponential decay - avoid mixing exponential and linear to prevent clicks
+			// Use pure exponential decay for smoothness
+			envelope = Math.exp(-decayPhase * 3) * (1 - sustain) + sustain;
+			decayEndValue = envelope;
 		} else if (this.envelopePhase < attack + decay + release) {
-			// Release: fade from decayEndValue to 0 (not from sustain!)
-			// If decayEndValue wasn't set (shouldn't happen), use sustain as fallback
+			// Release: fade from decayEndValue to 0
 			const releaseStartValue = decayEndValue > 0 ? decayEndValue : sustain;
 			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			// Use exponential curve for smooth release
 			envelope = releaseStartValue * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
-			// Extended smooth fade-out using exponential decay to zero
+			// Extended fade-out
 			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
-			// Continue exponential decay from very small value
 			const fadeStartValue = (decayEndValue > 0 ? decayEndValue : sustain) * Math.exp(-6);
 			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {
@@ -113,18 +166,37 @@ class KickSynth {
 		// Ensure envelope is never negative and clamp to [0, 1]
 		envelope = Math.max(0, Math.min(1, envelope));
 
-		this.phase++;
+		// Phase accumulation is done above when calculating sine waves
 		this.envelopePhase++;
 		
-		// Apply envelope
-		let output = sample * envelope * this.velocity * 0.7;
+		// Apply envelope to clean tonal body
+		// Increased gain from 0.7 to 1.0 for more impact and presence
+		let output = tonalBody * envelope * this.velocity * 1.0;
+		
+		// DC blocking filter to remove any DC offset that could cause clicks
+		// Simple one-pole high-pass filter
+		const dcAlpha = 0.995; // Filter coefficient
+		const dcFiltered = output - this.dcFilterState.x1 + dcAlpha * this.dcFilterState.y1;
+		this.dcFilterState.x1 = output;
+		this.dcFilterState.y1 = dcFiltered;
+		output = dcFiltered;
+		
+		// Subtle saturation for organic character (soft clipping)
+		// Real drums have natural compression from the head
+		// Increased saturation threshold to allow more headroom for punch
+		const saturation = 0.4; // Amount of saturation (increased from 0.3)
+		if (Math.abs(output) > saturation) {
+			const sign = output > 0 ? 1 : -1;
+			output = sign * (saturation + (1 - saturation) * Math.tanh((Math.abs(output) - saturation) / (1 - saturation)));
+		}
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
 			const fadeProgress = this.retriggerFadePhase / this.retriggerFadeSamples;
-			// Fade out old sound, fade in new sound
-			const oldGain = 1 - fadeProgress;
-			const newGain = fadeProgress;
+			// Use smooth curve for fade (sine curve for smoother transition)
+			const smoothFade = 0.5 * (1 - Math.cos(Math.PI * fadeProgress));
+			const oldGain = 1 - smoothFade;
+			const newGain = smoothFade;
 			// Smooth the old output to prevent discontinuities
 			this.lastOutput = this.lastOutput * 0.95 + output * 0.05; // Smooth transition
 			output = this.lastOutput * oldGain + output * newGain;
@@ -132,6 +204,14 @@ class KickSynth {
 		} else {
 			this.lastOutput = output;
 			this.wasActive = false;
+		}
+		
+		// Additional smoothing: apply a very gentle low-pass to prevent any remaining clicks
+		// This helps smooth out any remaining discontinuities
+		if (this.envelopePhase < 10) {
+			// Very gentle fade-in at the very start (first 10 samples)
+			const startFade = this.envelopePhase / 10;
+			output *= startFade;
 		}
 		
 		// Only stop when envelope is done and we're very close to zero

@@ -7,10 +7,10 @@
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
 	import { viewStore } from '$lib/stores/viewStore';
-import { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
-import { recordProject, exportBufferToWAV } from '$lib/audio/utils/audioExport';
-import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
-import type { Pattern } from '$lib/types/pattern';
+	import { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
+	import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
+	import type { Pattern } from '$lib/types/pattern';
+	import ExportDialog from '$lib/components/ExportDialog.svelte';
 
 	let engine: EngineWorklet | null = null;
 	let isPlaying = false;
@@ -173,8 +173,15 @@ import type { Pattern } from '$lib/types/pattern';
 		};
 		window.addEventListener('reloadProject', handleReload);
 		
-		// Keyboard shortcuts for undo/redo
+		// Keyboard shortcuts for undo/redo and play/pause
 		const handleKeyDown = (e: KeyboardEvent) => {
+			// Spacebar for play/pause (only if not typing in an input)
+			if (e.key === ' ' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+				e.preventDefault();
+				togglePlayback();
+				return;
+			}
+			
 			// Ctrl-Z or Cmd-Z for undo
 			if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
 				e.preventDefault();
@@ -520,59 +527,14 @@ import type { Pattern } from '$lib/types/pattern';
 		}
 	}
 
-	let isExporting = false;
-	async function handleExport() {
-		if (!project || !project.standaloneInstruments || project.standaloneInstruments.length === 0) {
-			alert('No project to export');
-			return;
-		}
-		
-		if (isExporting) return;
-		isExporting = true;
-		
-		try {
-			// Calculate pattern length
-			const baseMeterInstrument = project.standaloneInstruments.find(i => i.id === project.baseMeterTrackId) || project.standaloneInstruments[0];
-			const patternLength = baseMeterInstrument?.patternTree?.division || 4;
-			
-			// For now, export one loop (can be extended with timeline)
-			const durationInBeats = patternLength;
-			
-			// Show progress
-			const progressDialog = document.createElement('div');
-			progressDialog.style.cssText = 'position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: #2d2d2d; padding: 20px; border-radius: 8px; z-index: 10000; color: #e8e8e8;';
-			progressDialog.innerHTML = '<div>Exporting audio...</div><div style="margin-top: 10px; width: 200px; height: 4px; background: #444; border-radius: 2px;"><div id="export-progress" style="width: 0%; height: 100%; background: #00ff88; border-radius: 2px; transition: width 0.1s;"></div></div>';
-			document.body.appendChild(progressDialog);
-			
-			const progressBar = document.getElementById('export-progress');
-			const updateProgress = (progress: number) => {
-				if (progressBar) {
-					progressBar.style.width = `${progress * 100}%`;
-				}
-			};
-			
-			// Record the project
-			const audioBuffer = await recordProject(
-				project.standaloneInstruments,
-				bpm,
-				project.baseMeterTrackId,
-				durationInBeats,
-				updateProgress,
-				project.timeline
-			);
-			
-			// Export to WAV
-			const filename = `dawduction-export-${Date.now()}.wav`;
-			exportBufferToWAV(audioBuffer, filename);
-			
-			// Remove progress dialog
-			document.body.removeChild(progressDialog);
-		} catch (error) {
-			console.error('Export failed:', error);
-			alert('Export failed: ' + (error instanceof Error ? error.message : String(error)));
-		} finally {
-			isExporting = false;
-		}
+	let showExportDialog = false;
+	
+	function handleExport() {
+		showExportDialog = true;
+	}
+	
+	function closeExportDialog() {
+		showExportDialog = false;
 	}
 </script>
 
@@ -666,51 +628,19 @@ import type { Pattern } from '$lib/types/pattern';
 							max="32"
 							on:change={(e) => {
 								const baseMeter = parseInt(e.currentTarget.value) || 4;
-								if (currentPattern && engine) {
-									// Update the baseMeter property
-									// Also update the root node's division for all instruments in the pattern
-									const patternInstruments = projectStore.getPatternInstruments(currentPattern);
-									
-									// Update each instrument's root node division to match the new base meter
-									if (patternInstruments && patternInstruments.length > 0) {
-										for (const instrument of patternInstruments) {
-											if (instrument.patternTree) {
-												// Update the root node's division in the store
-												projectStore.updatePatternTree(
-													currentPattern.id,
-													{
-														...instrument.patternTree,
-														division: baseMeter
-													},
-													instrument.id
-												);
-												
-												// Update the engine in real-time
-												updateEnginePatternTree(engine, createUpdateContext({
-													patternId: currentPattern.id,
-													instrumentId: instrument.id,
-													selection
-												}));
-											}
-										}
-									}
-									
-									// Update the pattern's baseMeter and legacy patternTree (for backward compatibility)
-									const updatedPatternTree = currentPattern.patternTree ? {
-										...currentPattern.patternTree,
-										division: baseMeter
-									} : undefined;
-									
+								if (currentPattern) {
+									// Update only the baseMeter property - root node divisions remain independent
+									// Base meter (X) and root division (Y) are separate: meter = Y/X
 									projectStore.updatePattern(currentPattern.id, { 
-										baseMeter,
-										patternTree: updatedPatternTree
+										baseMeter
 									});
-									
-									// Reload project to ensure all changes are applied
-									window.dispatchEvent(new CustomEvent('reloadProject'));
+									// Small delay to ensure store update completes, then reload project
+									setTimeout(() => {
+										window.dispatchEvent(new CustomEvent('reloadProject'));
+									}, 50);
 								}
 							}}
-							title="Base meter/division for this pattern (default loop length)"
+							title="Base meter (denominator X in Y/X time signature). Root node division (Y) is independent."
 						/>
 						<div class="number-input-arrows">
 							<button
@@ -719,36 +649,15 @@ import type { Pattern } from '$lib/types/pattern';
 								on:click={() => {
 									const currentBaseMeter = currentPattern.baseMeter || 4;
 									const newBaseMeter = Math.min(32, currentBaseMeter + 1);
-									if (currentPattern && engine) {
-										const patternInstruments = projectStore.getPatternInstruments(currentPattern);
-										if (patternInstruments && patternInstruments.length > 0) {
-											for (const instrument of patternInstruments) {
-												if (instrument.patternTree) {
-													projectStore.updatePatternTree(
-														currentPattern.id,
-														{
-															...instrument.patternTree,
-															division: newBaseMeter
-														},
-														instrument.id
-													);
-													updateEnginePatternTree(engine, createUpdateContext({
-														patternId: currentPattern.id,
-														instrumentId: instrument.id,
-														selection
-													}));
-												}
-											}
-										}
-										const updatedPatternTree = currentPattern.patternTree ? {
-											...currentPattern.patternTree,
-											division: newBaseMeter
-										} : undefined;
+									if (currentPattern) {
+										// Update only the baseMeter property - root node divisions remain independent
 										projectStore.updatePattern(currentPattern.id, { 
-											baseMeter: newBaseMeter,
-											patternTree: updatedPatternTree
+											baseMeter: newBaseMeter
 										});
-										window.dispatchEvent(new CustomEvent('reloadProject'));
+										// Small delay to ensure store update completes, then reload project
+										setTimeout(() => {
+											window.dispatchEvent(new CustomEvent('reloadProject'));
+										}, 50);
 									}
 								}}
 								title="Increase Base Meter"
@@ -763,36 +672,15 @@ import type { Pattern } from '$lib/types/pattern';
 								on:click={() => {
 									const currentBaseMeter = currentPattern.baseMeter || 4;
 									const newBaseMeter = Math.max(1, currentBaseMeter - 1);
-									if (currentPattern && engine) {
-										const patternInstruments = projectStore.getPatternInstruments(currentPattern);
-										if (patternInstruments && patternInstruments.length > 0) {
-											for (const instrument of patternInstruments) {
-												if (instrument.patternTree) {
-													projectStore.updatePatternTree(
-														currentPattern.id,
-														{
-															...instrument.patternTree,
-															division: newBaseMeter
-														},
-														instrument.id
-													);
-													updateEnginePatternTree(engine, createUpdateContext({
-														patternId: currentPattern.id,
-														instrumentId: instrument.id,
-														selection
-													}));
-												}
-											}
-										}
-										const updatedPatternTree = currentPattern.patternTree ? {
-											...currentPattern.patternTree,
-											division: newBaseMeter
-										} : undefined;
+									if (currentPattern) {
+										// Update only the baseMeter property - root node divisions remain independent
 										projectStore.updatePattern(currentPattern.id, { 
-											baseMeter: newBaseMeter,
-											patternTree: updatedPatternTree
+											baseMeter: newBaseMeter
 										});
-										window.dispatchEvent(new CustomEvent('reloadProject'));
+										// Small delay to ensure store update completes, then reload project
+										setTimeout(() => {
+											window.dispatchEvent(new CustomEvent('reloadProject'));
+										}, 50);
 									}
 								}}
 								title="Decrease Base Meter"
@@ -809,29 +697,18 @@ import type { Pattern } from '$lib/types/pattern';
 		{#if (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/)) && selection.isRoot && selectedPattern && selection.selectedInstrumentId}
 			<div class="mute-solo-controls">
 				<button
-					class="mute-button"
-					class:active={isMuted}
+					class="track-mute {isMuted ? 'active' : ''}"
 					on:click={toggleMute}
-					title="Mute track"
+					title={isMuted ? 'Unmute track' : 'Mute track'}
 				>
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-						<path d="M8 2L4 5H2V11H4L8 14V2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"/>
-						{#if isMuted}
-							<path d="M11 5L14 8L11 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-							<path d="M14 5L11 8L14 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-						{/if}
-					</svg>
+					M
 				</button>
 				<button
-					class="solo-button"
-					class:active={isSoloed}
+					class="track-solo {isSoloed ? 'active' : ''}"
 					on:click={toggleSolo}
-					title="Solo track"
+					title={isSoloed ? 'Unsolo track' : 'Solo track'}
 				>
-					<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-						<path d="M8 2L4 5H2V11H4L8 14V2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="currentColor"/>
-						<path d="M10 6C10.5 6.5 11 7.5 11 8.5C11 9.5 10.5 10.5 10 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-					</svg>
+					S
 				</button>
 			</div>
 		{/if}
@@ -841,6 +718,9 @@ import type { Pattern } from '$lib/types/pattern';
 		<button 
 			class="view-toggle {viewMode === 'arrangement' ? 'active' : ''}"
 			on:click={async () => {
+				const { loadingStore } = await import('$lib/stores/loadingStore');
+				loadingStore.startLoading('Switching to arrangement view...');
+				
 				// If we're in pattern editor, navigate to arrangement view
 				const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
 				const patternMatch = currentPath.match(/\/project\/([^/]+)\/pattern\/([^/]+)/);
@@ -855,39 +735,62 @@ import type { Pattern } from '$lib/types/pattern';
 				} else {
 					viewStore.setArrangement();
 				}
+				
+				// Stop loading after a short delay to allow page to render
+				setTimeout(() => {
+					loadingStore.stopLoading();
+				}, 200);
 			}}
 			title="Arrangement View"
 		>
 			Arrangement
 		</button>
-		<button class="play-button" on:click={togglePlayback}>
-			{isPlaying ? 'Pause' : 'Play'}
+		<button class="play-button" on:click={togglePlayback} title={isPlaying ? 'Pause' : 'Play'}>
+			{#if isPlaying}
+				<!-- Pause icon -->
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<rect x="5" y="3" width="2" height="10" fill="currentColor"/>
+					<rect x="9" y="3" width="2" height="10" fill="currentColor"/>
+				</svg>
+			{:else}
+				<!-- Play icon -->
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M5 3L13 8L5 13V3Z" fill="currentColor"/>
+				</svg>
+			{/if}
 		</button>
 		<button 
 			class="view-toggle {viewMode === 'pattern' ? 'active' : ''}"
 			on:click={async () => {
+				const { loadingStore } = await import('$lib/stores/loadingStore');
+				loadingStore.startLoading('Switching to pattern view...');
+				
 				const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
 				const projectMatch = currentPath.match(/\/project\/([^/]+)/);
 				if (projectMatch) {
 					const projectId = projectMatch[1];
-					// Check if we have a stored pattern ID to return to
-					const storedPatternId = viewStore.getCurrentPatternId();
-					if (storedPatternId) {
-						// Navigate back to the pattern editor
-						await goto(`/project/${projectId}/pattern/${storedPatternId}`);
-					} else {
-						// No stored pattern, go to pattern list
-						viewStore.setPattern();
-						window.dispatchEvent(new CustomEvent('switchToPatternView'));
+					// Always navigate to pattern list view (not pattern editor)
+					// If we're in pattern editor, navigate back to project page
+					const patternMatch = currentPath.match(/\/project\/([^/]+)\/pattern\/([^/]+)/);
+					if (patternMatch) {
+						// We're in pattern editor, navigate to project page
+						await goto(`/project/${projectId}`);
 					}
+					// Set view mode to pattern (shows pattern list)
+					viewStore.setPattern();
 				} else {
 					viewStore.setPattern();
 					window.dispatchEvent(new CustomEvent('switchToPatternView'));
 				}
+				
+				// Stop loading after a short delay to allow page to render
+				setTimeout(() => {
+					loadingStore.stopLoading();
+				}, 200);
 			}}
 			title="Pattern View"
 		>
-			Pattern
+			Patterns
 		</button>
 	</div>
 
@@ -917,6 +820,8 @@ import type { Pattern } from '$lib/types/pattern';
 					</svg>
 				</button>
 			</div>
+		{/if}
+		{#if viewMode === 'arrangement'}
 			<button class="export-button" on:click={handleExport} title="Export to WAV">
 				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
 					<path d="M8 2V10M8 10L5 7M8 10L11 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -927,6 +832,8 @@ import type { Pattern } from '$lib/types/pattern';
 		{/if}
 	</div>
 </div>
+
+<ExportDialog isOpen={showExportDialog} onClose={closeExportDialog} />
 
 <style>
 	@import '$lib/styles/components/Toolbar.css';

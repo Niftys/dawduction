@@ -14,24 +14,169 @@ class AudioMixer {
 		this.filterStates = new Map(); // trackId -> {x1, x2, y1, y2}
 		// Per-track pitch envelope state for pitch shifting
 		this.pitchStates = new Map(); // trackId -> {lastSample, phase}
+		
+		// Debug tracking (per-track to avoid infinite loops)
+		this._lastDebugStates = new Map(); // trackId_patternId -> {muted, soloed, beat}
 	}
 
 	mixSynths(synths, masterGain = 0.3, currentBeat = 0, isArrangementView = false) {
 		let leftSample = 0;
 		let rightSample = 0;
 		
+		// Check if any timeline track is soloed (for arrangement view)
+		let hasSoloedTimelineTrack = false;
+		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.tracks) {
+			hasSoloedTimelineTrack = this.processor.projectManager.timeline.tracks.some((t) => t.type === 'pattern' && t.solo === true);
+		}
+		
 		const hasSoloedTrack = this.trackStateManager.hasAnySoloedTrack();
 		
 		for (const [trackId, synth] of synths.entries()) {
 			if (synth.process) {
+				// Find all timeline tracks this audio track belongs to
+				const timelineTracks = [];
+				if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
+					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
+						if (audioTrackIds.includes(trackId)) {
+							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+							if (timelineTrack && timelineTrack.type === 'pattern') {
+								timelineTracks.push(timelineTrack);
+							}
+						}
+					}
+				}
+				
+				// Check timeline track mute/solo state (for arrangement view)
+				// For mute: Check if there's at least one active clip on a non-muted timeline track
+				// For solo: Check if there's at least one active clip on a soloed timeline track
+				let isTimelineMuted = false;
+				let isTimelineSoloed = false;
+				if (isArrangementView && timelineTracks.length > 0) {
+					// Get pattern ID to find active clips
+					let patternId = null;
+					if (trackId && trackId.startsWith('__pattern_')) {
+						const patternPrefix = '__pattern_';
+						const afterPrefix = trackId.substring(patternPrefix.length);
+						const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+						if (uuidMatch) {
+							patternId = uuidMatch[1];
+						}
+					}
+					
+					// Find active clips for this pattern at current beat
+					if (patternId && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
+						const activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
+							return clip.patternId === patternId &&
+							       currentBeat >= clip.startBeat &&
+							       currentBeat < clip.startBeat + clip.duration;
+						});
+						
+						if (activeClips.length > 0) {
+							// Check if all active clips are on muted timeline tracks
+							const allClipsMuted = activeClips.every((clip) => {
+								const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+								return clipTrack && clipTrack.mute === true;
+							});
+							
+							// If any timeline track is soloed, play if ANY active clip is on a soloed track
+							// This allows soloed tracks to play even if other non-soloed clips are active
+							if (hasSoloedTimelineTrack) {
+								// Solo mode: play if ANY active clip is on a soloed track
+								const hasSoloedClip = activeClips.some((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return clipTrack && clipTrack.solo === true;
+								});
+								isTimelineSoloed = hasSoloedClip;
+							} else {
+								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
+								const hasSoloedClip = activeClips.some((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return clipTrack && clipTrack.solo === true;
+								});
+								isTimelineSoloed = hasSoloedClip;
+							}
+							
+							isTimelineMuted = allClipsMuted;
+							
+							// Debug: Log mute/solo decision for this track (track-specific, throttled)
+							const debugKey = `${trackId}_${patternId}`;
+							const lastDebugState = this._lastDebugStates?.get(debugKey);
+							const stateChanged = !lastDebugState || 
+							                    lastDebugState.muted !== isTimelineMuted || 
+							                    lastDebugState.soloed !== isTimelineSoloed ||
+							                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
+							
+							if (stateChanged) {
+								if (!this._lastDebugStates) {
+									this._lastDebugStates = new Map();
+								}
+								this._lastDebugStates.set(debugKey, {
+									muted: isTimelineMuted,
+									soloed: isTimelineSoloed,
+									beat: currentBeat
+								});
+								
+								const clipInfo = activeClips.map((clip) => {
+									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									return {
+										clipId: clip.id,
+										trackId: clip.trackId,
+										trackName: clipTrack?.name || 'unknown',
+										mute: clipTrack?.mute || false,
+										solo: clipTrack?.solo || false,
+										startBeat: clip.startBeat,
+										duration: clip.duration,
+										clipEndBeat: clip.startBeat + clip.duration
+									};
+								});
+								
+								this.processor.port.postMessage({
+									type: 'debug',
+									message: 'AudioMixer: Mute/Solo Check',
+									data: {
+										currentBeat: currentBeat.toFixed(3),
+										trackId,
+										patternId,
+										activeClips: clipInfo,
+										activeClipsCount: activeClips.length,
+										allClipsMuted,
+										isTimelineMuted,
+										isTimelineSoloed,
+										hasSoloedTimelineTrack,
+										willSkip: isTimelineMuted || (hasSoloedTimelineTrack && !isTimelineSoloed),
+										skipReason: isTimelineMuted ? 'muted' : (hasSoloedTimelineTrack && !isTimelineSoloed ? 'not-soloed' : 'none')
+									}
+								});
+							}
+						} else {
+							// No active clips - mute this audio track
+							isTimelineMuted = true;
+						}
+					} else {
+						// Fallback: If any timeline track is muted, mute this audio track
+						isTimelineMuted = timelineTracks.some((t) => t.mute === true);
+						// If any timeline track is soloed, this audio track is soloed
+						isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
+					}
+				}
+				
+				// Check audio track mute/solo state (for pattern view or standalone tracks)
 				const isMuted = this.trackStateManager.isMuted(trackId);
 				const isSoloed = this.trackStateManager.isSoloed(trackId);
 				
-				// Skip if muted
-				if (isMuted) continue;
+				// Combine mute states: muted if audio track is muted OR any timeline track is muted
+				const shouldMute = isMuted || isTimelineMuted;
 				
-				// If any track is soloed, only process soloed tracks
-				if (hasSoloedTrack && !isSoloed) continue;
+				// Skip if muted
+				if (shouldMute) continue;
+				
+				// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
+				// Otherwise, use audio track solo state
+				if (isArrangementView && hasSoloedTimelineTrack) {
+					if (!isTimelineSoloed) continue;
+				} else if (hasSoloedTrack && !isSoloed) {
+					continue;
+				}
 				
 				// Get base track volume and pan
 				let trackVolume = this.trackStateManager.getVolume(trackId);

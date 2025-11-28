@@ -51,7 +51,9 @@ const melodicSynthFiles = [
 	'melodic/WavetableSynth.js',
 	'melodic/SupersawSynth.js',
 	'melodic/PluckSynth.js',
-	'melodic/BassSynth.js'
+	'melodic/BassSynth.js',
+	'melodic/PadSynth.js',
+	'melodic/OrganSynth.js'
 ];
 
 function buildWorklet() {

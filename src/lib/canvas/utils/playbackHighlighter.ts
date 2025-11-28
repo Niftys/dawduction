@@ -49,10 +49,14 @@ function getPatternPlayingNodes(
 		? pattern.instruments
 		: [];
 	
+	// Get baseMeter from pattern (defaults to 4)
+	const baseMeter = pattern.baseMeter || 4;
+	
 	// Process each instrument in the pattern
 	for (const instrument of patternInstruments) {
 		const patternTrackId = `__pattern_${patternId}_${instrument.id}`;
-		const patternLength = instrument.patternTree.division;
+		// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
+		const patternLength = baseMeter;
 		
 		// Build maps for node traversal
 		const { nodeToParent, timeToNodes } = buildNodeMaps(instrument.patternTree, patternLength);
