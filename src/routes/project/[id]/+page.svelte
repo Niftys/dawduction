@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, afterUpdate } from 'svelte';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
@@ -255,6 +255,44 @@
 		// Start scrolling after a short delay to ensure DOM is ready
 		setTimeout(() => attemptScroll(10), 100);
 	}
+
+	// Use afterUpdate to ensure scroll happens after DOM is fully rendered
+	afterUpdate(() => {
+		if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
+			// Use a more aggressive approach with multiple attempts
+			const forceScrollToStart = () => {
+				if (!timelineAreaElement) return;
+				
+				// Try multiple methods to ensure scroll works
+				timelineAreaElement.scrollLeft = 0;
+				timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
+				
+				// Use requestAnimationFrame to ensure it happens after layout
+				requestAnimationFrame(() => {
+					if (timelineAreaElement) {
+						timelineAreaElement.scrollLeft = 0;
+						timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
+						
+						// Verify and retry if needed
+						setTimeout(() => {
+							if (timelineAreaElement && timelineAreaElement.scrollLeft > 0) {
+								// Still not at 0, try again
+								timelineAreaElement.scrollLeft = 0;
+								timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
+							} else {
+								hasScrolledToStart = true;
+							}
+						}, 50);
+					}
+				});
+			};
+			
+			// Try immediately and with delays
+			forceScrollToStart();
+			setTimeout(forceScrollToStart, 100);
+			setTimeout(forceScrollToStart, 300);
+		}
+	});
 
 	onDestroy(() => {
 		// Clean up global event listeners

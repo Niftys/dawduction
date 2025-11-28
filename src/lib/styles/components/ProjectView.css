@@ -327,6 +327,8 @@
 	/* Ensure container starts at the beginning to allow scrolling to beat 0 */
 	margin-left: 0;
 	padding-left: 0;
+	/* Ensure container can be scrolled to position 0 */
+	left: 0;
 }
 
 .ruler-label-spacer {
@@ -513,6 +515,10 @@
 	align-items: stretch;
 	/* Ensure container can grow vertically to accommodate all tracks */
 	overflow: visible;
+	/* Ensure container starts at position 0 to allow scrolling to beginning */
+	margin-left: 0;
+	padding-left: 0;
+	left: 0;
 }
 
 .add-track-dropdown-ruler {
