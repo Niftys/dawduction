@@ -262,6 +262,11 @@
 	z-index: 1;
 }
 
+/* When in arrangement view, ensure main-content accounts for sidebar */
+.project-view:has(.pattern-sidebar) .main-content {
+	margin-left: var(--sidebar-width, 240px) !important;
+}
+
 
 /* Arrangement View */
 .arrangement-view {

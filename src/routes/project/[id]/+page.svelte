@@ -71,7 +71,13 @@
 	let editingEffectId: string | null = null;
 	let editingEnvelopeId: string | null = null;
 	
-	// Update CSS variable for sidebar width
+	// Computed margin-left for main-content to ensure it's always correct
+	$: mainContentMarginLeft = viewMode === 'arrangement' ? sidebarWidth : 0;
+	
+	// Update CSS variable for sidebar width - ensure it's set immediately
+	if (typeof document !== 'undefined') {
+		document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+	}
 	$: if (typeof document !== 'undefined') {
 		document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
 	}
@@ -232,13 +238,25 @@
 			isLoading = false;
 		}
 		
-		// Set initial CSS variable
+		// Set initial CSS variable - ensure it's set immediately
 		if (typeof document !== 'undefined') {
 			document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
+			// Force a reflow to ensure styles are applied
+			document.documentElement.offsetHeight;
 		}
 
 		// Initialize previous view mode
 		previousViewMode = viewMode;
+		
+		// Ensure main-content margin is applied correctly on mount
+		if (typeof document !== 'undefined' && viewMode === 'arrangement') {
+			setTimeout(() => {
+				const mainContent = document.querySelector('.main-content') as HTMLElement;
+				if (mainContent) {
+					mainContent.style.marginLeft = `${sidebarWidth}px`;
+				}
+			}, 0);
+		}
 	});
 	
 	// Set up localStorage auto-save for sandbox projects
@@ -1356,7 +1374,7 @@
 	{/if}
 
 	<!-- Main Content Area -->
-	<div class="main-content" style="margin-left: {viewMode === 'arrangement' ? sidebarWidth : 0}px;">
+	<div class="main-content" style="margin-left: {mainContentMarginLeft}px !important;">
 		{#if viewMode === 'arrangement'}
 			<!-- Arrangement View -->
 			<div class="arrangement-view" class:automation-open={$automationStore.length > 0}>
