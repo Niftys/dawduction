@@ -32,7 +32,6 @@ export function updateEnginePatternTree(
 	const { patternId, trackId, instrumentId } = context;
 
 	if (!engine) {
-		console.warn('[PatternTreeUpdater] No engine available');
 		return false;
 	}
 
@@ -45,7 +44,6 @@ export function updateEnginePatternTree(
 	unsubscribe(); // Unsubscribe immediately after getting the value
 	
 	if (!currentProject) {
-		console.warn('[PatternTreeUpdater] No project available');
 		return false;
 	}
 
@@ -59,7 +57,6 @@ export function updateEnginePatternTree(
 		return updateStandaloneInstrument(engine, currentProject, trackId);
 	}
 
-	console.warn('[PatternTreeUpdater] No patternId or trackId provided', context);
 	return false;
 }
 
@@ -75,17 +72,12 @@ function updatePatternInstrument(
 	const pattern = project.patterns?.find((p: Pattern) => p.id === patternId);
 	
 	if (!pattern) {
-		console.warn('[PatternTreeUpdater] Pattern not found', {
-			patternId,
-			availablePatterns: project.patterns?.map((p: Pattern) => p.id)
-		});
 		return false;
 	}
 
 	const patternInstruments = projectStore.getPatternInstruments(pattern);
 	
 	if (patternInstruments.length === 0) {
-		console.warn('[PatternTreeUpdater] Pattern has no instruments', { patternId });
 		return false;
 	}
 
@@ -95,19 +87,10 @@ function updatePatternInstrument(
 		: patternInstruments[0];
 
 	if (!instrument) {
-		console.warn('[PatternTreeUpdater] Instrument not found', {
-			patternId,
-			instrumentId,
-			availableInstruments: patternInstruments.map((inst: Instrument) => inst.id)
-		});
 		return false;
 	}
 
 	if (!instrument.patternTree) {
-		console.warn('[PatternTreeUpdater] Instrument has no pattern tree', {
-			patternId,
-			instrumentId: instrument.id
-		});
 		return false;
 	}
 
@@ -132,15 +115,10 @@ function updateStandaloneInstrument(
 	const instrument = project.standaloneInstruments?.find((i: StandaloneInstrument) => i.id === instrumentId);
 	
 	if (!instrument) {
-		console.warn('[PatternTreeUpdater] Standalone instrument not found', {
-			instrumentId,
-			availableInstruments: project.standaloneInstruments?.map((i: StandaloneInstrument) => i.id)
-		});
 		return false;
 	}
 
 	if (!instrument.patternTree) {
-		console.warn('[PatternTreeUpdater] Standalone instrument has no pattern tree', { instrumentId });
 		return false;
 	}
 

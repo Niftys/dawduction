@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
@@ -172,6 +172,14 @@
 		// Initialize previous view mode
 		previousViewMode = viewMode;
 	});
+
+	onDestroy(() => {
+		// Clean up global event listeners
+		if (typeof window !== 'undefined') {
+			window.removeEventListener('mousemove', handleGlobalMouseMove);
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+		}
+	});
 	
 	// Scroll to beginning only when switching TO arrangement view (not continuously)
 	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
@@ -274,6 +282,12 @@
 		
 		// Update position immediately
 		updatePlayheadPosition(e);
+		
+		// Add global mouse event listeners for dragging
+		if (typeof window !== 'undefined') {
+			window.addEventListener('mousemove', handleGlobalMouseMove);
+			window.addEventListener('mouseup', handleGlobalMouseUp);
+		}
 	}
 
 	function updatePlayheadPosition(e: MouseEvent) {
@@ -293,16 +307,53 @@
 		}
 	}
 
-	function handlePlayheadMouseMove(e: MouseEvent) {
+	function handleGlobalMouseMove(e: MouseEvent) {
 		if (isDraggingPlayhead) {
 			updatePlayheadPosition(e);
 		}
 	}
 
-	function handlePlayheadMouseUp() {
+	function handleGlobalMouseUp() {
 		if (isDraggingPlayhead) {
 			isDraggingPlayhead = false;
 			wasPlayingBeforeDrag = false;
+			
+			// Remove global listeners
+			if (typeof window !== 'undefined') {
+				window.removeEventListener('mousemove', handleGlobalMouseMove);
+				window.removeEventListener('mouseup', handleGlobalMouseUp);
+			}
+		}
+	}
+
+	function handleTimelineClick(e: MouseEvent) {
+		// Don't handle clicks if we're dragging playhead or interacting with clips
+		if (isDraggingPlayhead || isResizing || isDraggingClip) return;
+		
+		const target = e.target as HTMLElement;
+		// Don't handle clicks on interactive elements
+		if (target.closest('.timeline-clip') || 
+		    target.closest('.row-label') || 
+		    target.closest('button') ||
+		    target.closest('.timeline-ruler-container')) {
+			return;
+		}
+		
+		const timelineArea = timelineAreaElement;
+		if (!timelineArea) return;
+		
+		const rect = timelineArea.getBoundingClientRect();
+		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
+		
+		// Only seek if clicking in the timeline content area (not the label area)
+		if (x < 0) return;
+		
+		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
+		
+		const engine = $engineStore;
+		if (engine) {
+			const isPlaying = playbackState?.isPlaying || false;
+			engine.setTransport(isPlaying ? 'play' : 'stop', beat);
 		}
 	}
 
@@ -1194,18 +1245,10 @@
 					role="region"
 					aria-label="Timeline area"
 					on:wheel={(e) => handleTimelineWheel(e)}
-					on:mousemove={(e) => {
-						handleTimelineMouseMove(e);
-						handlePlayheadMouseMove(e);
-					}}
-					on:mouseup={() => {
-						handleTimelineMouseUp();
-						handlePlayheadMouseUp();
-					}}
-					on:mouseleave={() => {
-						handleTimelineMouseUp();
-						handlePlayheadMouseUp();
-					}}
+					on:click={handleTimelineClick}
+					on:mousemove={(e) => handleTimelineMouseMove(e)}
+					on:mouseup={() => handleTimelineMouseUp()}
+					on:mouseleave={() => handleTimelineMouseUp()}
 				>
 					<TimelineRuler
 						totalLength={timeline.totalLength}
@@ -1223,9 +1266,6 @@
 							class="playhead {isDraggingPlayhead ? 'dragging' : ''}" 
 							style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"
 							on:mousedown={handlePlayheadMouseDown}
-							on:mousemove={handlePlayheadMouseMove}
-							on:mouseup={handlePlayheadMouseUp}
-							on:mouseleave={handlePlayheadMouseUp}
 						>
 							<div class="playhead-handle"></div>
 						</div>

@@ -35,7 +35,6 @@ export function createEffectsModule(updateFn: UpdateFn, getCurrent: GetCurrent) 
 		addEffect: (effect: Effect) => {
 			updateFn((project) => {
 				if (!project) {
-					console.warn('Cannot add effect: no project exists');
 					return project;
 				}
 				if (!Array.isArray(project.effects)) {

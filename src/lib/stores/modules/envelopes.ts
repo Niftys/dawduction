@@ -33,7 +33,6 @@ export function createEnvelopesModule(updateFn: UpdateFn, getCurrent: GetCurrent
 		addEnvelope: (envelope: Envelope) => {
 			updateFn((project) => {
 				if (!project) {
-					console.warn('Cannot add envelope: no project exists');
 					return project;
 				}
 				if (!Array.isArray(project.envelopes)) {

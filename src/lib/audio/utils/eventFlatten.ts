@@ -47,7 +47,6 @@ export function flattenTree(
 	
 	// If totalDivision is 0, something is wrong - return empty array
 	if (totalDivision === 0) {
-		console.warn('[flattenTree] Total division is 0, returning empty events');
 		return [];
 	}
 	

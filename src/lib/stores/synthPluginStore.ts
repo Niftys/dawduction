@@ -15,7 +15,6 @@ function createSynthPluginStore() {
 	return {
 		subscribe,
 		openWindow: (window: OpenSynthPluginWindow) => {
-			console.log('synthPluginStore.openWindow called with:', window);
 			update((windows) => {
 				// Check if window already exists
 				const existingIndex = windows.findIndex((w) => w.id === window.id);
@@ -23,12 +22,10 @@ function createSynthPluginStore() {
 					// Replace existing window
 					const newWindows = [...windows];
 					newWindows[existingIndex] = window;
-					console.log('Replaced existing window, new windows:', newWindows);
 					return newWindows;
 				}
 				// Add new window
 				const newWindows = [...windows, window];
-				console.log('Added new window, total windows:', newWindows.length, newWindows);
 				return newWindows;
 			});
 		},

@@ -714,51 +714,7 @@ class EffectsProcessor {
 			}
 		}
 		
-		// Debug: Log automation lookup details (throttled)
-		if (this.processor && this.processor.port) {
-			const lastLogKey = `automation_lookup_${timelineEffectId}`;
-			const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
-			if (!this._automationLogTimes) {
-				this._automationLogTimes = {};
-			}
-			
-			// Log once every 4 beats to debug automation lookup
-			if (currentBeat - lastLogTime > 4 && this.automation) {
-				this._automationLogTimes[lastLogKey] = currentBeat;
-				
-				const allAutomationKeys = Object.keys(this.automation || {});
-				const effectAutomationKeys = allAutomationKeys.filter(key => {
-					const auto = this.automation[key];
-					return auto && typeof auto === 'object' && 
-					       auto.targetType === 'effect' && 
-					       auto.targetId === effectDef.id;
-				});
-				
-				this.processor.port.postMessage({
-					type: 'debug',
-					message: 'Automation lookup debug',
-					data: {
-						effectId: effectDef.id,
-						timelineEffectId,
-						currentBeat: currentBeat.toFixed(2),
-						automationFound,
-						totalAutomationKeys: allAutomationKeys.length,
-						effectAutomationKeys: effectAutomationKeys,
-						effectAutomationDetails: effectAutomationKeys.map(key => {
-							const auto = this.automation[key];
-							return {
-								key,
-								targetType: auto?.targetType,
-								targetId: auto?.targetId,
-								timelineInstanceId: auto?.timelineInstanceId,
-								parameterKey: auto?.parameterKey,
-								pointsCount: auto?.points?.length || 0
-							};
-						})
-					}
-				});
-			}
-		}
+		// Debug logging removed
 
 		return automatedSettings;
 	}
@@ -1112,39 +1068,7 @@ class EnvelopesProcessor {
 		// Get envelope curve value based on settings
 		const value = this.calculateEnvelopeValue(progress, envelopeDef.settings, envelopeType);
 
-		// Debug: Log pitch envelope values (occasionally)
-		if (envelopeType === 'pitch' && this.processor && this.processor.port) {
-			const lastLogKey = `pitch_env_${envelopeDef.id}`;
-			const lastLogTime = this._pitchEnvLogTimes?.[lastLogKey] || 0;
-			if (!this._pitchEnvLogTimes) {
-				this._pitchEnvLogTimes = {};
-			}
-			if (currentBeat - lastLogTime > 2) {
-				this._pitchEnvLogTimes[lastLogKey] = currentBeat;
-				const actualStartValue = envelopeDef.settings.startValue !== undefined ? envelopeDef.settings.startValue : (envelopeType === 'pitch' ? 0.5 : 0);
-				const actualEndValue = envelopeDef.settings.endValue !== undefined ? envelopeDef.settings.endValue : (envelopeType === 'pitch' ? 0.5 : 1);
-				let pitchMultiplier;
-				if (value <= 0.5) {
-					pitchMultiplier = 0.5 + (value * 1.0);
-				} else {
-					pitchMultiplier = 1.0 + ((value - 0.5) * 2.0);
-				}
-				this.processor.port.postMessage({
-					type: 'debug',
-					message: 'Pitch envelope calculation',
-					data: {
-						progress: progress.toFixed(3),
-						startValue: actualStartValue,
-						endValue: actualEndValue,
-						rawStartValue: envelopeDef.settings.startValue,
-						rawEndValue: envelopeDef.settings.endValue,
-						calculatedValue: value.toFixed(3),
-						pitchMultiplier: pitchMultiplier.toFixed(3),
-						currentBeat: currentBeat.toFixed(2)
-					}
-				});
-			}
-		}
+		// Debug logging removed
 
 		// Apply to appropriate parameter
 		switch (envelopeType) {

@@ -16,9 +16,6 @@
 	let project: any;
 	projectStore.subscribe((p) => (project = p));
 	
-	// Debug logging
-	$: console.log('SynthPluginWindow rendered with window:', pluginWindow);
-	$: console.log('Project available:', !!project);
 
 	let windowElement: HTMLDivElement;
 	let headerElement: HTMLDivElement;

@@ -432,9 +432,7 @@
 			// This allows users to add instruments while editing a pattern
 			try {
 				const newInstrument = projectStore.createNewStandaloneInstrument(project.id, 'kick');
-				console.log('Created new standalone instrument:', newInstrument.id);
 				projectStore.addStandaloneInstrument(newInstrument);
-				console.log('Standalone instrument added, project should now have', (project.standaloneInstruments?.length || 0) + 1, 'instruments');
 			} catch (error) {
 				console.error('Error creating standalone instrument:', error);
 			}
@@ -442,9 +440,7 @@
 			// In arrangement view - add a new standalone instrument
 			try {
 				const newInstrument = projectStore.createNewStandaloneInstrument(project.id, 'kick');
-				console.log('Created new standalone instrument:', newInstrument.id);
 				projectStore.addStandaloneInstrument(newInstrument);
-				console.log('Standalone instrument added, project should now have', (project.standaloneInstruments?.length || 0) + 1, 'instruments');
 			} catch (error) {
 				console.error('Error creating standalone instrument:', error);
 			}

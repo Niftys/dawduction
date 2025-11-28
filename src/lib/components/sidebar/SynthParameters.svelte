@@ -73,12 +73,10 @@
 
 	function openPluginWindow() {
 		if (!activeItem) {
-			console.warn('No active item to open plugin window');
 			return;
 		}
 		
 		if (activeItem.instrumentType !== 'pad' && activeItem.instrumentType !== 'organ') {
-			console.warn('Plugin window only available for pad and organ instruments');
 			return;
 		}
 		
@@ -87,7 +85,6 @@
 			: selectedTrack?.id || '';
 		
 		if (!windowId) {
-			console.warn('No window ID available');
 			return;
 		}
 		
@@ -95,7 +92,6 @@
 			? 'Pad Synth'
 			: 'Organ Synth';
 		
-		console.log('Opening plugin window:', { windowId, instrumentType: activeItem.instrumentType });
 		
 		synthPluginStore.openWindow({
 			id: windowId,

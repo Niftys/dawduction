@@ -106,7 +106,6 @@ import NumericInput from './NumericInput.svelte';
 		
 		// Use selection store IDs directly, not props (props might be undefined or stale)
 		if (!selection) {
-			console.warn('[MixerControls] No selection available');
 			return;
 		}
 		
@@ -132,7 +131,6 @@ import NumericInput from './NumericInput.svelte';
 		
 		// Use selection store IDs directly, not props (props might be undefined or stale)
 		if (!selection) {
-			console.warn('[MixerControls] No selection available');
 			return;
 		}
 		

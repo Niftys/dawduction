@@ -162,10 +162,8 @@ function createProjectStore() {
 				// Update history state
 				updateHistoryState();
 			} else {
-				console.warn('Failed to clone project for history', currentProject);
 			}
 		} else {
-			console.warn('Cannot save to history: invalid project', currentProject);
 		}
 		
 		// Apply the update using the underlying Svelte update
@@ -486,7 +484,6 @@ function createProjectStore() {
 		addStandaloneInstrument: (instrument: StandaloneInstrument) => {
 			updateFn((project) => {
 				if (!project) {
-					console.warn('Cannot add standalone instrument: no project exists');
 					return project;
 				}
 				// Ensure standaloneInstruments array exists
@@ -500,7 +497,6 @@ function createProjectStore() {
 					standaloneInstruments: [...project.standaloneInstruments, instrument],
 					baseMeterTrackId: isFirstInstrument ? instrument.id : project.baseMeterTrackId
 				};
-				console.log('Adding standalone instrument:', { instrumentId: instrument.id, totalInstruments: newProject.standaloneInstruments.length });
 				return newProject;
 			});
 		},
@@ -666,18 +662,7 @@ function createProjectStore() {
 									
 									if (child.id === newChild.id) {
 										const actualRatio = totalChildren > 1 ? index / (totalChildren - 1) : 0;
-										console.log('[NodePositioning] New child node', {
-											index,
-											totalChildren,
-											ratio: actualRatio.toFixed(3),
-											angle: (angle * 180 / Math.PI).toFixed(1) + '°',
-											startAngle: (startAngle * 180 / Math.PI).toFixed(1) + '°',
-											spreadAngle: (spreadAngle * 180 / Math.PI).toFixed(1) + '°',
-											formula: `startAngle(${(startAngle * 180 / Math.PI).toFixed(1)}°) + spreadAngle(${(spreadAngle * 180 / Math.PI).toFixed(1)}°) * (1 - ratio(${actualRatio.toFixed(3)})) = ${(angle * 180 / Math.PI).toFixed(1)}°`,
-											x: x.toFixed(1),
-											y: y.toFixed(1),
-											radius
-										});
+										// Node positioning calculation
 									}
 									
 									return {
@@ -1212,7 +1197,6 @@ function createProjectStore() {
 		addPattern: (pattern: Pattern) => {
 			updateFn((project) => {
 				if (!project) {
-					console.warn('Cannot add pattern: no project exists');
 					return project;
 				}
 				if (!Array.isArray(project.patterns)) {
@@ -1801,18 +1785,7 @@ function createProjectStore() {
 									
 									if (child.id === newChild.id) {
 										const actualRatio = totalChildren > 1 ? index / (totalChildren - 1) : 0;
-										console.log('[NodePositioning] New child node', {
-											index,
-											totalChildren,
-											ratio: actualRatio.toFixed(3),
-											angle: (angle * 180 / Math.PI).toFixed(1) + '°',
-											startAngle: (startAngle * 180 / Math.PI).toFixed(1) + '°',
-											spreadAngle: (spreadAngle * 180 / Math.PI).toFixed(1) + '°',
-											formula: `startAngle(${(startAngle * 180 / Math.PI).toFixed(1)}°) + spreadAngle(${(spreadAngle * 180 / Math.PI).toFixed(1)}°) * (1 - ratio(${actualRatio.toFixed(3)})) = ${(angle * 180 / Math.PI).toFixed(1)}°`,
-											x: x.toFixed(1),
-											y: y.toFixed(1),
-											radius
-										});
+										// Node positioning calculation
 									}
 									
 									return {

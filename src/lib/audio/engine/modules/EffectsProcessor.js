@@ -336,51 +336,7 @@ class EffectsProcessor {
 			}
 		}
 		
-		// Debug: Log automation lookup details (throttled)
-		if (this.processor && this.processor.port) {
-			const lastLogKey = `automation_lookup_${timelineEffectId}`;
-			const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
-			if (!this._automationLogTimes) {
-				this._automationLogTimes = {};
-			}
-			
-			// Log once every 4 beats to debug automation lookup
-			if (currentBeat - lastLogTime > 4 && this.automation) {
-				this._automationLogTimes[lastLogKey] = currentBeat;
-				
-				const allAutomationKeys = Object.keys(this.automation || {});
-				const effectAutomationKeys = allAutomationKeys.filter(key => {
-					const auto = this.automation[key];
-					return auto && typeof auto === 'object' && 
-					       auto.targetType === 'effect' && 
-					       auto.targetId === effectDef.id;
-				});
-				
-				this.processor.port.postMessage({
-					type: 'debug',
-					message: 'Automation lookup debug',
-					data: {
-						effectId: effectDef.id,
-						timelineEffectId,
-						currentBeat: currentBeat.toFixed(2),
-						automationFound,
-						totalAutomationKeys: allAutomationKeys.length,
-						effectAutomationKeys: effectAutomationKeys,
-						effectAutomationDetails: effectAutomationKeys.map(key => {
-							const auto = this.automation[key];
-							return {
-								key,
-								targetType: auto?.targetType,
-								targetId: auto?.targetId,
-								timelineInstanceId: auto?.timelineInstanceId,
-								parameterKey: auto?.parameterKey,
-								pointsCount: auto?.points?.length || 0
-							};
-						})
-					}
-				});
-			}
-		}
+		// Debug logging removed
 
 		return automatedSettings;
 	}

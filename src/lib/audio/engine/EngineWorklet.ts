@@ -56,11 +56,6 @@ export class EngineWorklet {
 		if (message.type === 'playbackUpdate' || message.type === 'playbackPosition') {
 			// message.time is in beats
 			this.notifyPlaybackUpdate(message.time, message.eventIds || []);
-		} else if (message.type === 'debug') {
-			// Log debug messages from worklet
-			console.log(`[Worklet Debug] ${message.message}:`, message.data);
-		} else {
-			console.log('Message from worklet:', message);
 		}
 	}
 
@@ -134,7 +129,6 @@ export class EngineWorklet {
 							const tempTrackId = `__pattern_${clip.patternId}`;
 							const tempInstrument = standaloneInstruments.find(i => i.id === tempTrackId);
 							if (tempInstrument && tempInstrument.patternTree && tempInstrument.patternTree.children && tempInstrument.patternTree.children.length > 0) {
-								console.log(`[EngineWorklet] Instrument tree incomplete, using temporary instrument's patternTree for pattern ${clip.patternId} instrument ${instrument.id}`);
 								patternTree = tempInstrument.patternTree;
 							}
 						}
@@ -155,7 +149,6 @@ export class EngineWorklet {
 								solo: instrument.solo ?? false
 							});
 						} else {
-							console.warn(`[EngineWorklet] Cannot create instrument track for pattern ${clip.patternId} instrument ${instrument.id}: no valid patternTree found`);
 						}
 					}
 				}
@@ -206,7 +199,6 @@ export class EngineWorklet {
 					}
 					
 					if (!patternTree) {
-						console.warn(`[EngineWorklet] No valid patternTree found for pattern ${clip.patternId} instrument ${instrument.id}`);
 						continue;
 					}
 					
@@ -256,10 +248,6 @@ export class EngineWorklet {
 			allEvents.sort((a, b) => a.time - b.time);
 			
 			// Debug: Log final events
-			console.log(`[EngineWorklet] Final events for arrangement view:`, {
-				totalEvents: allEvents.length,
-				events: allEvents.map(e => ({ time: e.time, instrumentId: e.instrumentId, pitch: e.pitch, patternId: e.patternId }))
-			});
 			
 			// Build mapping from timeline track ID to audio track IDs
 			// This allows us to apply timeline track volume to all audio tracks in that timeline track

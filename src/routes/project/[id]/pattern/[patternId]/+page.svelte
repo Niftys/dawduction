@@ -49,7 +49,6 @@
 		if (project && $page.params.id) {
 			try {
 				localStorage.setItem(`project_${$page.params.id}`, JSON.stringify(project));
-				console.log('[Pattern Editor] Project saved to localStorage');
 			} catch (e) {
 				console.error('[Pattern Editor] Failed to save project:', e);
 			}
