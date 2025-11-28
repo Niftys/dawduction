@@ -278,6 +278,8 @@
 	min-height: 0;
 	/* Ensure scrolling works */
 	height: 100%;
+	/* Prevent content from extending into sidebar */
+	overflow-clip-margin: 0;
 }
 
 .timeline-area::-webkit-scrollbar {
@@ -483,8 +485,9 @@
 	/* Ensure rows can extend beyond viewport for horizontal scrolling */
 	min-width: fit-content;
 	width: max-content;
-	/* Ensure vertical scrolling works */
+	/* Ensure vertical scrolling works - allow content to extend beyond viewport */
 	min-height: 100%;
+	height: fit-content;
 }
 
 .add-track-dropdown-ruler {
@@ -643,6 +646,8 @@
 	min-width: fit-content;
 	width: max-content;
 	flex-shrink: 0;
+	/* Prevent row from extending into sidebar area */
+	overflow: visible;
 }
 
 .pattern-row.drag-over {
@@ -671,6 +676,8 @@
 	background: #1a1a1a;
 	cursor: move;
 	user-select: none;
+	/* Ensure row label doesn't clip into sidebar - account for sidebar width */
+	margin-left: 0;
 }
 
 .row-label[draggable="true"] {
@@ -694,6 +701,8 @@
 	/* Ensure content can extend for horizontal scrolling */
 	min-width: fit-content;
 	width: max-content;
+	/* Prevent clips from extending into negative space or sidebar */
+	overflow: visible;
 }
 
 .grid-line {
