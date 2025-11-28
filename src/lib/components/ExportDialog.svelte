@@ -88,7 +88,12 @@
 	let exportError: string | null = null;
 	
 	async function handleExport() {
-		if (!project || !project.standaloneInstruments || project.standaloneInstruments.length === 0) {
+		// Check if project has any content to export
+		const hasStandaloneInstruments = project?.standaloneInstruments && project.standaloneInstruments.length > 0;
+		const hasTimelineClips = timeline?.clips && timeline.clips.length > 0;
+		const hasPatterns = project?.patterns && project.patterns.length > 0;
+		
+		if (!project || (!hasStandaloneInstruments && !hasTimelineClips && !hasPatterns)) {
 			exportError = 'No project to export';
 			return;
 		}
@@ -178,8 +183,8 @@
 					timelineToUse = null;
 				}
 			} else {
-				// Pattern loop - no timeline
-				durationInBeats = patternLength;
+				// Fallback (should never reach here, but safety check)
+				durationInBeats = timelineLength || 64;
 				timelineToUse = null;
 			}
 			
@@ -189,7 +194,7 @@
 			
 			// Record the project
 			const audioBuffer = await recordProject(
-				project.standaloneInstruments,
+				project.standaloneInstruments || [],
 				bpm,
 				project.baseMeterTrackId,
 				durationInBeats,
