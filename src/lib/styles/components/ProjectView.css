@@ -410,37 +410,42 @@
 
 .playhead-handle {
 	position: absolute;
-	top: -2px;
-	left: -8px;
-	width: 16px;
-	height: 24px;
+	top: -10px;
+	left: -10px;
+	width: 20px;
+	height: 20px;
 	background: #00ff88;
-	border-radius: 4px 4px 0 0;
+	border-radius: 50%;
 	cursor: grab;
 	box-shadow: 0 2px 8px rgba(0, 255, 136, 0.7);
-	display: flex;
-	align-items: center;
-	justify-content: center;
 	z-index: 100;
 	pointer-events: auto;
+	border: 2px solid #0a0a0a;
+	transition: transform 0.1s ease, box-shadow 0.1s ease;
 }
 
 .playhead-handle::before {
 	content: '';
-	width: 4px;
-	height: 10px;
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 6px;
+	height: 6px;
 	background: #0a0a0a;
-	border-radius: 2px;
+	border-radius: 50%;
 }
 
-.playhead.dragging .playhead-handle {
-	cursor: grabbing;
-	box-shadow: 0 4px 12px rgba(0, 255, 136, 1);
+.playhead-handle:hover {
+	box-shadow: 0 3px 10px rgba(0, 255, 136, 0.9);
 	transform: scale(1.1);
 }
 
-.playhead:hover .playhead-handle {
-	box-shadow: 0 3px 10px rgba(0, 255, 136, 0.9);
+.playhead-handle:active,
+.playhead.dragging .playhead-handle {
+	cursor: grabbing;
+	box-shadow: 0 4px 12px rgba(0, 255, 136, 1);
+	transform: scale(1.15);
 }
 
 .playhead::after {

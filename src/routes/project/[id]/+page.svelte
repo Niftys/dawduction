@@ -40,6 +40,7 @@
 	let isLoading = true;
 	let timelineAreaElement: HTMLDivElement | null = null;
 	let hasScrolledToStart = false;
+	let currentProjectId: string | null = null;
 	
 	projectStore.subscribe((p) => {
 		project = p;
@@ -94,10 +95,25 @@
 		// Clear any existing loading state
 		loadingStore.stopLoading();
 		
+		// Reset scroll flag if project ID changed
+		if (currentProjectId !== $page.params.id) {
+			hasScrolledToStart = false;
+			currentProjectId = $page.params.id;
+		}
+		
 		// Check if project is already loaded (from previous navigation)
 		if (project && project.id === $page.params.id) {
 			// Project already loaded, skip loading state
 			isLoading = false;
+			// Still need to scroll if we haven't yet
+			if (!hasScrolledToStart && timelineAreaElement && viewMode === 'arrangement') {
+				setTimeout(() => {
+					if (timelineAreaElement) {
+						timelineAreaElement.scrollLeft = 0;
+						hasScrolledToStart = true;
+					}
+				}, 200);
+			}
 			return;
 		}
 		
@@ -130,7 +146,7 @@
 		} else if (loadedProject) {
 			projectStore.set(loadedProject);
 			isLoading = false;
-			hasScrolledToStart = false; // Reset scroll flag for new project
+			// Scroll flag will be reset by project ID check above
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {
@@ -1292,9 +1308,14 @@
 						<div 
 							class="playhead {isDraggingPlayhead ? 'dragging' : ''}" 
 							style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"
-							on:mousedown={handlePlayheadMouseDown}
 						>
-							<div class="playhead-handle"></div>
+							<div 
+								class="playhead-handle"
+								on:mousedown={handlePlayheadMouseDown}
+								role="slider"
+								aria-label="Playhead position"
+								tabindex="0"
+							></div>
 						</div>
 					</div>
 
