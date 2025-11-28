@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, afterUpdate } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
@@ -44,22 +44,6 @@
 	
 	projectStore.subscribe((p) => {
 		project = p;
-		// ALWAYS scroll to beginning when project is set and timeline is ready
-		if (p && !isLoading && timelineAreaElement && viewMode === 'arrangement' && typeof window !== 'undefined') {
-			// Force scroll to 0 - multiple attempts to ensure it works
-			const forceScroll = () => {
-				if (timelineAreaElement) {
-					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-					timelineAreaElement.scrollLeft = 0;
-				}
-			};
-			setTimeout(forceScroll, 50);
-			setTimeout(forceScroll, 150);
-			setTimeout(forceScroll, 300);
-			setTimeout(forceScroll, 500);
-			// Reset scroll flag to allow reactive scroll to work
-			hasScrolledToStart = false;
-		}
 		// Stop loading once project is loaded (using local state, not loadingStore)
 		if (project && isLoading) {
 			setTimeout(() => {
@@ -117,23 +101,19 @@
 			currentProjectId = $page.params.id;
 		}
 		
+		// Simple scroll to beginning after project loads
+		if (project && viewMode === 'arrangement') {
+			setTimeout(() => {
+				if (timelineAreaElement) {
+					timelineAreaElement.scrollLeft = 0;
+				}
+			}, 300);
+		}
+		
 		// Check if project is already loaded (from previous navigation)
 		if (project && project.id === $page.params.id) {
 			// Project already loaded, skip loading state
 			isLoading = false;
-			// Force scroll to beginning immediately and with delays
-			const forceScroll = () => {
-				if (timelineAreaElement && typeof window !== 'undefined') {
-					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-					timelineAreaElement.scrollLeft = 0;
-				}
-			};
-			setTimeout(forceScroll, 50);
-			setTimeout(forceScroll, 150);
-			setTimeout(forceScroll, 300);
-			setTimeout(forceScroll, 500);
-			// Reset scroll flag to allow reactive scroll to work
-			hasScrolledToStart = false;
 			return;
 		}
 		
@@ -220,79 +200,16 @@
 		previousViewMode = viewMode;
 	});
 	
-	// Scroll to beginning when project loads and timeline area is available
+	// Simple scroll to beginning when arrangement view loads
 	$: if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
-		// Use multiple attempts to ensure scroll works
-		const attemptScroll = (attempts: number) => {
-			if (attempts <= 0 || !timelineAreaElement) return;
-			
-			requestAnimationFrame(() => {
-				if (timelineAreaElement) {
-					// Force scroll to 0 to show the beginning (beat 0 should be visible after the sticky spacer)
-					// Use scrollTo for better browser compatibility
-					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-					timelineAreaElement.scrollLeft = 0;
-					
-					// Verify scroll worked and try again if needed
-					if (attempts > 1) {
-						setTimeout(() => {
-							if (timelineAreaElement) {
-								// Check if scroll position is still not at 0
-								if (timelineAreaElement.scrollLeft > 0) {
-									attemptScroll(attempts - 1);
-								} else {
-									hasScrolledToStart = true;
-								}
-							}
-						}, 100);
-					} else {
-						hasScrolledToStart = true;
-					}
-				}
-			});
-		};
-		
-		// Start scrolling after a short delay to ensure DOM is ready
-		setTimeout(() => attemptScroll(10), 100);
-	}
-
-	// Use afterUpdate to ensure scroll happens after DOM is fully rendered
-	afterUpdate(() => {
-		if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
-			// Use a more aggressive approach with multiple attempts
-			const forceScrollToStart = () => {
-				if (!timelineAreaElement) return;
-				
-				// Try multiple methods to ensure scroll works
+		// Simple scroll to beginning after a short delay
+		setTimeout(() => {
+			if (timelineAreaElement) {
 				timelineAreaElement.scrollLeft = 0;
-				timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-				
-				// Use requestAnimationFrame to ensure it happens after layout
-				requestAnimationFrame(() => {
-					if (timelineAreaElement) {
-						timelineAreaElement.scrollLeft = 0;
-						timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-						
-						// Verify and retry if needed
-						setTimeout(() => {
-							if (timelineAreaElement && timelineAreaElement.scrollLeft > 0) {
-								// Still not at 0, try again
-								timelineAreaElement.scrollLeft = 0;
-								timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-							} else {
-								hasScrolledToStart = true;
-							}
-						}, 50);
-					}
-				});
-			};
-			
-			// Try immediately and with delays
-			forceScrollToStart();
-			setTimeout(forceScrollToStart, 100);
-			setTimeout(forceScrollToStart, 300);
-		}
-	});
+				hasScrolledToStart = true;
+			}
+		}, 200);
+	}
 
 	onDestroy(() => {
 		// Clean up global event listeners
@@ -302,18 +219,9 @@
 		}
 	});
 	
-	// Scroll to beginning only when switching TO arrangement view (not continuously)
-	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement' && timelineAreaElement && typeof window !== 'undefined') {
-		requestAnimationFrame(() => {
-			setTimeout(() => {
-				if (timelineAreaElement) {
-					timelineAreaElement.scrollTo({ left: 0, behavior: 'auto' });
-					timelineAreaElement.scrollLeft = 0;
-					// Reset scroll flag when switching views
-					hasScrolledToStart = false;
-				}
-			}, 50);
-		});
+	// Reset scroll flag when switching to arrangement view
+	$: if (viewMode === 'arrangement' && previousViewMode !== 'arrangement') {
+		hasScrolledToStart = false;
 		previousViewMode = viewMode;
 	} else if (previousViewMode !== viewMode) {
 		previousViewMode = viewMode;
