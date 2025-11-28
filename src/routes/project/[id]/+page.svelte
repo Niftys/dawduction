@@ -77,11 +77,14 @@
 	}
 
 	onMount(async () => {
-		// Check authentication first (only in browser)
-		if (typeof window !== 'undefined') {
+		// Check if this is a sandbox project (starts with 'sandbox-')
+		const isSandbox = $page.params.id?.startsWith('sandbox-');
+		
+		// Check authentication first (only in browser) - skip for sandbox
+		if (typeof window !== 'undefined' && !isSandbox) {
 			const user = await getCurrentUser();
 			if (!user) {
-				// Redirect to home if not authenticated
+				// Redirect to home if not authenticated (unless sandbox)
 				await goto('/');
 				return;
 			}
@@ -113,6 +116,32 @@
 		// Check if project is already loaded (from previous navigation)
 		if (project && project.id === $page.params.id) {
 			// Project already loaded, skip loading state
+			isLoading = false;
+			return;
+		}
+		
+		// Skip database loading for sandbox projects
+		if (isSandbox) {
+			// Sandbox project should already be in store from home page
+			if (!project || project.id !== $page.params.id) {
+				// Initialize sandbox project if not already set
+				projectStore.set({
+					id: $page.params.id,
+					title: 'Sandbox Project',
+					bpm: 120,
+					tracks: [],
+					patterns: [],
+					effects: [],
+					envelopes: [],
+					timeline: {
+						tracks: [],
+						clips: [],
+						effects: [],
+						envelopes: [],
+						totalLength: 64
+					}
+				});
+			}
 			isLoading = false;
 			return;
 		}

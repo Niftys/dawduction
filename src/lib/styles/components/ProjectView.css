@@ -21,8 +21,10 @@
 	border-right: 1px solid rgba(255, 255, 255, 0.1);
 	display: flex;
 	flex-direction: column;
-	z-index: 100;
+	z-index: 1000;
 	overflow: hidden;
+	/* Ensure sidebar is always on top */
+	box-shadow: 2px 0 10px rgba(0, 0, 0, 0.3);
 }
 
 .sidebar-header {
@@ -253,6 +255,8 @@
 	/* Ensure content doesn't get clipped by sidebar */
 	min-width: 0;
 	position: relative;
+	/* Ensure main content stays behind sidebar */
+	z-index: 1;
 }
 
 
@@ -263,6 +267,9 @@
 	flex-direction: column;
 	overflow: hidden;
 	min-width: 0;
+	/* Ensure arrangement view stays behind sidebar */
+	z-index: 1;
+	position: relative;
 }
 
 .timeline-area {
@@ -276,6 +283,8 @@
 	min-width: 0;
 	min-height: 0;
 	height: 100%;
+	/* Ensure timeline area stays behind sidebar */
+	z-index: 1;
 }
 
 .timeline-area::-webkit-scrollbar {
@@ -405,6 +414,7 @@
 	pointer-events: none;
 	z-index: 30;
 	overflow: visible;
+	/* Ensure playhead stays within timeline area, not behind sidebar */
 }
 
 .playhead {
@@ -523,6 +533,8 @@
 	min-width: 120px;
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 	z-index: 100;
+	/* Ensure menu stays within timeline area, not behind sidebar */
+	max-width: calc(100vw - var(--sidebar-width, 240px));
 }
 
 .add-track-menu button {
@@ -560,6 +572,8 @@
 	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 	min-width: 180px;
 	backdrop-filter: blur(10px);
+	/* Ensure context menu appears above sidebar but is positioned correctly */
+	/* Menu position is set dynamically in JavaScript, so it should be fine */
 }
 
 .track-context-menu .menu-item {
@@ -900,7 +914,7 @@
 .automation-panel-container {
 	position: fixed;
 	bottom: 0;
-	left: 240px;
+	left: var(--sidebar-width, 240px);
 	right: 0;
 	height: 300px;
 	background: #1a1a1a;
@@ -911,8 +925,8 @@
 	overflow: hidden;
 	box-sizing: border-box;
 	min-width: 0;
-	/* Ensure it doesn't extend past the right edge - use both right and max-width for safety */
-	max-width: calc(100vw - 240px);
+	/* Ensure it doesn't extend past the right edge or behind sidebar */
+	max-width: calc(100vw - var(--sidebar-width, 240px));
 	/* Remove padding to fill entire space */
 	padding: 0;
 }

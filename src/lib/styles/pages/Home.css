@@ -94,6 +94,34 @@
 	text-transform: uppercase;
 }
 
+.button-group {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	align-items: center;
+	z-index: 2;
+}
+
+.sandbox-button {
+	background: #ffc107;
+	color: #0f0f0f;
+	border: none;
+	padding: 14px 36px;
+	font-size: 15px;
+	font-weight: 700;
+	cursor: pointer;
+	border-radius: 999px;
+	transition: transform 0.2s ease, box-shadow 0.2s ease;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	width: 100%;
+}
+
+.sandbox-button:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 10px 30px rgba(255, 193, 7, 0.35);
+}
+
 .sign-in-button {
 	background: #ff5f5f;
 	color: #0f0f0f;
@@ -104,9 +132,9 @@
 	cursor: pointer;
 	border-radius: 999px;
 	transition: transform 0.2s ease, box-shadow 0.2s ease;
-	z-index: 2;
 	text-transform: uppercase;
 	letter-spacing: 1px;
+	width: 100%;
 }
 
 .sign-in-button:hover {

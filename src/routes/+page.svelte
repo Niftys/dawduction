@@ -6,6 +6,7 @@
 	import { supabase, getCurrentUser } from '$lib/utils/supabase';
 	import AuthModal from '$lib/components/AuthModal.svelte';
 	import ProjectsModal from '$lib/components/ProjectsModal.svelte';
+	import SandboxModal from '$lib/components/SandboxModal.svelte';
 	import '$lib/styles/pages/Home.css';
 
 	const circleText = 'DAWDUCTION • '.repeat(5);
@@ -13,6 +14,7 @@
 	let user: any = null;
 	let showAuthModal = false;
 	let showProjectsModal = false;
+	let showSandboxModal = false;
 
 	onMount(async () => {
 		// Check if user is authenticated
@@ -94,6 +96,46 @@
 			loadingStore.stopLoading();
 		}
 	}
+
+	async function handleEnterSandbox() {
+		// Create a sandbox project ID
+		const sandboxId = 'sandbox-' + crypto.randomUUID();
+		
+		// Create a new project in the store (won't be saved to database)
+		const newProject = {
+			id: sandboxId,
+			title: 'Sandbox Project',
+			bpm: 120,
+			standaloneInstruments: [],
+			patterns: [],
+			effects: [],
+			envelopes: [],
+			timeline: {
+				tracks: [],
+				clips: [],
+				effects: [],
+				envelopes: [],
+				totalLength: 64
+			}
+		};
+		
+		projectStore.set(newProject);
+		
+		// Create default pattern and tracks
+		const defaultPattern = projectStore.createPattern(sandboxId, 'Pattern 1');
+		projectStore.addPattern(defaultPattern);
+		
+		const patternTrack = projectStore.createTimelineTrack('pattern', defaultPattern.id, 'Pattern 1');
+		const effectTrack = projectStore.createTimelineTrack('effect', undefined, 'Effects');
+		const envelopeTrack = projectStore.createTimelineTrack('envelope', undefined, 'Envelopes');
+		
+		projectStore.addTimelineTrack(patternTrack);
+		projectStore.addTimelineTrack(effectTrack);
+		projectStore.addTimelineTrack(envelopeTrack);
+		
+		// Navigate to sandbox project
+		await goto(`/project/${sandboxId}`);
+	}
 </script>
 
 <div class="home">
@@ -128,9 +170,14 @@
 						View Projects
 					</button>
 				{:else}
-					<button class="sign-in-button" on:click={() => showAuthModal = true}>
-						Sign In
-					</button>
+					<div class="button-group">
+						<button class="sandbox-button" on:click={() => showSandboxModal = true}>
+							Sandbox
+						</button>
+						<button class="sign-in-button" on:click={() => showAuthModal = true}>
+							Sign In
+						</button>
+					</div>
 				{/if}
 				
 				<p class="subtitle">Procedural-Synthesis DAW with Tree-Based Rhythmic Structures</p>
@@ -153,4 +200,11 @@
 		on:close={() => showProjectsModal = false}
 	/>
 {/if}
+
+<!-- Sandbox Modal -->
+<SandboxModal 
+	bind:isOpen={showSandboxModal}
+	on:enter={handleEnterSandbox}
+	on:close={() => showSandboxModal = false}
+/>
 

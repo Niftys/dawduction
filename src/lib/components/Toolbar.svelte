@@ -33,6 +33,8 @@
 	$: project = $projectStore;
 	$: selection = $selectionStore;
 	$: viewMode = $viewStore;
+	// Check if this is a sandbox project
+	$: isSandbox = project?.id?.startsWith('sandbox-') || false;
 	// Initialize BPM from project store, default to 120 if not set
 	$: bpm = project?.bpm ?? 120;
 	$: selectedTrack = project?.standaloneInstruments?.find((i) => i.id === selection.selectedTrackId);
@@ -95,14 +97,14 @@
 		});
 		})();
 		
-		// Set up auto-save every 5 minutes
-		if (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/([^/]+)/)) {
+		// Set up auto-save every 5 minutes (skip for sandbox)
+		if (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/([^/]+)/) && !isSandbox) {
 			// Initial save timestamp
 			lastSavedTime = Date.now();
 			
 			autoSaveInterval = setInterval(async () => {
 				const currentProject = $projectStore;
-				if (currentProject && currentProject.id) {
+				if (currentProject && currentProject.id && !currentProject.id.startsWith('sandbox-')) {
 					await performSave(currentProject, false); // Silent save
 				}
 			}, 5 * 60 * 1000); // 5 minutes
@@ -521,6 +523,15 @@
 	}
 
 	async function performSave(projectToSave: any, showLoading = true): Promise<boolean> {
+		// Don't save sandbox projects
+		if (projectToSave?.id?.startsWith('sandbox-')) {
+			if (showLoading) {
+				loadingStore.stopLoading();
+			}
+			alert('Sandbox projects cannot be saved. Please create an account to save your work.');
+			return false;
+		}
+		
 		if (showLoading) {
 			loadingStore.startLoading('Saving project...');
 		}
@@ -962,21 +973,31 @@
 						bind:this={titleInputRef}
 					/>
 				{:else}
-					<button
-						class="project-title-button"
-						on:click={() => {
-							editingTitle = project.title || 'Untitled';
-							isEditingTitle = true;
-							// Focus input after it's rendered
-							setTimeout(() => {
-								titleInputRef?.focus();
-								titleInputRef?.select();
-							}, 0);
-						}}
-						title="Click to edit project name"
-					>
-						{project.title || 'Untitled'}
-					</button>
+					<div class="title-container">
+						<button
+							class="project-title-button"
+							on:click={() => {
+								if (!isSandbox) {
+									editingTitle = project.title || 'Untitled';
+									isEditingTitle = true;
+									// Focus input after it's rendered
+									setTimeout(() => {
+										titleInputRef?.focus();
+										titleInputRef?.select();
+									}, 0);
+								}
+							}}
+							title={isSandbox ? 'Sandbox Mode - Cannot edit title' : 'Click to edit project name'}
+							class:disabled={isSandbox}
+						>
+							{project.title || 'Untitled'}
+						</button>
+						{#if isSandbox}
+							<span class="sandbox-badge" title="Sandbox Mode - Your work will not be saved">
+								SANDBOX
+							</span>
+						{/if}
+					</div>
 				{/if}
 			</div>
 			
@@ -1197,6 +1218,33 @@
 
 	.save-and-leave-button:hover {
 		background: #00cccc;
+	}
+
+	.title-container {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.sandbox-badge {
+		background: #ffc107;
+		color: #0f0f0f;
+		padding: 4px 8px;
+		border-radius: 4px;
+		font-size: 10px;
+		font-weight: 700;
+		letter-spacing: 0.5px;
+		text-transform: uppercase;
+		white-space: nowrap;
+	}
+
+	.project-title-button.disabled {
+		cursor: default;
+		opacity: 0.8;
+	}
+
+	.project-title-button.disabled:hover {
+		text-decoration: none;
 	}
 </style>
 
