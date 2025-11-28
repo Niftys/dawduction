@@ -73,7 +73,7 @@
 	box-shadow: 0 0 0 2px rgba(0, 255, 255, 0.2);
 }
 
-.logout-button {
+.home-button {
 	background: transparent;
 	border: 1px solid rgba(255, 255, 255, 0.1);
 	color: rgba(255, 255, 255, 0.7);
@@ -86,7 +86,7 @@
 	justify-content: center;
 }
 
-.logout-button:hover {
+.home-button:hover {
 	background: rgba(255, 255, 255, 0.1);
 	border-color: rgba(255, 255, 255, 0.2);
 	color: #ffffff;

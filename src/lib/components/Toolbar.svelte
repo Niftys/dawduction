@@ -11,7 +11,7 @@
 	import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
 	import type { Pattern } from '$lib/types/pattern';
 	import ExportDialog from '$lib/components/ExportDialog.svelte';
-	import { updateProjectTitle } from '$lib/utils/projectSaveLoad';
+	import { updateProjectTitle, saveProject } from '$lib/utils/projectSaveLoad';
 	import { supabase } from '$lib/utils/supabase';
 	import { loadingStore } from '$lib/stores/loadingStore';
 
@@ -25,6 +25,9 @@
 	let isEditingTitle = false;
 	let editingTitle = '';
 	let titleInputRef: HTMLInputElement | null = null;
+	let showLeaveConfirm = false;
+	let lastSavedTime: number | null = null;
+	let autoSaveInterval: ReturnType<typeof setInterval> | null = null;
 	
 	// Reactive project for base meter selection
 	$: project = $projectStore;
@@ -91,6 +94,19 @@
 			playbackStore.updatePlayback(time, eventIds);
 		});
 		})();
+		
+		// Set up auto-save every 5 minutes
+		if (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/([^/]+)/)) {
+			// Initial save timestamp
+			lastSavedTime = Date.now();
+			
+			autoSaveInterval = setInterval(async () => {
+				const currentProject = $projectStore;
+				if (currentProject && currentProject.id) {
+					await performSave(currentProject, false); // Silent save
+				}
+			}, 5 * 60 * 1000); // 5 minutes
+		}
 		
 		// Listen for project reload requests (e.g., when instrument changes)
 		const handleReload = async () => {
@@ -204,11 +220,19 @@
 		return () => {
 			window.removeEventListener('reloadProject', handleReload);
 			window.removeEventListener('keydown', handleKeyDown);
+			// Clear auto-save interval on unmount
+			if (autoSaveInterval) {
+				clearInterval(autoSaveInterval);
+			}
 		};
 	});
 
 	onDestroy(() => {
 		engine?.destroy();
+		// Clear auto-save interval
+		if (autoSaveInterval) {
+			clearInterval(autoSaveInterval);
+		}
 	});
 
 	// Track last BPM to avoid infinite loops
@@ -500,14 +524,64 @@
 		}
 	}
 
-	async function handleLogout() {
-		loadingStore.startLoading('Signing out...');
+	async function performSave(projectToSave: any, showLoading = true): Promise<boolean> {
+		if (showLoading) {
+			loadingStore.startLoading('Saving project...');
+		}
+		
 		try {
-			await supabase.auth.signOut();
+			const { success, error } = await saveProject(projectToSave);
+			
+			if (!success) {
+				console.error('Failed to save project:', error);
+				if (showLoading) {
+					loadingStore.stopLoading();
+					alert('Failed to save project: ' + (error || 'Unknown error'));
+				}
+				return false;
+			}
+			
+			lastSavedTime = Date.now();
+			return true;
+		} catch (err: any) {
+			console.error('Error saving project:', err);
+			if (showLoading) {
+				loadingStore.stopLoading();
+				alert('Failed to save project');
+			}
+			return false;
+		} finally {
+			if (showLoading) {
+				loadingStore.stopLoading();
+			}
+		}
+	}
+
+	function handleHomeClick() {
+		// Check if we need to save before leaving
+		if (project && project.id) {
+			showLeaveConfirm = true;
+		} else {
+			// No project, just go home
+			goto('/');
+		}
+	}
+
+	async function handleLeaveWithoutSaving() {
+		showLeaveConfirm = false;
+		await goto('/');
+	}
+
+	async function handleSaveAndLeave() {
+		showLeaveConfirm = false;
+		if (project && project.id) {
+			const saved = await performSave(project, true);
+			if (saved) {
+				await goto('/');
+			}
+			// If save failed, don't leave - let user try again
+		} else {
 			await goto('/');
-		} catch (err) {
-			console.error('Error signing out:', err);
-			loadingStore.stopLoading();
 		}
 	}
 
@@ -602,6 +676,21 @@
 
 <div class="toolbar">
 	<div class="toolbar-left">
+		<!-- Home Button (always on the left) -->
+		{#if typeof window !== 'undefined' && window.location.pathname.match(/\/project\/([^/]+)/)}
+			<button
+				class="home-button"
+				on:click={handleHomeClick}
+				title="Go to home"
+			>
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M2 8L8 2L14 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M4 8V13C4 13.5523 4.44772 14 5 14H11C11.5523 14 12 13.5523 12 13V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M6 14V10C6 9.44772 6.44772 9 7 9H9C9.55228 9 10 9.44772 10 10V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+		{/if}
+		
 		{#if viewMode === 'arrangement' || (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/))}
 			<div class="bpm-control">
 				<label for="bpm-input">BPM</label>
@@ -895,18 +984,6 @@
 				{/if}
 			</div>
 			
-			<!-- Logout Button -->
-			<button
-				class="logout-button"
-				on:click={handleLogout}
-				title="Sign out"
-			>
-				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-					<path d="M6 14H3C2.44772 14 2 13.5523 2 13V3C2 2.44772 2.44772 2 3 2H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-					<path d="M10 11L14 8L10 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-					<path d="M14 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-				</svg>
-			</button>
 		{/if}
 		
 		{#if viewMode === 'arrangement' || (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/))}
@@ -949,7 +1026,158 @@
 
 <ExportDialog isOpen={showExportDialog} onClose={closeExportDialog} />
 
+<!-- Leave Confirmation Dialog -->
+{#if showLeaveConfirm}
+	<div 
+		class="leave-dialog-overlay" 
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="leave-dialog-title"
+		on:click={() => showLeaveConfirm = false}
+		on:keydown={(e) => {
+			if (e.key === 'Escape') {
+				showLeaveConfirm = false;
+			}
+		}}
+		tabindex="-1"
+	>
+		<div 
+			class="leave-dialog" 
+			on:click|stopPropagation 
+			role="document"
+			on:keydown={(e) => e.stopPropagation()}
+		>
+			<h3 id="leave-dialog-title">Save Before Leaving?</h3>
+			<p>Your project has unsaved changes. Would you like to save before going to the home page?</p>
+			<div class="dialog-buttons">
+				<button class="leave-without-saving-button" on:click={handleLeaveWithoutSaving}>
+					Leave Without Saving
+				</button>
+				<button class="cancel-button" on:click={() => showLeaveConfirm = false}>
+					Cancel
+				</button>
+				<button class="save-and-leave-button" on:click={handleSaveAndLeave}>
+					Save & Leave
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	@import '$lib/styles/components/Toolbar.css';
+	
+	.home-button {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: rgba(255, 255, 255, 0.7);
+		padding: 0.5rem;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.home-button:hover {
+		background: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.2);
+		color: #ffffff;
+	}
+
+	.leave-dialog-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.8);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+		backdrop-filter: blur(4px);
+	}
+
+	.leave-dialog {
+		background: #1a1a1a;
+		border: 1px solid #333;
+		border-radius: 12px;
+		padding: 2rem;
+		max-width: 450px;
+		width: 90%;
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+	}
+
+	.leave-dialog h3 {
+		margin: 0 0 1rem 0;
+		color: #ffffff;
+		font-size: 1.5rem;
+		font-weight: 600;
+	}
+
+	.leave-dialog p {
+		margin: 0 0 1.5rem 0;
+		color: rgba(255, 255, 255, 0.7);
+		line-height: 1.5;
+	}
+
+	.dialog-buttons {
+		display: flex;
+		gap: 0.75rem;
+		justify-content: flex-end;
+		flex-wrap: wrap;
+	}
+
+	.leave-without-saving-button {
+		padding: 0.75rem 1.5rem;
+		background: transparent;
+		color: rgba(255, 255, 255, 0.6);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-size: 0.9rem;
+		font-weight: 500;
+	}
+
+	.leave-without-saving-button:hover {
+		background: rgba(255, 255, 255, 0.05);
+		color: rgba(255, 255, 255, 0.8);
+	}
+
+	.cancel-button {
+		padding: 0.75rem 1.5rem;
+		background: transparent;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-size: 0.9rem;
+		font-weight: 500;
+	}
+
+	.cancel-button:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: #ffffff;
+	}
+
+	.save-and-leave-button {
+		padding: 0.75rem 1.5rem;
+		background: #00ffff;
+		color: #0f0f0f;
+		border: none;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: background 0.2s;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+
+	.save-and-leave-button:hover {
+		background: #00cccc;
+	}
 </style>
 

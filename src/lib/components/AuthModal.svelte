@@ -14,6 +14,8 @@
 	let username = '';
 	let error = '';
 	let loading = false;
+	let showConfirmationMessage = false;
+	let confirmationEmail = '';
 
 	function closeModal() {
 		isOpen = false;
@@ -25,6 +27,8 @@
 		username = '';
 		error = '';
 		isSignIn = true;
+		showConfirmationMessage = false;
+		confirmationEmail = '';
 	}
 
 	function toggleMode() {
@@ -34,6 +38,8 @@
 		password = '';
 		confirmPassword = '';
 		username = '';
+		showConfirmationMessage = false;
+		confirmationEmail = '';
 	}
 
 	async function handleSubmit(e: SubmitEvent) {
@@ -100,8 +106,21 @@
 				if (authError) throw authError;
 
 				if (data.user) {
-					closeModal();
-					dispatch('success');
+					// Check if email confirmation is required
+					// If user.email is set but session is null, confirmation is required
+					if (data.user && !data.session) {
+						// Email confirmation required
+						showConfirmationMessage = true;
+						confirmationEmail = email;
+						// Clear form
+						password = '';
+						confirmPassword = '';
+						username = '';
+					} else {
+						// No confirmation needed, sign in immediately
+						closeModal();
+						dispatch('success');
+					}
 				}
 			}
 		} catch (err: any) {
@@ -140,16 +159,54 @@
 				</svg>
 			</button>
 
-			<h2 id="modal-title" class="modal-title">{isSignIn ? 'Sign In' : 'Sign Up'}</h2>
+			<h2 id="modal-title" class="modal-title">
+				{#if showConfirmationMessage}
+					Check Your Email
+				{:else}
+					{isSignIn ? 'Sign In' : 'Sign Up'}
+				{/if}
+			</h2>
 			<p class="modal-subtitle">
-				{isSignIn ? 'Sign in to access your projects' : 'Create an account to save your projects'}
+				{#if showConfirmationMessage}
+					We've sent a confirmation email to {confirmationEmail}
+				{:else}
+					{isSignIn ? 'Sign in to access your projects' : 'Create an account to save your projects'}
+				{/if}
 			</p>
 
-			{#if error}
-				<div class="error-message">{error}</div>
-			{/if}
+			{#if showConfirmationMessage}
+				<div class="confirmation-message">
+					<div class="confirmation-icon">
+						<svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+							<path d="M3 8L10.89 13.26C11.2187 13.4793 11.6049 13.5963 12 13.5963C12.3951 13.5963 12.7813 13.4793 13.11 13.26L21 8M5 19H19C19.5304 19 20.0391 18.7893 20.4142 18.4142C20.7893 18.0391 21 17.5304 21 17V7C21 6.46957 20.7893 5.96086 20.4142 5.58579C20.0391 5.21071 19.5304 5 19 5H5C4.46957 5 3.96086 5.21071 3.58579 5.58579C3.21071 5.96086 3 6.46957 3 7V17C3 17.5304 3.21071 18.0391 3.58579 18.4142C3.96086 18.7893 4.46957 19 5 19Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+						</svg>
+					</div>
+					<p class="confirmation-text">
+						Please check your email and click the confirmation link to activate your account.
+					</p>
+					<p class="confirmation-hint">
+						After confirming your email, you can sign in to access your projects.
+					</p>
+					<div class="confirmation-actions">
+						<button type="button" class="switch-to-signin-button" on:click={() => {
+							showConfirmationMessage = false;
+							isSignIn = true;
+							email = confirmationEmail;
+							password = '';
+						}}>
+							I've confirmed my email, sign in
+						</button>
+						<button type="button" class="close-confirmation-button" on:click={closeModal}>
+							Close
+						</button>
+					</div>
+				</div>
+			{:else}
+				{#if error}
+					<div class="error-message">{error}</div>
+				{/if}
 
-			<form on:submit={handleSubmit}>
+				<form on:submit={handleSubmit}>
 				{#if !isSignIn}
 					<div class="form-group">
 						<label for="username">Username</label>
@@ -205,19 +262,20 @@
 					</div>
 				{/if}
 
-				<button type="submit" class="submit-button" disabled={loading}>
-					{loading ? (isSignIn ? 'Signing in...' : 'Creating account...') : (isSignIn ? 'Sign In' : 'Sign Up')}
-				</button>
-			</form>
-
-			<div class="auth-footer">
-				<p>
-					{isSignIn ? "Don't have an account? " : 'Already have an account? '}
-					<button type="button" class="toggle-link" on:click={toggleMode}>
-						{isSignIn ? 'Sign up' : 'Sign in'}
+					<button type="submit" class="submit-button" disabled={loading}>
+						{loading ? (isSignIn ? 'Signing in...' : 'Creating account...') : (isSignIn ? 'Sign In' : 'Sign Up')}
 					</button>
-				</p>
-			</div>
+				</form>
+
+				<div class="auth-footer">
+					<p>
+						{isSignIn ? "Don't have an account? " : 'Already have an account? '}
+						<button type="button" class="toggle-link" on:click={toggleMode}>
+							{isSignIn ? 'Sign up' : 'Sign in'}
+						</button>
+					</p>
+				</div>
+			{/if}
 		</div>
 	</div>
 {/if}
@@ -367,6 +425,73 @@
 
 	.toggle-link:hover {
 		color: #00cccc;
+	}
+
+	.confirmation-message {
+		text-align: center;
+		padding: 1rem 0;
+	}
+
+	.confirmation-icon {
+		display: flex;
+		justify-content: center;
+		margin-bottom: 1.5rem;
+		color: #00ffff;
+	}
+
+	.confirmation-text {
+		color: #e0e0e0;
+		font-size: 1rem;
+		line-height: 1.6;
+		margin: 0 0 1rem 0;
+	}
+
+	.confirmation-hint {
+		color: #888;
+		font-size: 0.9rem;
+		line-height: 1.5;
+		margin: 0 0 2rem 0;
+	}
+
+	.confirmation-actions {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.switch-to-signin-button {
+		width: 100%;
+		padding: 0.75rem;
+		background: #00ffff;
+		color: #0f0f0f;
+		border: none;
+		border-radius: 4px;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.switch-to-signin-button:hover {
+		background: #00cccc;
+	}
+
+	.close-confirmation-button {
+		width: 100%;
+		padding: 0.75rem;
+		background: transparent;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 4px;
+		font-size: 0.9rem;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.close-confirmation-button:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: #ffffff;
+		border-color: rgba(255, 255, 255, 0.4);
 	}
 </style>
 

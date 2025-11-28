@@ -56,8 +56,8 @@
 	// View mode from store
 	$: viewMode = $viewStore;
 	
-	// Sidebar state
-	const sidebarWidth = 280;
+	// Sidebar state - reduced width to make arrangement editor wider
+	const sidebarWidth = 240;
 	
 	// Selected pattern for pattern view
 	let selectedPatternId: string | null = null;

@@ -779,8 +779,8 @@
 .automation-panel-container {
 	position: fixed;
 	bottom: 0;
-	left: 280px;
-	right: 280px;
+	left: 240px;
+	right: 0;
 	height: 300px;
 	background: #1a1a1a;
 	border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -791,7 +791,7 @@
 	box-sizing: border-box;
 	min-width: 0;
 	/* Ensure it doesn't extend past the right edge - use both right and max-width for safety */
-	max-width: calc(100vw - 560px);
+	max-width: calc(100vw - 240px);
 	/* Remove padding to fill entire space */
 	padding: 0;
 }
