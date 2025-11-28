@@ -11,6 +11,9 @@
 	import { updateEnginePatternTree, createUpdateContext } from '$lib/utils/patternTreeUpdater';
 	import type { Pattern } from '$lib/types/pattern';
 	import ExportDialog from '$lib/components/ExportDialog.svelte';
+	import { updateProjectTitle } from '$lib/utils/projectSaveLoad';
+	import { supabase } from '$lib/utils/supabase';
+	import { loadingStore } from '$lib/stores/loadingStore';
 
 	let engine: EngineWorklet | null = null;
 	let isPlaying = false;
@@ -19,6 +22,9 @@
 	let canRedo = false;
 	let isMuted = false;
 	let isSoloed = false;
+	let isEditingTitle = false;
+	let editingTitle = '';
+	let titleInputRef: HTMLInputElement | null = null;
 	
 	// Reactive project for base meter selection
 	$: project = $projectStore;
@@ -449,6 +455,62 @@
 		window.dispatchEvent(new CustomEvent('reloadProject'));
 	}
 
+	async function handleSaveTitle() {
+		if (!project || !editingTitle.trim()) {
+			isEditingTitle = false;
+			editingTitle = '';
+			return;
+		}
+
+		const newTitle = editingTitle.trim();
+		if (newTitle === project.title) {
+			isEditingTitle = false;
+			editingTitle = '';
+			return;
+		}
+
+		loadingStore.startLoading('Updating project name...');
+		
+		try {
+			// Update in store
+			projectStore.update((p) => {
+				if (!p) return p;
+				return { ...p, title: newTitle };
+			});
+
+			// Update in Supabase
+			const { success, error } = await updateProjectTitle(project.id, newTitle);
+			
+			if (!success) {
+				console.error('Failed to update project title:', error);
+				// Revert in store
+				projectStore.update((p) => {
+					if (!p) return p;
+					return { ...p, title: project.title };
+				});
+				alert('Failed to update project name: ' + (error || 'Unknown error'));
+			}
+		} catch (err: any) {
+			console.error('Error updating project title:', err);
+			alert('Failed to update project name');
+		} finally {
+			isEditingTitle = false;
+			editingTitle = '';
+			loadingStore.stopLoading();
+		}
+	}
+
+	async function handleLogout() {
+		loadingStore.startLoading('Signing out...');
+		try {
+			await supabase.auth.signOut();
+			await goto('/');
+		} catch (err) {
+			console.error('Error signing out:', err);
+			loadingStore.stopLoading();
+		}
+	}
+
 	function toggleMute() {
 		if (selectedPattern && selection.selectedInstrumentId) {
 			// Pattern view: update the specific instrument
@@ -795,6 +857,58 @@
 	</div>
 
 	<div class="toolbar-right">
+		<!-- Project Title Editor -->
+		{#if project && typeof window !== 'undefined' && window.location.pathname.match(/\/project\/([^/]+)/)}
+			<div class="project-title-editor">
+				{#if isEditingTitle}
+					<input
+						type="text"
+						class="title-input"
+						bind:value={editingTitle}
+						on:keydown={(e) => {
+							if (e.key === 'Enter') {
+								handleSaveTitle();
+							} else if (e.key === 'Escape') {
+								isEditingTitle = false;
+								editingTitle = '';
+							}
+						}}
+						on:blur={handleSaveTitle}
+						bind:this={titleInputRef}
+					/>
+				{:else}
+					<button
+						class="project-title-button"
+						on:click={() => {
+							editingTitle = project.title || 'Untitled';
+							isEditingTitle = true;
+							// Focus input after it's rendered
+							setTimeout(() => {
+								titleInputRef?.focus();
+								titleInputRef?.select();
+							}, 0);
+						}}
+						title="Click to edit project name"
+					>
+						{project.title || 'Untitled'}
+					</button>
+				{/if}
+			</div>
+			
+			<!-- Logout Button -->
+			<button
+				class="logout-button"
+				on:click={handleLogout}
+				title="Sign out"
+			>
+				<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M6 14H3C2.44772 14 2 13.5523 2 13V3C2 2.44772 2.44772 2 3 2H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M10 11L14 8L10 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M14 8H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+		{/if}
+		
 		{#if viewMode === 'arrangement' || (typeof window !== 'undefined' && window.location.pathname.match(/\/project\/[^/]+\/pattern\/([^/]+)/))}
 			<div class="undo-redo-controls">
 				<button 

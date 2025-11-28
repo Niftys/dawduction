@@ -2,8 +2,69 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	height: 100vh;
+	min-height: 100vh;
 	background: #0f0f0f;
+	padding: 2rem;
+}
+
+.home-content {
+	width: 100%;
+	max-width: 1200px;
+	display: flex;
+	flex-direction: column;
+	gap: 3rem;
+	position: relative;
+}
+
+.top-right-section {
+	position: absolute;
+	top: 0;
+	right: 0;
+	display: flex;
+	align-items: center;
+	gap: 1rem;
+}
+
+.new-project-top-button {
+	background: transparent;
+	color: rgba(255, 255, 255, 0.7);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	padding: 0.5rem 1rem;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 0.9rem;
+	transition: all 0.2s;
+}
+
+.new-project-top-button:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: #ffffff;
+	border-color: rgba(255, 255, 255, 0.4);
+}
+
+.logout-button {
+	background: transparent;
+	color: rgba(255, 255, 255, 0.7);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	padding: 0.5rem 1rem;
+	border-radius: 4px;
+	cursor: pointer;
+	font-size: 0.9rem;
+	transition: all 0.2s;
+}
+
+.logout-button:hover {
+	background: rgba(255, 255, 255, 0.1);
+	color: #ffffff;
+	border-color: rgba(255, 255, 255, 0.4);
+}
+
+.main-content {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	min-height: 100vh;
 }
 
 .circle-wrapper {
@@ -33,7 +94,7 @@
 	text-transform: uppercase;
 }
 
-.new-project-button {
+.sign-in-button {
 	background: #ff5f5f;
 	color: #0f0f0f;
 	border: none;
@@ -48,9 +109,29 @@
 	letter-spacing: 1px;
 }
 
-.new-project-button:hover {
+.sign-in-button:hover {
 	transform: translateY(-2px);
 	box-shadow: 0 10px 30px rgba(255, 95, 95, 0.35);
+}
+
+.view-projects-button {
+	background: #00ffff;
+	color: #0f0f0f;
+	border: none;
+	padding: 14px 36px;
+	font-size: 15px;
+	font-weight: 700;
+	cursor: pointer;
+	border-radius: 999px;
+	transition: transform 0.2s ease, box-shadow 0.2s ease;
+	z-index: 2;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+
+.view-projects-button:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 10px 30px rgba(0, 255, 255, 0.35);
 }
 
 .subtitle {

@@ -7,6 +7,7 @@
 	import { loadingStore } from '$lib/stores/loadingStore';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { getCurrentUser } from '$lib/utils/supabase';
 	import type { Pattern, PatternNode } from '$lib/types/pattern';
 	import type { TimelineClip, TimelineTrack } from '$lib/stores/projectStore';
 	import type { Effect, Envelope, TimelineEffect, TimelineEnvelope } from '$lib/types/effects';
@@ -71,7 +72,15 @@
 		document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		// Check authentication first
+		const user = await getCurrentUser();
+		if (!user) {
+			// Redirect to home if not authenticated
+			await goto('/');
+			return;
+		}
+
 		// Reset loading state to ensure fresh start on each mount
 		isLoading = true;
 		
@@ -87,16 +96,35 @@
 			return;
 		}
 		
-		// Load project from localStorage
-		const saved = localStorage.getItem(`project_${$page.params.id}`);
-		if (saved) {
-			try {
-				const loadedProject = JSON.parse(saved);
-				projectStore.set(loadedProject);
-			} catch (e) {
-				console.error('Failed to load project:', e);
-				isLoading = false;
+		// Load project from Supabase
+		const { loadProject } = await import('$lib/utils/projectSaveLoad');
+		const { project: loadedProject, error } = await loadProject($page.params.id);
+		
+		if (error) {
+			console.error('Failed to load project from Supabase:', error);
+			// If project doesn't exist in Supabase, initialize a new one
+			if ($page.params.id) {
+				projectStore.set({
+					id: $page.params.id,
+					title: 'New Project',
+					bpm: 120,
+					tracks: [],
+					patterns: [],
+					effects: [],
+					envelopes: [],
+					timeline: {
+						tracks: [], // TimelineTracks (not standalone instruments)
+						clips: [],
+						effects: [],
+						envelopes: [],
+						totalLength: 16
+					}
+				});
 			}
+			isLoading = false;
+		} else if (loadedProject) {
+			projectStore.set(loadedProject);
+			isLoading = false;
 		} else {
 			// Initialize project if needed
 			if (!project && $page.params.id) {
@@ -117,6 +145,7 @@
 					}
 				});
 			}
+			isLoading = false;
 		}
 		
 		// Set initial CSS variable
@@ -124,18 +153,8 @@
 			document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
 		}
 
-		// Auto-save subscription
-		const unsubscribe = projectStore.subscribe((p) => {
-			if (p && $page.params.id) {
-				localStorage.setItem(`project_${$page.params.id}`, JSON.stringify(p));
-			}
-		});
-		
-		// No trackUpdated listener needed - pattern editing happens in dedicated page
-		
-		return () => {
-			unsubscribe();
-		};
+		// Note: Auto-save is handled by the Save button in Toolbar
+		// No need for localStorage auto-save subscription anymore
 	});
 
 	$: patterns = project?.patterns || [];

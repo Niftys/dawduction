@@ -1,12 +1,43 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { loadingStore } from '$lib/stores/loadingStore';
+	import { supabase, getCurrentUser } from '$lib/utils/supabase';
+	import AuthModal from '$lib/components/AuthModal.svelte';
+	import ProjectsModal from '$lib/components/ProjectsModal.svelte';
 	import '$lib/styles/pages/Home.css';
 
 	const circleText = 'DAWDUCTION • '.repeat(5);
 
+	let user: any = null;
+	let showAuthModal = false;
+	let showProjectsModal = false;
+
+	onMount(async () => {
+		// Check if user is authenticated
+		user = await getCurrentUser();
+
+		// Listen for auth state changes
+		supabase.auth.onAuthStateChange((_event, session) => {
+			user = session?.user ?? null;
+			if (!user) {
+				showProjectsModal = false;
+			}
+		});
+	});
+
+	function handleAuthSuccess() {
+		showAuthModal = false;
+		// User will be updated via auth state change listener
+	}
+
 	async function createNewProject() {
+		if (!user) {
+			showAuthModal = true;
+			return;
+		}
+
 		loadingStore.startLoading('Creating new project...');
 		
 		try {
@@ -50,25 +81,76 @@
 			// Loading will be stopped by the project page once it's loaded
 		}
 	}
+
+	async function handleLogout() {
+		loadingStore.startLoading('Signing out...');
+		try {
+			await supabase.auth.signOut();
+			user = null;
+			showProjectsModal = false;
+		} catch (err) {
+			console.error('Error signing out:', err);
+		} finally {
+			loadingStore.stopLoading();
+		}
+	}
 </script>
 
 <div class="home">
-	<div class="circle-wrapper">
-		<svg class="circle-text" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-			<defs>
-				<path
-					id="text-ring"
-					d="M200,200 m-170,0 a170,170 0 1,1 340,0 a170,170 0 1,1 -340,0"
-				/>
-			</defs>
-			<text>
-				<textPath href="#text-ring" startOffset="0%">
-					{circleText}
-				</textPath>
-			</text>
-		</svg>
-		<button class="new-project-button" on:click={createNewProject}>New Project</button>
-		<p class="subtitle">Procedural-Synthesis DAW with Tree-Based Rhythmic Structures</p>
+	<div class="home-content">
+		<!-- Top Right: New Project Button (only when authenticated) -->
+		{#if user}
+			<div class="top-right-section">
+				<button class="new-project-top-button" on:click={createNewProject}>New Project</button>
+				<button class="logout-button" on:click={handleLogout}>Sign Out</button>
+			</div>
+		{/if}
+
+		<!-- Main Content -->
+		<div class="main-content">
+			<div class="circle-wrapper">
+				<svg class="circle-text" viewBox="0 0 400 400" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+					<defs>
+						<path
+							id="text-ring"
+							d="M200,200 m-170,0 a170,170 0 1,1 340,0 a170,170 0 1,1 -340,0"
+						/>
+					</defs>
+					<text>
+						<textPath href="#text-ring" startOffset="0%">
+							{circleText}
+						</textPath>
+					</text>
+				</svg>
+				
+				{#if user}
+					<button class="view-projects-button" on:click={() => showProjectsModal = true}>
+						View Projects
+					</button>
+				{:else}
+					<button class="sign-in-button" on:click={() => showAuthModal = true}>
+						Sign In
+					</button>
+				{/if}
+				
+				<p class="subtitle">Procedural-Synthesis DAW with Tree-Based Rhythmic Structures</p>
+			</div>
+		</div>
 	</div>
 </div>
+
+<!-- Auth Modal -->
+<AuthModal 
+	bind:isOpen={showAuthModal} 
+	on:success={handleAuthSuccess}
+	on:close={() => showAuthModal = false}
+/>
+
+<!-- Projects Modal -->
+{#if user}
+	<ProjectsModal 
+		bind:isOpen={showProjectsModal}
+		on:close={() => showProjectsModal = false}
+	/>
+{/if}
 

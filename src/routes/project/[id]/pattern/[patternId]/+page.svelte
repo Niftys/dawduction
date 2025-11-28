@@ -13,6 +13,7 @@
 	import { synthPluginStore } from '$lib/stores/synthPluginStore';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { getCurrentUser } from '$lib/utils/supabase';
 	import type { Pattern } from '$lib/types/pattern';
 	import { viewStore } from '$lib/stores/viewStore';
 	import { engineStore } from '$lib/stores/engineStore';
@@ -86,7 +87,15 @@
 		}
 	}
 
-	onMount(() => {
+	onMount(async () => {
+		// Check authentication first
+		const user = await getCurrentUser();
+		if (!user) {
+			// Redirect to home if not authenticated
+			await goto('/');
+			return;
+		}
+
 		// Reset loading state to ensure fresh start on each mount
 		isLoading = true;
 		
