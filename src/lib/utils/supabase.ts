@@ -1,19 +1,29 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { browser } from '$app/environment';
 import { PUBLIC_SUPABASE_URL, PUBLIC_SUPABASE_ANON_KEY } from '$env/static/public';
 
+// Validate environment variables
+const url = PUBLIC_SUPABASE_URL || '';
+const key = PUBLIC_SUPABASE_ANON_KEY || '';
+
+if (!url || !key) {
+	console.error('Missing Supabase environment variables!');
+	console.error('PUBLIC_SUPABASE_URL:', url ? 'Set' : 'Missing');
+	console.error('PUBLIC_SUPABASE_ANON_KEY:', key ? 'Set' : 'Missing');
+}
+
 // Initialize Supabase client
-// This creates a singleton instance that can be reused across the app
-export const supabase = createClient(
-	PUBLIC_SUPABASE_URL,
-	PUBLIC_SUPABASE_ANON_KEY,
+// Only enable browser-specific features when in browser
+export const supabase: SupabaseClient = createClient(
+	url || 'https://placeholder.supabase.co',
+	key || 'placeholder-key',
 	{
 		auth: {
-			// Persist session in localStorage
-			persistSession: true,
-			// Auto-refresh session
-			autoRefreshToken: true,
-			// Detect session from URL (for OAuth callbacks)
+			// Persist session in localStorage (browser only)
+			persistSession: browser,
+			// Auto-refresh session (browser only)
+			autoRefreshToken: browser,
+			// Detect session from URL (for OAuth callbacks, browser only)
 			detectSessionInUrl: browser
 		}
 	}
