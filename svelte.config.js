@@ -6,8 +6,7 @@ const config = {
 	preprocess: vitePreprocess(),
 	kit: {
 		adapter: adapter({
-			// Vercel will automatically detect and optimize your deployment
-			// You can add runtime: 'nodejs18.x' or 'edge' if needed
+			runtime: 'nodejs20.x'
 		})
 	}
 };

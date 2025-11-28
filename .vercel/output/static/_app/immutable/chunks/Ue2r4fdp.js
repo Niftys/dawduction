@@ -1,0 +1,1 @@
+import{w as i}from"./BJF9mgOB.js";function t(){const{subscribe:s,set:o,update:n}=i({isLoading:!1,message:void 0});return{subscribe:s,setLoading:(e,a)=>{o({isLoading:e,message:a})},startLoading:e=>{o({isLoading:!0,message:e})},stopLoading:()=>{o({isLoading:!1,message:void 0})}}}const d=t();export{d as loadingStore};
