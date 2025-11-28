@@ -252,6 +252,83 @@
 		return pixelToBeat(pixel, PIXELS_PER_BEAT);
 	}
 
+	// Playhead dragging state
+	let isDraggingPlayhead = false;
+	let wasPlayingBeforeDrag = false;
+
+	function handlePlayheadMouseDown(e: MouseEvent) {
+		if (e.button !== 0) return; // Only left mouse button
+		e.preventDefault();
+		e.stopPropagation();
+		
+		const engine = $engineStore;
+		if (!engine) return;
+		
+		isDraggingPlayhead = true;
+		wasPlayingBeforeDrag = playbackState?.isPlaying || false;
+		
+		// Pause playback while dragging
+		if (wasPlayingBeforeDrag) {
+			engine.setTransport('pause');
+		}
+		
+		// Update position immediately
+		updatePlayheadPosition(e);
+	}
+
+	function updatePlayheadPosition(e: MouseEvent) {
+		if (!isDraggingPlayhead) return;
+		
+		const timelineArea = timelineAreaElement;
+		if (!timelineArea) return;
+		
+		const rect = timelineArea.getBoundingClientRect();
+		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
+		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
+		
+		const engine = $engineStore;
+		if (engine) {
+			// Update engine position
+			engine.setTransport(wasPlayingBeforeDrag ? 'play' : 'stop', beat);
+		}
+	}
+
+	function handlePlayheadMouseMove(e: MouseEvent) {
+		if (isDraggingPlayhead) {
+			updatePlayheadPosition(e);
+		}
+	}
+
+	function handlePlayheadMouseUp() {
+		if (isDraggingPlayhead) {
+			isDraggingPlayhead = false;
+			wasPlayingBeforeDrag = false;
+		}
+	}
+
+	function handleRulerClick(e: MouseEvent) {
+		if (isDraggingPlayhead) return; // Don't handle click if we just finished dragging
+		
+		const target = e.target as HTMLElement;
+		// Don't handle clicks on the spacer or interactive elements
+		if (target.closest('.ruler-label-spacer') || target.closest('button') || target.closest('.add-track-menu')) {
+			return;
+		}
+		
+		const rulerElement = target.closest('.timeline-ruler');
+		if (!rulerElement) return;
+		
+		const rulerRect = rulerElement.getBoundingClientRect();
+		const x = e.clientX - rulerRect.left;
+		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
+		
+		const engine = $engineStore;
+		if (engine) {
+			const isPlaying = playbackState?.isPlaying || false;
+			engine.setTransport(isPlaying ? 'play' : 'stop', beat);
+		}
+	}
+
 	function findPatternById(patternId: string | undefined): Pattern | null {
 		if (!patternId) return null;
 		return patterns.find((p) => p.id === patternId) || null;
@@ -1117,9 +1194,18 @@
 					role="region"
 					aria-label="Timeline area"
 					on:wheel={(e) => handleTimelineWheel(e)}
-					on:mousemove={(e) => handleTimelineMouseMove(e)}
-					on:mouseup={() => handleTimelineMouseUp()}
-					on:mouseleave={() => handleTimelineMouseUp()}
+					on:mousemove={(e) => {
+						handleTimelineMouseMove(e);
+						handlePlayheadMouseMove(e);
+					}}
+					on:mouseup={() => {
+						handleTimelineMouseUp();
+						handlePlayheadMouseUp();
+					}}
+					on:mouseleave={() => {
+						handleTimelineMouseUp();
+						handlePlayheadMouseUp();
+					}}
 				>
 					<TimelineRuler
 						totalLength={timeline.totalLength}
@@ -1129,10 +1215,20 @@
 						onZoomWheel={handleTimelineWheel}
 						onCreateTrack={createTimelineTrack}
 						onToggleAddTrackMenu={() => showAddTrackMenu = !showAddTrackMenu}
+						onRulerClick={handleRulerClick}
 					/>
 
 					<div class="playhead-container">
-						<div class="playhead" style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"></div>
+						<div 
+							class="playhead {isDraggingPlayhead ? 'dragging' : ''}" 
+							style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"
+							on:mousedown={handlePlayheadMouseDown}
+							on:mousemove={handlePlayheadMouseMove}
+							on:mouseup={handlePlayheadMouseUp}
+							on:mouseleave={handlePlayheadMouseUp}
+						>
+							<div class="playhead-handle"></div>
+						</div>
 					</div>
 
 					<div class="pattern-rows">

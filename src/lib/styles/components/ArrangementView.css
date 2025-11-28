@@ -228,7 +228,10 @@
 	text-transform: capitalize;
 	gap: 8px;
 	overflow: visible;
-	position: relative;
+	position: sticky;
+	left: 0;
+	z-index: 10;
+	background: #1a1a1a;
 }
 
 .track-controls-group {

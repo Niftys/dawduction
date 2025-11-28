@@ -300,7 +300,9 @@
 	flex-shrink: 0;
 	background: #1a1a1a;
 	border-right: 1px solid rgba(255, 255, 255, 0.1);
-	position: relative;
+	position: sticky;
+	left: 0;
+	z-index: 21;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
@@ -325,6 +327,12 @@
 	min-width: 100%;
 	overflow: visible;
 	flex-shrink: 0;
+	cursor: pointer;
+	user-select: none;
+}
+
+.timeline-ruler:hover {
+	background: #1f1f1f;
 }
 
 .ruler-mark {
@@ -386,14 +394,50 @@
 	bottom: 0;
 	width: 2px;
 	background: #00ff88;
-	pointer-events: none;
+	pointer-events: auto;
+	cursor: ew-resize;
 	box-shadow: 0 0 4px rgba(0, 255, 136, 0.5);
+	transition: width 0.1s ease;
 }
 
-.playhead::before {
-	content: '';
+.playhead:hover,
+.playhead.dragging {
+	width: 3px;
+	box-shadow: 0 0 8px rgba(0, 255, 136, 0.8);
+}
+
+.playhead-handle {
 	position: absolute;
 	top: 0;
+	left: -6px;
+	width: 14px;
+	height: 20px;
+	background: #00ff88;
+	border-radius: 3px 3px 0 0;
+	cursor: grab;
+	box-shadow: 0 2px 6px rgba(0, 255, 136, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.playhead-handle::before {
+	content: '';
+	width: 4px;
+	height: 8px;
+	background: #0a0a0a;
+	border-radius: 2px;
+}
+
+.playhead.dragging .playhead-handle {
+	cursor: grabbing;
+	box-shadow: 0 4px 10px rgba(0, 255, 136, 0.9);
+}
+
+.playhead::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
 	left: -4px;
 	width: 10px;
 	height: 10px;
@@ -582,7 +626,10 @@
 	font-size: 12px;
 	font-weight: 500;
 	text-transform: capitalize;
-	position: relative;
+	position: sticky;
+	left: 0;
+	z-index: 10;
+	background: #1a1a1a;
 	cursor: move;
 	user-select: none;
 }

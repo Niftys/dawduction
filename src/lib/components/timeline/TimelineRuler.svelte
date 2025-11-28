@@ -11,6 +11,7 @@
 	// Note: onZoomWheel is passed from parent for potential future use
 	export let onCreateTrack: (type: 'pattern' | 'effect' | 'envelope') => void;
 	export let onToggleAddTrackMenu: () => void;
+	export let onRulerClick: ((e: MouseEvent) => void) | undefined = undefined;
 
 	$: rulerMarks = generateRulerMarks(totalLength, pixelsPerBeat);
 	$: zoomDisplay = formatZoomDisplay(zoomLevel, TIMELINE_CONSTANTS.BASE_ZOOM);
@@ -53,7 +54,21 @@
 			{/if}
 		</div>
 	</div>
-	<div class="timeline-ruler" style="height: {TIMELINE_CONSTANTS.RULER_HEIGHT}px; width: {beatToPixel(totalLength, pixelsPerBeat)}px;">
+	<div 
+		class="timeline-ruler" 
+		style="height: {TIMELINE_CONSTANTS.RULER_HEIGHT}px; width: {beatToPixel(totalLength, pixelsPerBeat)}px;"
+		on:click={onRulerClick}
+		role="button"
+		tabindex="0"
+		on:keydown={(e) => {
+			if (onRulerClick && (e.key === 'Enter' || e.key === ' ')) {
+				e.preventDefault();
+				// Convert keyboard event to mouse-like event for the handler
+				onRulerClick(e as any);
+			}
+		}}
+		title="Click to jump to position"
+	>
 		{#each rulerMarks as mark}
 			<div 
 				class="ruler-mark {mark.isBar ? 'bar' : 'beat'}"
