@@ -44,10 +44,12 @@
 	// Pages with skeletons use local loading state only
 	// Don't subscribe to loadingStore - that's for overlay operations only
 
-	// Function to save project to localStorage
+	// Function to save project to localStorage (sandbox projects can use this)
 	function saveProject() {
 		if (project && $page.params.id) {
 			try {
+				// Save to localStorage for both regular and sandbox projects
+				// This allows sandbox users to have temporary persistence during their session
 				localStorage.setItem(`project_${$page.params.id}`, JSON.stringify(project));
 			} catch (e) {
 				console.error('[Pattern Editor] Failed to save project:', e);
@@ -87,11 +89,14 @@
 	}
 
 	onMount(async () => {
-		// Check authentication first (only in browser)
-		if (typeof window !== 'undefined') {
+		// Check if this is a sandbox project (starts with 'sandbox-')
+		const isSandbox = $page.params.id?.startsWith('sandbox-') || false;
+		
+		// Check authentication first (only in browser) - skip for sandbox
+		if (typeof window !== 'undefined' && !isSandbox) {
 			const user = await getCurrentUser();
 			if (!user) {
-				// Redirect to home if not authenticated
+				// Redirect to home if not authenticated (unless sandbox)
 				await goto('/');
 				return;
 			}
@@ -143,10 +148,11 @@
 			isLoading = false;
 		}
 
-		// Auto-save subscription - save whenever project changes
+		// Auto-save subscription - save whenever project changes (works for sandbox too)
 		unsubscribeAutoSave = projectStore.subscribe((p) => {
 			if (p && $page.params.id) {
 				// Debounce saves to avoid too many localStorage writes
+				// This works for both regular and sandbox projects (localStorage only)
 				setTimeout(() => {
 					saveProject();
 				}, 100);
