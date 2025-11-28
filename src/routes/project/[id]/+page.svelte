@@ -122,7 +122,22 @@
 		
 		// Skip database loading for sandbox projects
 		if (isSandbox) {
-			// Sandbox project should already be in store from home page
+			// Try to load from localStorage first
+			if (typeof window !== 'undefined') {
+				const saved = localStorage.getItem(`project_${$page.params.id}`);
+				if (saved) {
+					try {
+						const loadedProject = JSON.parse(saved);
+						projectStore.set(loadedProject);
+						isLoading = false;
+						return;
+					} catch (e) {
+						console.error('Failed to load sandbox project from localStorage:', e);
+					}
+				}
+			}
+			
+			// Sandbox project should already be in store from home page, or initialize if not
 			if (!project || project.id !== $page.params.id) {
 				// Initialize sandbox project if not already set
 				projectStore.set({
@@ -222,13 +237,48 @@
 			document.documentElement.style.setProperty('--sidebar-width', `${sidebarWidth}px`);
 		}
 
-		// Note: Auto-save is handled by the Save button in Toolbar
-		// No need for localStorage auto-save subscription anymore
-		
 		// Initialize previous view mode
 		previousViewMode = viewMode;
 	});
 	
+	// Set up localStorage auto-save for sandbox projects
+	let unsubscribeAutoSave: (() => void) | null = null;
+	let saveToLocalStorage: (() => void) | null = null;
+	
+	// Set up localStorage saving for sandbox projects
+	$: if ($page.params.id && typeof window !== 'undefined') {
+		const isSandbox = $page.params.id.startsWith('sandbox-');
+		
+		if (isSandbox && !unsubscribeAutoSave) {
+			// Function to save project to localStorage
+			saveToLocalStorage = () => {
+				const currentProject = $projectStore;
+				if (currentProject && $page.params.id) {
+					try {
+						localStorage.setItem(`project_${$page.params.id}`, JSON.stringify(currentProject));
+					} catch (e) {
+						console.error('[Project Page] Failed to save to localStorage:', e);
+					}
+				}
+			};
+			
+			// Auto-save subscription - save whenever project changes
+			unsubscribeAutoSave = projectStore.subscribe((p) => {
+				if (p && $page.params.id && p.id.startsWith('sandbox-')) {
+					// Debounce saves to avoid too many localStorage writes
+					setTimeout(() => {
+						if (saveToLocalStorage) {
+							saveToLocalStorage();
+						}
+					}, 100);
+				}
+			});
+			
+			// Save on page unload
+			window.addEventListener('beforeunload', saveToLocalStorage);
+		}
+	}
+
 	// Simple scroll to beginning when arrangement view loads
 	$: if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
 		// Simple scroll to beginning after a short delay
@@ -245,6 +295,14 @@
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('mousemove', handleGlobalMouseMove);
 			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			
+			// Clean up localStorage auto-save
+			if (saveToLocalStorage) {
+				window.removeEventListener('beforeunload', saveToLocalStorage);
+			}
+			if (unsubscribeAutoSave) {
+				unsubscribeAutoSave();
+			}
 		}
 	});
 	
