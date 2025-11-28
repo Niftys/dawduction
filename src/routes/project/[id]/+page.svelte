@@ -168,15 +168,32 @@
 	
 	// Scroll to beginning when project loads and timeline area is available
 	$: if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
-		// Use requestAnimationFrame to ensure DOM is fully rendered
-		requestAnimationFrame(() => {
-			setTimeout(() => {
+		// Use multiple attempts to ensure scroll works
+		const attemptScroll = (attempts: number) => {
+			if (attempts <= 0 || !timelineAreaElement) return;
+			
+			requestAnimationFrame(() => {
 				if (timelineAreaElement) {
+					// Scroll to 0 to show the beginning (beat 0 should be visible after the sticky spacer)
 					timelineAreaElement.scrollLeft = 0;
-					hasScrolledToStart = true;
+					
+					// Verify scroll worked and try again if needed
+					if (attempts > 1) {
+						setTimeout(() => {
+							if (timelineAreaElement && timelineAreaElement.scrollLeft > 0) {
+								attemptScroll(attempts - 1);
+							} else {
+								hasScrolledToStart = true;
+							}
+						}, 50);
+					} else {
+						hasScrolledToStart = true;
+					}
 				}
-			}, 100);
-		});
+			});
+		};
+		
+		setTimeout(() => attemptScroll(5), 150);
 	}
 
 	onDestroy(() => {
@@ -193,6 +210,8 @@
 			setTimeout(() => {
 				if (timelineAreaElement) {
 					timelineAreaElement.scrollLeft = 0;
+					// Reset scroll flag when switching views
+					hasScrolledToStart = false;
 				}
 			}, 50);
 		});
