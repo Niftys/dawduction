@@ -275,13 +275,21 @@
 	scrollbar-color: rgba(255, 255, 255, 0.3) rgba(0, 0, 0, 0.2);
 	/* Ensure content is not clipped by sidebar */
 	min-width: 0;
+	min-height: 0;
+	/* Ensure scrolling works */
+	height: 100%;
 }
 
 .timeline-area::-webkit-scrollbar {
 	height: 12px;
+	width: 12px;
 }
 
 .timeline-area::-webkit-scrollbar-track {
+	background: rgba(0, 0, 0, 0.2);
+}
+
+.timeline-area::-webkit-scrollbar-track:vertical {
 	background: rgba(0, 0, 0, 0.2);
 }
 
@@ -474,6 +482,9 @@
 	flex-direction: column;
 	/* Ensure rows can extend beyond viewport for horizontal scrolling */
 	min-width: fit-content;
+	width: max-content;
+	/* Ensure vertical scrolling works */
+	min-height: 100%;
 }
 
 .add-track-dropdown-ruler {
@@ -628,6 +639,10 @@
 	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	position: relative;
 	cursor: crosshair;
+	/* Ensure row can extend horizontally */
+	min-width: fit-content;
+	width: max-content;
+	flex-shrink: 0;
 }
 
 .pattern-row.drag-over {
@@ -672,13 +687,13 @@
 }
 
 .row-clips {
-	flex: 1;
 	position: relative;
 	min-height: 100%;
 	flex-shrink: 0;
 	/* Width is set inline based on beatToPixel(totalLength, pixelsPerBeat) */
 	/* Ensure content can extend for horizontal scrolling */
 	min-width: fit-content;
+	width: max-content;
 }
 
 .grid-line {
