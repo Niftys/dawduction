@@ -59,7 +59,7 @@ class EnvelopesProcessor {
 		const envelope = this.envelopes.find(e => e.id === envelopeId);
 		if (envelope) {
 			// Update envelope settings
-			envelope.settings = { ...envelope.settings, ...settings };
+			envelope.settings = Object.assign({}, envelope.settings || {}, settings);
 		}
 	}
 
@@ -154,7 +154,10 @@ class EnvelopesProcessor {
 						if (this.processor && this.processor.port) {
 							// Track last log time per envelope ID to avoid spam
 							const lastLogKey = `missing_envelope_${timelineEnvelope.envelopeId}`;
-							const lastLogTime = this._missingEnvelopeLogTimes?.[lastLogKey] || 0;
+							if (!this._missingEnvelopeLogTimes) {
+								this._missingEnvelopeLogTimes = {};
+							}
+							const lastLogTime = (this._missingEnvelopeLogTimes && this._missingEnvelopeLogTimes[lastLogKey]) ? this._missingEnvelopeLogTimes[lastLogKey] : 0;
 							if (!this._missingEnvelopeLogTimes) {
 								this._missingEnvelopeLogTimes = {};
 							}

@@ -39,10 +39,7 @@ class SynthManager {
 				}
 				
 				// Merge settings - use track settings and instrumentSettings
-				const settings = {
-					...(track.settings || {}),
-					...(track.instrumentSettings || {})
-				};
+				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
 				
 				synth = this.processor.synthFactory.create(instrumentType, settings);
 				if (synth) {
@@ -86,7 +83,7 @@ class SynthManager {
 					data: {
 						trackId,
 						patternId: patternId || 'none',
-						availableTracks: this.processor.projectManager.tracks?.map(t => ({ id: t.id, instrumentType: t.instrumentType })) || []
+						availableTracks: (this.processor.projectManager.tracks) ? this.processor.projectManager.tracks.map(t => ({ id: t.id, instrumentType: t.instrumentType })) : []
 					}
 				});
 			}

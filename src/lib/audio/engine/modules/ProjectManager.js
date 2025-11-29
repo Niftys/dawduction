@@ -53,17 +53,17 @@ class ProjectManager {
 			data: {
 				viewMode,
 				isArrangementView: this.isArrangementView,
-				tracksCount: tracks?.length || 0,
+				tracksCount: (tracks && tracks.length) ? tracks.length : 0,
 				eventsCount: this.events.length,
-				timelineLength: timeline?.totalLength || 0,
-				clipsCount: timeline?.clips?.length || 0,
+				timelineLength: (timeline && timeline.totalLength) ? timeline.totalLength : 0,
+				clipsCount: (timeline && timeline.clips && timeline.clips.length) ? timeline.clips.length : 0,
 				firstEvent: this.events[0] || null,
-				firstTrack: tracks?.[0] || null
+				firstTrack: (tracks && tracks.length > 0) ? tracks[0] : null
 			}
 		});
 		
 		// Set base meter track (defaults to first track if not specified)
-		this.baseMeterTrackId = baseMeterTrackId || (tracks?.[0]?.id);
+		this.baseMeterTrackId = baseMeterTrackId || ((tracks && tracks.length > 0 && tracks[0] && tracks[0].id) ? tracks[0].id : null);
 		
 		// Build pattern to track ID mapping for effect/envelope assignment
 		this.patternToTrackId.clear();
@@ -88,16 +88,19 @@ class ProjectManager {
 		}
 		
 		// Initialize effects and envelopes processors
-		const timelineEffects = timeline?.effects || [];
-		const timelineEnvelopes = timeline?.envelopes || [];
-		const timelineTracks = timeline?.tracks || [];
+		const timelineEffects = (timeline && timeline.effects) ? timeline.effects : [];
+		const timelineEnvelopes = (timeline && timeline.envelopes) ? timeline.envelopes : [];
+		const timelineTracks = (timeline && timeline.tracks) ? timeline.tracks : [];
 		// Pass automation data to effects processor
 		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
 		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
 	}
 
 	getTrack(trackId) {
-		return this.tracks?.find(t => t.id === trackId);
+		if (this.tracks) {
+			return this.tracks.find(t => t.id === trackId);
+		}
+		return null;
 	}
 
 	updatePatternTree(trackId, patternTree) {
@@ -171,9 +174,11 @@ class ProjectManager {
 			const lastUnderscore = trackId.lastIndexOf('_');
 			if (lastUnderscore > '__pattern_'.length) {
 				const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
-				const pattern = this.patterns?.find(p => p.id === patternId);
-				if (pattern) {
-					baseMeter = pattern.baseMeter || 4;
+				if (this.patterns) {
+					const pattern = this.patterns.find(p => p.id === patternId);
+					if (pattern) {
+						baseMeter = pattern.baseMeter || 4;
+					}
 				}
 			}
 		}
@@ -210,7 +215,7 @@ class ProjectManager {
 	updateTrackSettings(trackId, settings) {
 		const track = this.getTrack(trackId);
 		if (track) {
-			track.settings = { ...track.settings, ...settings };
+			track.settings = Object.assign({}, track.settings || {}, settings);
 		}
 	}
 
@@ -268,7 +273,10 @@ class ProjectManager {
 	getTimelineTrackVolume(trackId) {
 		if (this.timeline && this.timeline.tracks) {
 			const track = this.timeline.tracks.find(t => t.id === trackId);
-			return track?.volume ?? 1.0;
+			if (track && track.volume !== undefined && track.volume !== null) {
+				return track.volume;
+			}
+			return 1.0;
 		}
 		return 1.0;
 	}

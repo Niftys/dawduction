@@ -19,10 +19,10 @@ class TrackStateManager {
 		if (!tracks) return;
 		
 		for (const track of tracks) {
-			this.trackVolumes.set(track.id, track.volume ?? 1.0);
-			this.trackPans.set(track.id, track.pan ?? 0.0);
-			this.trackMutes.set(track.id, track.mute ?? false);
-			this.trackSolos.set(track.id, track.solo ?? false);
+			this.trackVolumes.set(track.id, (track.volume !== undefined && track.volume !== null) ? track.volume : 1.0);
+			this.trackPans.set(track.id, (track.pan !== undefined && track.pan !== null) ? track.pan : 0.0);
+			this.trackMutes.set(track.id, (track.mute !== undefined && track.mute !== null) ? track.mute : false);
+			this.trackSolos.set(track.id, (track.solo !== undefined && track.solo !== null) ? track.solo : false);
 		}
 	}
 
@@ -58,19 +58,23 @@ class TrackStateManager {
 	}
 
 	getVolume(trackId) {
-		return this.trackVolumes.get(trackId) ?? 1.0;
+		const volume = this.trackVolumes.get(trackId);
+		return (volume !== undefined && volume !== null) ? volume : 1.0;
 	}
 
 	getPan(trackId) {
-		return this.trackPans.get(trackId) ?? 0.0;
+		const pan = this.trackPans.get(trackId);
+		return (pan !== undefined && pan !== null) ? pan : 0.0;
 	}
 
 	isMuted(trackId) {
-		return this.trackMutes.get(trackId) ?? false;
+		const muted = this.trackMutes.get(trackId);
+		return (muted !== undefined && muted !== null) ? muted : false;
 	}
 
 	isSoloed(trackId) {
-		return this.trackSolos.get(trackId) ?? false;
+		const soloed = this.trackSolos.get(trackId);
+		return (soloed !== undefined && soloed !== null) ? soloed : false;
 	}
 
 	hasAnySoloedTrack() {
@@ -146,11 +150,50 @@ class EventScheduler {
 	constructor(processor) {
 		this.processor = processor;
 		this.scheduledEvents = new Map();
+		this._lastScheduledBeat = -1;
+		// Adaptive scheduling interval: smaller for dense timelines, larger for sparse ones
+		// This reduces unnecessary iterations when there are many events
+		this._scheduleInterval = 0.1; // Only schedule every 0.1 beats (~83ms at 120 BPM)
+		// Track which events have been scheduled to avoid re-checking them
+		this._scheduledEventKeys = new Set(); // Format: "eventIndex_sampleTime"
+		// Track the last event index we've checked to enable incremental scheduling
+		this._lastCheckedEventIndex = -1;
+		// Cleanup threshold: remove scheduled events older than this (in samples)
+		this._cleanupThresholdSamples = processor.sampleRate * 0.5; // 500ms lookback
+		// Track event count to adapt scheduling interval
+		this._lastEventCount = 0;
 	}
 
 	scheduleEvents() {
-		const lookaheadTime = 0.15; // 150ms
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+		const currentSampleTime = this.processor.currentTime;
+		
+		// Clean up old scheduled events that have already passed
+		this._cleanupOldEvents(currentSampleTime);
+		
+		// Adaptive scheduling interval based on event density
+		const events = this.processor.projectManager.events;
+		const eventCount = events ? events.length : 0;
+		if (eventCount !== this._lastEventCount) {
+			// Adjust interval based on event count: more events = less frequent scheduling
+			// This prevents excessive iterations when there are many events
+			if (eventCount > 1000) {
+				this._scheduleInterval = 0.2; // 200ms for very dense timelines
+			} else if (eventCount > 500) {
+				this._scheduleInterval = 0.15; // 150ms for dense timelines
+			} else {
+				this._scheduleInterval = 0.1; // 100ms for normal timelines
+			}
+			this._lastEventCount = eventCount;
+		}
+		
+		// Only schedule if we've moved forward enough (optimization)
+		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval) {
+			return; // Skip scheduling if we haven't moved forward enough
+		}
+		this._lastScheduledBeat = currentBeat;
+		
+		const lookaheadTime = 0.15; // 150ms
 		const lookaheadBeat = currentBeat + lookaheadTime * this.processor.playbackController.beatsPerSecond;
 		
 		// Get pattern length for looping
@@ -159,30 +202,23 @@ class EventScheduler {
 
 		// In arrangement view, schedule events more aggressively - look ahead much further
 		// For arrangement view, we want to schedule events well ahead so they're ready when needed
-		const extendedLookahead = isTimelineMode ? currentBeat + 4.0 : lookaheadBeat; // 4 beats ahead in arrangement view
+		// But limit lookahead to prevent scheduling too many events at once
+		// Use a more conservative lookahead that scales with timeline length
+		const timelineLength = isTimelineMode ? this.processor.projectManager.timeline.totalLength : 0;
+		const maxLookahead = isTimelineMode ? Math.min(currentBeat + 2.0, timelineLength * 0.1) : lookaheadBeat;
+		const extendedLookahead = isTimelineMode ? maxLookahead : lookaheadBeat;
 
-		// Debug: Log scheduling attempt (disabled for cleaner logs)
-		// if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
-		// 	this._lastDebugTime = this.processor.currentTime;
-		// 	this.processor.port.postMessage({
-		// 		type: 'debug',
-		// 		message: 'EventScheduler.scheduleEvents',
-		// 		data: {
-		// 			currentBeat: currentBeat.toFixed(3),
-		// 			lookaheadBeat: lookaheadBeat.toFixed(3),
-		// 			extendedLookahead: extendedLookahead.toFixed(3),
-		// 			isTimelineMode,
-		// 			totalEvents: this.processor.projectManager.events.length,
-		// 			scheduledCount: this.scheduledEvents.size,
-		// 			patternLength,
-		// 			timelineLength: this.processor.projectManager.timeline?.totalLength || 0
-		// 		}
-		// 	});
-		// }
+		// Use events already declared above (line 32)
+		if (!events || events.length === 0) return;
 
 		let scheduledThisCall = 0;
+		// Optimized: Only check events that haven't been scheduled yet or are in the lookahead window
+		// Start from where we left off for incremental scheduling
+		const startIndex = Math.max(0, this._lastCheckedEventIndex);
+		
 		// Schedule events in the lookahead window
-		for (const event of this.processor.projectManager.events) {
+		for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+			const event = events[eventIndex];
 			let eventTime = event.time;
 			
 			// For timeline/arrangement mode, use absolute times
@@ -235,33 +271,34 @@ class EventScheduler {
 			// Also handle events at time 0.0 specially to ensure they're scheduled
 			if (eventTime >= currentBeat && eventTime <= checkLookahead) {
 				const eventSampleTime = Math.floor(eventTime * this.processor.playbackController.samplesPerBeat);
+				const eventKey = `${eventIndex}_${eventSampleTime}`;
+				
+				// Skip if already scheduled
+				if (this._scheduledEventKeys.has(eventKey)) {
+					continue;
+				}
+				
 				if (!this.scheduledEvents.has(eventSampleTime)) {
 					this.scheduledEvents.set(eventSampleTime, []);
 				}
-				// Only schedule if not already scheduled
+				// Only schedule if not already scheduled (double-check for duplicates)
 				const existing = this.scheduledEvents.get(eventSampleTime);
 				if (!existing.some(e => e.instrumentId === event.instrumentId && e.time === event.time && e.pitch === event.pitch)) {
 					this.scheduledEvents.get(eventSampleTime).push(event);
+					this._scheduledEventKeys.add(eventKey);
 					scheduledThisCall++;
-					
-					// Debug: Log first few scheduled events (disabled for cleaner logs)
-					// if (scheduledThisCall <= 3) {
-					// 	this.processor.port.postMessage({
-					// 		type: 'debug',
-					// 		message: 'EventScheduler: Event scheduled',
-					// 		data: {
-					// 			eventTime: eventTime.toFixed(3),
-					// 			eventSampleTime,
-					// 			instrumentId: event.instrumentId,
-					// 			patternId: event.patternId || 'none',
-					// 			pitch: event.pitch,
-					// 			velocity: event.velocity
-					// 		}
-					// 	});
-					// }
+				}
+			} else if (eventTime > checkLookahead) {
+				// Events are sorted by time, so we can break early if we've passed the lookahead window
+				// But only if we're not in timeline mode with looping (where events might wrap)
+				if (!isTimelineMode) {
+					break;
 				}
 			}
 		}
+		
+		// Update last checked index for incremental scheduling
+		this._lastCheckedEventIndex = events.length - 1;
 		
 		// Debug: Log scheduling summary (disabled for cleaner logs)
 		// if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
@@ -282,7 +319,43 @@ class EventScheduler {
 	}
 
 	removeEventsAtTime(sampleTime) {
-		this.scheduledEvents.delete(sampleTime);
+		if (this.scheduledEvents.has(sampleTime)) {
+			// Clean up the scheduled event keys for this sample time
+			// We need to find and remove all keys that match this sampleTime
+			for (const key of this._scheduledEventKeys) {
+				if (key.endsWith(`_${sampleTime}`)) {
+					this._scheduledEventKeys.delete(key);
+				}
+			}
+			this.scheduledEvents.delete(sampleTime);
+		}
+	}
+	
+	/**
+	 * Clean up old scheduled events that have already passed
+	 * This prevents the Map from growing indefinitely
+	 */
+	_cleanupOldEvents(currentSampleTime) {
+		const cleanupThreshold = currentSampleTime - this._cleanupThresholdSamples;
+		const keysToDelete = [];
+		
+		// Find all sample times that are too old
+		for (const sampleTime of this.scheduledEvents.keys()) {
+			if (sampleTime < cleanupThreshold) {
+				keysToDelete.push(sampleTime);
+			}
+		}
+		
+		// Remove old events
+		for (const sampleTime of keysToDelete) {
+			// Clean up scheduled event keys
+			for (const key of this._scheduledEventKeys) {
+				if (key.endsWith(`_${sampleTime}`)) {
+					this._scheduledEventKeys.delete(key);
+				}
+			}
+			this.scheduledEvents.delete(sampleTime);
+		}
 	}
 
 	getPatternLength() {
@@ -298,7 +371,7 @@ class EventScheduler {
 		if (this.processor.projectManager.baseMeterTrackId) {
 			const baseTrack = this.processor.projectManager.getTrack(this.processor.projectManager.baseMeterTrackId);
 			if (baseTrack) {
-				const rootDivision = baseTrack.patternTree?.division || 4;
+				const rootDivision = (baseTrack.patternTree && baseTrack.patternTree.division) ? baseTrack.patternTree.division : 4;
 				
 				// Check if this is a pattern instrument (ID starts with __pattern_)
 				if (baseTrack.id && baseTrack.id.startsWith('__pattern_')) {
@@ -306,7 +379,8 @@ class EventScheduler {
 					const lastUnderscore = baseTrack.id.lastIndexOf('_');
 					if (lastUnderscore > '__pattern_'.length) {
 						const patternId = baseTrack.id.substring('__pattern_'.length, lastUnderscore);
-						const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+						const patterns = this.processor.projectManager.patterns;
+						const pattern = (patterns) ? patterns.find(p => p.id === patternId) : null;
 						if (pattern) {
 							baseMeter = pattern.baseMeter || 4;
 						}
@@ -317,16 +391,17 @@ class EventScheduler {
 				// The hierarchical structure is preserved because children split parent's duration proportionally
 				patternLength = baseMeter;
 			}
-		} else if (this.processor.projectManager.tracks?.[0]) {
+		} else if (this.processor.projectManager.tracks && this.processor.projectManager.tracks.length > 0) {
 			const firstTrack = this.processor.projectManager.tracks[0];
-			const rootDivision = firstTrack.patternTree?.division || 4;
+			const rootDivision = (firstTrack.patternTree && firstTrack.patternTree.division) ? firstTrack.patternTree.division : 4;
 			
 			// Check if this is a pattern instrument
 			if (firstTrack.id && firstTrack.id.startsWith('__pattern_')) {
 				const lastUnderscore = firstTrack.id.lastIndexOf('_');
 				if (lastUnderscore > '__pattern_'.length) {
 					const patternId = firstTrack.id.substring('__pattern_'.length, lastUnderscore);
-					const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+					const patterns = this.processor.projectManager.patterns;
+					const pattern = (patterns) ? patterns.find(p => p.id === patternId) : null;
 					if (pattern) {
 						baseMeter = pattern.baseMeter || 4;
 					}
@@ -354,6 +429,8 @@ class EventScheduler {
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
 				}
 				this.scheduledEvents.clear();
+				this._scheduledEventKeys.clear();
+				this._lastCheckedEventIndex = -1;
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			} else {
@@ -363,14 +440,20 @@ class EventScheduler {
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
 				}
 				this.scheduledEvents.clear();
+				this._scheduledEventKeys.clear();
+				this._lastCheckedEventIndex = -1;
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			}
 		}
 	}
 
-	clear() {
+		clear() {
 		this.scheduledEvents.clear();
+		this._scheduledEventKeys.clear();
+		this._lastScheduledBeat = -1; // Reset scheduling state
+		this._lastCheckedEventIndex = -1; // Reset event index tracking
+		this._lastEventCount = 0; // Reset event count
 	}
 }
 
@@ -390,6 +473,19 @@ class EffectsProcessor {
 		this.timelineTracks = []; // Timeline tracks (for looking up patternId on pattern tracks)
 		this.processor = null; // Reference to processor for accessing ProjectManager
 		this.automation = null; // Project automation data
+		
+		// Performance optimization caches
+		this._trackToTimelineTrackId = new Map(); // trackId -> timelineTrackId
+		this._activeEffectsCache = new Map(); // trackId_patternId_beat -> activeEffects[]
+		this._globalEffectsCache = null; // Cached global effects (beat -> activeEffects[])
+		this._lastGlobalCacheBeat = -1;
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
+		
+		// Automation optimization caches
+		this._automationByEffectInstance = new Map(); // timelineEffectId -> automation[]
+		this._sortedPointsCache = new Map(); // automationId -> sortedPoints[]
+		this._automationSettingsCache = new Map(); // timelineEffectId_beat -> settings
 	}
 
 	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks, automation) {
@@ -400,6 +496,12 @@ class EffectsProcessor {
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
 		this.automation = automation || null;
+		
+		// Clear caches when reinitializing
+		this.clearCaches();
+		
+		// Build automation lookup map for fast access
+		this._buildAutomationMap();
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
@@ -420,6 +522,51 @@ class EffectsProcessor {
 	}
 
 	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._trackToTimelineTrackId.clear();
+		this._activeEffectsCache.clear();
+		this._globalEffectsCache = null;
+		this._lastGlobalCacheBeat = -1;
+		this._lastCacheUpdateBeat = -1;
+		this._automationByEffectInstance.clear();
+		this._sortedPointsCache.clear();
+		this._automationSettingsCache.clear();
+	}
+	
+	/**
+	 * Build automation lookup map indexed by effect instance ID
+	 * This avoids iterating through all automation entries every sample
+	 */
+	_buildAutomationMap() {
+		this._automationByEffectInstance.clear();
+		this._sortedPointsCache.clear();
+		
+		if (!this.automation) return;
+		
+		for (const automationId in this.automation) {
+			const automation = this.automation[automationId];
+			if (!automation || typeof automation !== 'object') continue;
+			if (automation.targetType !== 'effect' || !automation.timelineInstanceId) continue;
+			
+			const timelineEffectId = automation.timelineInstanceId;
+			if (!this._automationByEffectInstance.has(timelineEffectId)) {
+				this._automationByEffectInstance.set(timelineEffectId, []);
+			}
+			// Store automation with its ID for cache lookup
+			const automationWithId = Object.assign({}, automation, { id: automationId });
+			this._automationByEffectInstance.get(timelineEffectId).push(automationWithId);
+			
+			// Pre-sort and cache points for this automation
+			if (automation.points && automation.points.length > 0) {
+				const sortedPoints = automation.points.slice().sort((a, b) => a.beat - b.beat);
+				this._sortedPointsCache.set(automationId, sortedPoints);
+			}
+		}
+	}
+
+	/**
 	 * Update effect settings in real-time
 	 * @param {string} effectId - The effect ID to update
 	 * @param {Object} settings - New settings object (will be merged with existing settings)
@@ -428,7 +575,7 @@ class EffectsProcessor {
 		const effect = this.effects.find(e => e.id === effectId);
 		if (effect) {
 			// Update effect settings
-			effect.settings = { ...effect.settings, ...settings };
+			effect.settings = Object.assign({}, effect.settings || {}, settings);
 		}
 	}
 
@@ -440,21 +587,203 @@ class EffectsProcessor {
 	 * @param {string} patternId - Optional pattern ID for pattern-specific effects
 	 * @returns {Array} Array of active effect definitions with their settings
 	 */
-	getActiveEffects(trackId, currentBeat, isArrangementView, patternId = null) {
+	getActiveEffects(trackId, currentBeat, isArrangementView, patternId) {
+		if (patternId === undefined) patternId = null;
 		if (!isArrangementView) {
 			// In pattern view, return global effects or pattern-specific effects
 			// For now, return empty array - pattern view effects can be added later
 			return [];
 		}
 
-		const activeEffects = [];
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(currentBeat);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
 
-		// Find which timeline track this audio track belongs to
-		let timelineTrackId = null;
-		if (this.timelineTrackToAudioTracks) {
-			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+		// Check cache first (track-specific)
+		const cacheKey = trackId + '_' + (patternId || 'null') + '_' + Math.floor(currentBeat / this._cacheUpdateInterval);
+		const cached = this._activeEffectsCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+			return cached.effects;
+		}
+
+		// Optimize: For global effects, calculate once and reuse
+		// Check if we need to recalculate global effects
+		const beatBucket = Math.floor(currentBeat / this._cacheUpdateInterval);
+		const shouldRecalcGlobal = !this._globalEffectsCache || 
+		                           Math.abs(currentBeat - this._lastGlobalCacheBeat) >= this._cacheUpdateInterval;
+		
+		let globalEffects = [];
+		if (shouldRecalcGlobal) {
+			// Calculate global effects once (effects with no trackId and no patternId)
+			globalEffects = this._calculateGlobalEffects(currentBeat);
+			this._globalEffectsCache = {
+				beat: currentBeat,
+				beatBucket: beatBucket,
+				effects: globalEffects
+			};
+			this._lastGlobalCacheBeat = currentBeat;
+		} else {
+			// Reuse cached global effects
+			globalEffects = this._globalEffectsCache.effects;
+		}
+
+		// Calculate track-specific effects (pattern-specific or track-specific)
+		const trackSpecificEffects = this._calculateTrackSpecificEffects(trackId, currentBeat, patternId);
+
+		// Combine global and track-specific effects
+		const activeEffects = globalEffects.concat(trackSpecificEffects);
+
+		// Store in cache
+		this._activeEffectsCache.set(cacheKey, {
+			beat: currentBeat,
+			effects: activeEffects
+		});
+
+		return activeEffects;
+	}
+
+	/**
+	 * Calculate global effects (effects with no trackId/patternId OR effects on effect tracks)
+	 * These apply to all tracks, so we calculate once and reuse
+	 */
+	_calculateGlobalEffects(currentBeat) {
+		const globalEffects = [];
+		
+		for (const timelineEffect of this.timelineEffects) {
+			const startBeat = timelineEffect.startBeat || 0;
+			const endBeat = startBeat + (timelineEffect.duration || 0);
+			
+			// Check if effect is active at current position
+			if (currentBeat >= startBeat && currentBeat < endBeat) {
+				// Include global effects: no trackId/patternId OR on effect track
+				let isGlobal = false;
+				if (!timelineEffect.trackId && !timelineEffect.patternId) {
+					isGlobal = true;
+				} else if (timelineEffect.trackId) {
+					// Check if it's on an effect track (which makes it global)
+					const effectTimelineTrack = this.timelineTracks.find(t => t.id === timelineEffect.trackId);
+					if (effectTimelineTrack && effectTimelineTrack.type === 'effect') {
+						isGlobal = true;
+					}
+				}
+				
+				if (isGlobal) {
+					const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
+					if (effectDef) {
+						// Apply automation to effect settings
+						const automatedSettings = this.applyAutomationToEffect(
+							effectDef,
+							timelineEffect.id,
+							currentBeat,
+							startBeat,
+							endBeat
+						);
+						
+						globalEffects.push(Object.assign({}, effectDef, {
+							settings: automatedSettings,
+							progress: (currentBeat - startBeat) / (endBeat - startBeat)
+						}));
+					}
+				}
+			}
+		}
+		
+		return globalEffects;
+	}
+	
+	/**
+	 * Calculate track-specific effects (pattern-specific or track-specific)
+	 */
+	_calculateTrackSpecificEffects(trackId, currentBeat, patternId) {
+		if (patternId === undefined) patternId = null;
+		const trackSpecificEffects = [];
+		
+		// Use cached timeline track ID lookup
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			// Fallback: calculate if not cached
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
 				if (audioTrackIds.includes(trackId)) {
 					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
+					break;
+				}
+			}
+		}
+		
+		// Find timeline effects that are active at this position and track-specific
+		for (const timelineEffect of this.timelineEffects) {
+			const startBeat = timelineEffect.startBeat || 0;
+			const endBeat = startBeat + (timelineEffect.duration || 0);
+			
+			// Check if effect is active at current position
+			if (currentBeat >= startBeat && currentBeat < endBeat) {
+				// Skip global effects (already handled)
+				if (timelineEffect.trackId || timelineEffect.patternId) {
+					let shouldApply = false;
+					
+					// Check pattern or track assignment
+					if (timelineEffect.patternId) {
+						if (patternId && timelineEffect.patternId === patternId) {
+							shouldApply = true;
+						}
+					} else if (timelineEffect.trackId && timelineTrackId) {
+						if (timelineEffect.trackId === timelineTrackId) {
+							shouldApply = true;
+						}
+					}
+					// Note: Effects on effect tracks are now handled in _calculateGlobalEffects
+					// This method only handles pattern- or audio-track-specific effects
+					
+					if (shouldApply) {
+						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
+						if (effectDef) {
+							// Apply automation to effect settings
+							const automatedSettings = this.applyAutomationToEffect(
+								effectDef,
+								timelineEffect.id,
+								currentBeat,
+								startBeat,
+								endBeat
+							);
+							
+							trackSpecificEffects.push(Object.assign({}, effectDef, {
+								settings: automatedSettings,
+								progress: (currentBeat - startBeat) / (endBeat - startBeat)
+							}));
+						}
+					}
+				}
+			}
+		}
+		
+		return trackSpecificEffects;
+	}
+	
+	/**
+	 * Calculate active effects (uncached version) - DEPRECATED, use _calculateGlobalEffects + _calculateTrackSpecificEffects
+	 */
+	_calculateActiveEffects(trackId, currentBeat, patternId) {
+		if (patternId === undefined) patternId = null;
+		const activeEffects = [];
+
+		// Use cached timeline track ID lookup
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			// Fallback: calculate if not cached
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				if (audioTrackIds.includes(trackId)) {
+					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
 					break;
 				}
 			}
@@ -470,9 +799,9 @@ class EffectsProcessor {
 				let matchStatus = 'not active';
 				if (isActive) {
 					if (te.patternId) {
-						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : `NO MATCH: patternId mismatch (effect=${te.patternId}, track=${patternId})`;
+						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : 'NO MATCH: patternId mismatch (effect=' + te.patternId + ', track=' + patternId + ')';
 					} else if (te.trackId) {
-						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : `NO MATCH: trackId mismatch (effect=${te.trackId}, audioTrack=${timelineTrackId})`;
+						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : 'NO MATCH: trackId mismatch (effect=' + te.trackId + ', audioTrack=' + timelineTrackId + ')';
 					} else {
 						matchStatus = 'MATCH (global effect)';
 					}
@@ -498,11 +827,20 @@ class EffectsProcessor {
 					currentBeat: currentBeat.toFixed(2),
 					timelineEffectsCount: this.timelineEffects.length,
 					timelineEffects: matchingDetails,
-					timelineTrackMapping: Array.from(this.timelineTrackToAudioTracks.entries()).map(([tid, aids]) => ({
-						timelineTrackId: tid,
-						audioTrackIds: aids,
-						includesCurrentTrack: aids.includes(trackId)
-					}))
+					timelineTrackMapping: (function() {
+						const result = [];
+						const entries = this.timelineTrackToAudioTracks.entries();
+						for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+							const tid = entry.value[0];
+							const aids = entry.value[1];
+							result.push({
+								timelineTrackId: tid,
+								audioTrackIds: aids,
+								includesCurrentTrack: aids.includes(trackId)
+							});
+						}
+						return result;
+					}.call(this))
 				}
 			});
 		}
@@ -524,7 +862,7 @@ class EffectsProcessor {
 						shouldApply = true;
 						matchReason = 'patternId match';
 					} else {
-						matchReason = `patternId mismatch: effect=${timelineEffect.patternId}, track=${patternId}`;
+						matchReason = 'patternId mismatch: effect=' + timelineEffect.patternId + ', track=' + patternId;
 					}
 				} else if (timelineEffect.trackId) {
 					// Effect is assigned to a specific timeline track
@@ -537,7 +875,7 @@ class EffectsProcessor {
 							matchReason = 'effect track (global)';
 						} else {
 							// Effect is incorrectly placed on a non-effect track (shouldn't happen, but handle gracefully)
-							matchReason = `effect on wrong track type: effect=${timelineEffect.trackId} (type=${effectTimelineTrack.type}, should be 'effect')`;
+							matchReason = 'effect on wrong track type: effect=' + timelineEffect.trackId + ' (type=' + effectTimelineTrack.type + ', should be \'effect\')';
 						}
 					} else {
 						// Timeline track not found - this shouldn't happen but handle gracefully
@@ -553,7 +891,7 @@ class EffectsProcessor {
 								}
 							});
 						}
-						matchReason = `trackId mismatch: effect=${timelineEffect.trackId} (track not found), audioTrack=${timelineTrackId}`;
+						matchReason = 'trackId mismatch: effect=' + timelineEffect.trackId + ' (track not found), audioTrack=' + timelineTrackId;
 					}
 				} else {
 					// Global effect (no trackId or patternId) - applies to all tracks
@@ -573,20 +911,19 @@ class EffectsProcessor {
 							endBeat
 						);
 						
-						activeEffects.push({
-							...effectDef,
+						activeEffects.push(Object.assign({}, effectDef, {
 							settings: automatedSettings,
 							progress: (currentBeat - startBeat) / (endBeat - startBeat) // 0-1 progress through effect
-						});
+						}));
 					} else {
 						// Debug: Effect definition not found (throttled to avoid spam)
 						if (this.processor && this.processor.port) {
-							// Track last log time per effect ID to avoid spam
-							const lastLogKey = `missing_effect_${timelineEffect.effectId}`;
-							const lastLogTime = this._missingEffectLogTimes?.[lastLogKey] || 0;
-							if (!this._missingEffectLogTimes) {
-								this._missingEffectLogTimes = {};
-							}
+						// Track last log time per effect ID to avoid spam
+						const lastLogKey = 'missing_effect_' + timelineEffect.effectId;
+						if (!this._missingEffectLogTimes) {
+							this._missingEffectLogTimes = {};
+						}
+						const lastLogTime = (this._missingEffectLogTimes && this._missingEffectLogTimes[lastLogKey]) ? this._missingEffectLogTimes[lastLogKey] : 0;
 							
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
@@ -618,7 +955,7 @@ class EffectsProcessor {
 								audioPatternId: patternId,
 								audioTimelineTrackId: timelineTrackId,
 								currentBeat: currentBeat.toFixed(2),
-								effectTimeRange: `${startBeat.toFixed(2)}-${endBeat.toFixed(2)}`
+								effectTimeRange: startBeat.toFixed(2) + '-' + endBeat.toFixed(2)
 							}
 						});
 					}
@@ -627,6 +964,41 @@ class EffectsProcessor {
 		}
 
 		return activeEffects;
+	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(currentBeat) {
+		// Build trackId -> timelineTrackId map (only if not already built)
+		if (this._trackToTimelineTrackId.size === 0 && this.timelineTrackToAudioTracks) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const timelineTrackId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				for (let i = 0; i < audioTrackIds.length; i++) {
+					const audioTrackId = audioTrackIds[i];
+					if (!this._trackToTimelineTrackId.has(audioTrackId)) {
+						this._trackToTimelineTrackId.set(audioTrackId, timelineTrackId);
+					}
+				}
+			}
+		}
+
+		// Clear old cache entries (keep only recent ones)
+		const cacheKeysToDelete = [];
+		const cacheEntries = this._activeEffectsCache.entries();
+		for (let entry = cacheEntries.next(); !entry.done; entry = cacheEntries.next()) {
+			const key = entry.value[0];
+			const cached = entry.value[1];
+			if (Math.abs(currentBeat - cached.beat) > this._cacheUpdateInterval * 4) {
+				cacheKeysToDelete.push(key);
+			}
+		}
+		for (const key of cacheKeysToDelete) {
+			this._activeEffectsCache.delete(key);
+		}
 	}
 
 	/**
@@ -661,60 +1033,61 @@ class EffectsProcessor {
 			return effectDef.settings || {};
 		}
 
-		// Start with base settings
-		const automatedSettings = { ...(effectDef.settings || {}) };
+		// Check cache first (cache per 0.1 beats to reduce recalculations)
+		const cacheKey = timelineEffectId + '_' + Math.floor(currentBeat / 0.1);
+		const cached = this._automationSettingsCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < 0.15) {
+			return cached.settings;
+		}
 
-		// Find all automation curves for this effect instance
-		let automationFound = false;
-		for (const [automationId, automation] of Object.entries(this.automation)) {
-			if (!automation || typeof automation !== 'object') continue;
-			
-			const auto = automation;
-			// Check if this automation is for this effect and timeline instance
-			if (auto.targetType === 'effect' && 
-			    auto.targetId === effectDef.id && 
-			    auto.timelineInstanceId === timelineEffectId) {
-				
-				automationFound = true;
-				
-				// Get automation value at current beat
-				const value = this.getAutomationValueAtBeat(auto.points || [], currentBeat, auto.min || 0, auto.max || 1);
-				
-				// Debug: Log automation application (throttled)
-				if (this.processor && this.processor.port) {
-					const lastLogKey = `automation_${timelineEffectId}_${auto.parameterKey}`;
-					const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
-					if (!this._automationLogTimes) {
-						this._automationLogTimes = {};
+		// Start with base settings
+		const automatedSettings = Object.assign({}, effectDef.settings || {});
+
+		// Use pre-built automation map for fast lookup
+		const automations = this._automationByEffectInstance.get(timelineEffectId);
+		if (automations && automations.length > 0) {
+			for (const auto of automations) {
+				// Verify this automation is for this effect (should already be filtered, but double-check)
+				if (auto.targetId === effectDef.id) {
+					// Get cached sorted points or sort if not cached
+					let sortedPoints = this._sortedPointsCache.get(auto.id || '');
+					if (!sortedPoints && auto.points && auto.points.length > 0) {
+						sortedPoints = auto.points.slice().sort((a, b) => a.beat - b.beat);
+						if (auto.id) {
+							this._sortedPointsCache.set(auto.id, sortedPoints);
+						}
 					}
 					
-					// Log once every 2 beats to verify automation is working
-					if (currentBeat - lastLogTime > 2) {
-						this._automationLogTimes[lastLogKey] = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Automation being applied',
-							data: {
-								effectId: effectDef.id,
-								timelineEffectId,
-								parameterKey: auto.parameterKey,
-								currentBeat: currentBeat.toFixed(2),
-								automatedValue: value.toFixed(3),
-								baseValue: (effectDef.settings?.[auto.parameterKey] || 0).toFixed(3),
-								pointsCount: auto.points?.length || 0,
-								points: auto.points?.map(p => ({ beat: p.beat.toFixed(2), value: p.value.toFixed(3) })) || [],
-								automationId
-							}
-						});
-					}
+					// Get automation value at current beat (using cached sorted points)
+					const value = this.getAutomationValueAtBeatFast(sortedPoints || [], currentBeat, auto.min || 0, auto.max || 1);
+					
+					// Apply to the parameter
+					automatedSettings[auto.parameterKey] = value;
 				}
-				
-				// Apply to the parameter
-				automatedSettings[auto.parameterKey] = value;
 			}
 		}
 		
-		// Debug logging removed
+		// Cache the result
+		this._automationSettingsCache.set(cacheKey, {
+			beat: currentBeat,
+			settings: automatedSettings
+		});
+		
+		// Clean old cache entries (keep only recent ones)
+		if (this._automationSettingsCache.size > 100) {
+			const keysToDelete = [];
+			const cacheEntries = this._automationSettingsCache.entries();
+			for (let entry = cacheEntries.next(); !entry.done; entry = cacheEntries.next()) {
+				const key = entry.value[0];
+				const cached = entry.value[1];
+				if (Math.abs(currentBeat - cached.beat) > 1.0) {
+					keysToDelete.push(key);
+				}
+			}
+			for (const key of keysToDelete) {
+				this._automationSettingsCache.delete(key);
+			}
+		}
 
 		return automatedSettings;
 	}
@@ -732,8 +1105,24 @@ class EffectsProcessor {
 			return (min + max) / 2; // Default to middle value
 		}
 
-		// Sort points by beat
-		const sortedPoints = [...points].sort((a, b) => a.beat - b.beat);
+		// Sort points by beat (fallback for uncached calls)
+		const sortedPoints = points.slice().sort((a, b) => a.beat - b.beat);
+		return this.getAutomationValueAtBeatFast(sortedPoints, beat, min, max);
+	}
+	
+	/**
+	 * Fast version that assumes points are already sorted
+	 * Uses binary search for O(log n) lookup instead of O(n)
+	 * @param {Array} sortedPoints - Pre-sorted automation points array
+	 * @param {number} beat - Beat position
+	 * @param {number} min - Minimum value
+	 * @param {number} max - Maximum value
+	 * @returns {number} Interpolated value
+	 */
+	getAutomationValueAtBeatFast(sortedPoints, beat, min, max) {
+		if (!sortedPoints || sortedPoints.length === 0) {
+			return (min + max) / 2; // Default to middle value
+		}
 
 		// Before first point
 		if (beat <= sortedPoints[0].beat) {
@@ -745,18 +1134,24 @@ class EffectsProcessor {
 			return sortedPoints[sortedPoints.length - 1].value;
 		}
 
-		// Interpolate between points
-		for (let i = 0; i < sortedPoints.length - 1; i++) {
-			const p1 = sortedPoints[i];
-			const p2 = sortedPoints[i + 1];
-
-			if (beat >= p1.beat && beat <= p2.beat) {
-				const t = (beat - p1.beat) / (p2.beat - p1.beat);
-				return p1.value + (p2.value - p1.value) * t;
+		// Binary search for the two points to interpolate between
+		let left = 0;
+		let right = sortedPoints.length - 1;
+		
+		while (left < right - 1) {
+			const mid = Math.floor((left + right) / 2);
+			if (sortedPoints[mid].beat <= beat) {
+				left = mid;
+			} else {
+				right = mid;
 			}
 		}
-
-		return sortedPoints[0].value;
+		
+		// Interpolate between sortedPoints[left] and sortedPoints[right]
+		const p1 = sortedPoints[left];
+		const p2 = sortedPoints[right];
+		const t = (beat - p1.beat) / (p2.beat - p1.beat);
+		return p1.value + (p2.value - p1.value) * t;
 	}
 
 	/**
@@ -774,37 +1169,138 @@ class EffectsProcessor {
 
 		switch (effect.type) {
 		case 'reverb':
-			// Simple reverb using wet/dry mix
-			// Real reverb would need delay buffers, but this provides basic effect
-			const reverbWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const reverbDry = settings.dry !== undefined ? settings.dry : 0.5;
-			const reverbRoomSize = settings.roomSize !== undefined ? settings.roomSize : 0.7;
-			// Make reverb more noticeable - add some resonance/feedback effect
-			const reverbAmount = reverbRoomSize * 0.6; // Increased for more noticeable effect
-			// Add harmonic enhancement and slight delay-like effect to make it more audible
-			const reverbEnhanced = sample * (1 + reverbWet * reverbAmount);
-			// Add slight feedback for more realistic reverb tail
-			const reverbFeedback = this._reverbFeedback || 0;
-			this._reverbFeedback = reverbEnhanced * 0.3 * reverbRoomSize;
-			return sample * reverbDry + (reverbEnhanced + reverbFeedback * 0.5) * reverbWet;
+			// Proper reverb using Schroeder reverb algorithm with multiple delay taps
+			// Parameters can go from 0 to very high values for maximum flexibility
+			const reverbWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			const reverbDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+			// Room size: 0 = small room, 1 = huge hall (maps to 0.02s to 3.0s reverb time)
+			const reverbRoomSize = settings.roomSize !== undefined ? Math.max(0, Math.min(1, settings.roomSize)) : 0.5;
+			// Dampening: 0 = bright, 1 = very dark (lowpass filter cutoff)
+			const reverbDampening = settings.dampening !== undefined ? Math.max(0, Math.min(1, settings.dampening)) : 0.5;
+			
+			// Initialize reverb buffers if needed
+			if (!this._reverbBuffers) {
+				this._reverbBuffers = new Map();
+			}
+			const reverbKey = 'global';
+			
+			if (!this._reverbBuffers.has(reverbKey)) {
+				// Create multiple comb filters and allpass filters for realistic reverb
+				// Using prime numbers for delay times to avoid comb filtering artifacts
+				const maxReverbTime = 3.0; // Maximum reverb time in seconds
+				const reverbBufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
+				
+				// 4 comb filters with different delay times (in samples)
+				const combDelays = [
+					Math.floor(sampleRate * 0.0297), // ~30ms
+					Math.floor(sampleRate * 0.0371), // ~37ms
+					Math.floor(sampleRate * 0.0411), // ~41ms
+					Math.floor(sampleRate * 0.0437)  // ~44ms
+				];
+				
+				// 2 allpass filters for diffusion
+				const allpassDelays = [
+					Math.floor(sampleRate * 0.005), // ~5ms
+					Math.floor(sampleRate * 0.0017) // ~1.7ms
+				];
+				
+				this._reverbBuffers.set(reverbKey, {
+					// Comb filter buffers and indices
+					combBuffers: combDelays.map(() => new Float32Array(reverbBufferSize)),
+					combIndices: combDelays.map(() => 0),
+					combDelays: combDelays,
+					combFeedbacks: combDelays.map(() => 0),
+					
+					// Allpass filter buffers and indices
+					allpassBuffers: allpassDelays.map(() => new Float32Array(reverbBufferSize)),
+					allpassIndices: allpassDelays.map(() => 0),
+					allpassDelays: allpassDelays,
+					
+					// Lowpass filter states for dampening (one per comb filter)
+					lowpassStates: combDelays.map(() => 0)
+				});
+			}
+			
+			const reverbState = this._reverbBuffers.get(reverbKey);
+			if (!reverbState) {
+				return sample; // Safety check
+			}
+			
+			// Map room size to reverb time (0.02s to 3.0s)
+			const reverbTime = 0.02 + (reverbRoomSize * 2.98);
+			// Calculate feedback for comb filters based on reverb time
+			// Longer reverb time = higher feedback
+			const baseFeedback = Math.pow(0.001, reverbState.combDelays[0] / (sampleRate * reverbTime));
+			
+			// Process through allpass filters first (for diffusion)
+			let processed = sample;
+			for (let i = 0; i < reverbState.allpassDelays.length; i++) {
+				const delay = reverbState.allpassDelays[i];
+				const readIndex = (reverbState.allpassIndices[i] - delay + reverbState.allpassBuffers[i].length) % reverbState.allpassBuffers[i].length;
+				const delayed = reverbState.allpassBuffers[i][readIndex];
+				
+				// Allpass filter: output = input + delayed * feedback, store input - delayed * feedback
+				const allpassFeedback = 0.5; // Fixed feedback for allpass
+				const output = processed + delayed * allpassFeedback;
+				reverbState.allpassBuffers[i][reverbState.allpassIndices[i]] = processed - delayed * allpassFeedback;
+				reverbState.allpassIndices[i] = (reverbState.allpassIndices[i] + 1) % reverbState.allpassBuffers[i].length;
+				processed = output;
+			}
+			
+			// Process through comb filters (for reverb tail)
+			let reverbOutput = 0;
+			for (let i = 0; i < reverbState.combDelays.length; i++) {
+				const delay = reverbState.combDelays[i];
+				const readIndex = (reverbState.combIndices[i] - delay + reverbState.combBuffers[i].length) % reverbState.combBuffers[i].length;
+				const delayed = reverbState.combBuffers[i][readIndex];
+				
+				// Apply dampening (lowpass filter) to delayed signal
+				let dampened = delayed;
+				if (reverbDampening > 0) {
+					// Lowpass filter: cutoff frequency decreases with dampening
+					// 0 = no filtering, 1 = very dark (cutoff ~500Hz)
+					const cutoff = 20000 * (1 - reverbDampening * 0.975); // 20kHz to 500Hz
+					const rc = 1.0 / (cutoff * 2 * Math.PI / sampleRate);
+					const alpha = 1.0 / (1.0 + rc);
+					reverbState.lowpassStates[i] = alpha * dampened + (1 - alpha) * reverbState.lowpassStates[i];
+					dampened = reverbState.lowpassStates[i];
+				}
+				
+				// Calculate feedback based on reverb time
+				const feedback = baseFeedback * (1 - reverbDampening * 0.3); // Slightly reduce feedback with dampening
+				
+				// Write input + feedback to buffer
+				reverbState.combBuffers[i][reverbState.combIndices[i]] = processed + dampened * feedback;
+				reverbState.combIndices[i] = (reverbState.combIndices[i] + 1) % reverbState.combBuffers[i].length;
+				
+				// Add to reverb output
+				reverbOutput += dampened;
+			}
+			
+			// Normalize and mix
+			reverbOutput /= reverbState.combDelays.length; // Average the comb filters
+			
+			// Mix dry and wet signals
+			return sample * reverbDry + reverbOutput * reverbWet;
 
 		case 'delay':
-			// Delay with proper delay buffer and feedback
-			const delayWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const delayDry = settings.dry !== undefined ? settings.dry : 0.5;
-			const delayFeedback = settings.feedback !== undefined ? settings.feedback : 0.5;
-			const delayTime = settings.time !== undefined ? settings.time : 0.25;
+			// Delay with proper delay buffer and feedback - can be pushed to extreme
+			const delayWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			const delayDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+			// Clamp feedback to prevent infinite oscillation (0.99 max for safety)
+			const delayFeedback = settings.feedback !== undefined ? Math.max(0, Math.min(0.99, settings.feedback)) : 0.5;
+			const delayTime = settings.time !== undefined ? Math.max(0, Math.min(2.0, settings.time)) : 0.25;
 			// Use delay buffer for proper echo effect
 			if (!this._delayBuffers) {
-				this._delayBuffers = new Map(); // trackId -> { buffer, writeIndex }
+				this._delayBuffers = new Map();
 			}
-			const delayKey = 'global'; // Could be per-track if needed
-			const maxDelayTime = 2.0; // Maximum delay time in seconds (from UI max)
-			const bufferSize = Math.floor(sampleRate * maxDelayTime * 1.5); // Buffer for max delay + safety
+			const delayKey = 'global';
+			const maxDelayTime = 2.0; // Maximum delay time in seconds
+			const delayBufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
 			
 			if (!this._delayBuffers.has(delayKey)) {
 				this._delayBuffers.set(delayKey, {
-					buffer: new Float32Array(bufferSize),
+					buffer: new Float32Array(delayBufferSize),
 					writeIndex: 0
 				});
 			}
@@ -812,96 +1308,263 @@ class EffectsProcessor {
 			
 			// Calculate read position based on delayTime (in samples)
 			const delaySamples = Math.floor(delayTime * sampleRate);
-			const delayReadIndex = (delayState.writeIndex - delaySamples + bufferSize) % bufferSize;
+			const delayReadIndex = (delayState.writeIndex - delaySamples + delayBufferSize) % delayBufferSize;
 			
 			// Read delayed sample (with linear interpolation for smooth changes)
 			const delayReadIndex1 = Math.floor(delayReadIndex);
-			const delayReadIndex2 = (delayReadIndex1 + 1) % bufferSize;
+			const delayReadIndex2 = (delayReadIndex1 + 1) % delayBufferSize;
 			const delayFrac = delayReadIndex - delayReadIndex1;
 			const delayedSample1 = delayState.buffer[delayReadIndex1];
 			const delayedSample2 = delayState.buffer[delayReadIndex2];
 			const delayedSample = delayedSample1 * (1 - delayFrac) + delayedSample2 * delayFrac;
 			
-			// Write current sample + feedback
+			// Write current sample + feedback (can create many repeats at high feedback)
 			delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
-			delayState.writeIndex = (delayState.writeIndex + 1) % bufferSize;
+			delayState.writeIndex = (delayState.writeIndex + 1) % delayBufferSize;
 			
-			// Mix dry and wet
+			// Mix dry and wet - at max wet/dry extremes, can be completely wet or dry
 			return sample * delayDry + delayedSample * delayWet;
 
 		case 'filter':
-			// Simple low-pass filter approximation
-			const filterFreq = settings.frequency !== undefined ? settings.frequency : 0.5;
-			const filterResonance = settings.resonance !== undefined ? settings.resonance : 0.5;
-			// Map frequency (0-1) to a more noticeable filter effect
-			// Lower frequency = more filtering (darker sound)
-			const filterAmount = filterFreq; // 0 = full filter, 1 = no filter
-			// Add resonance boost to make it more audible
-			const resonanceBoost = 1 + (filterResonance * 0.3);
-			return sample * filterAmount * resonanceBoost;
+			// Proper filter implementation that can go from subtle to extreme
+			const filterFreq = settings.frequency !== undefined ? Math.max(0, Math.min(1, settings.frequency)) : 0.5;
+			const filterResonance = settings.resonance !== undefined ? Math.max(0, Math.min(1, settings.resonance)) : 0.5;
+			const filterType = settings.type || 'lowpass';
+			
+			// Initialize filter state if needed
+			if (!this._filterStates) {
+				this._filterStates = new Map();
+			}
+			const filterKey = 'global';
+			
+			if (!this._filterStates.has(filterKey)) {
+				this._filterStates.set(filterKey, { x1: 0, x2: 0, y1: 0, y2: 0 });
+			}
+			const filterState = this._filterStates.get(filterKey);
+			if (!filterState) {
+				return sample; // Safety check
+			}
+			
+			// Map frequency (0-1) to actual cutoff frequency
+			// 0 = very low (20Hz), 1 = very high (20kHz)
+			const minFreq = 20;
+			const maxFreq = 20000;
+			const cutoff = minFreq + (filterFreq * (maxFreq - minFreq));
+			
+			// Map resonance (0-1) to Q factor (0.5 to 10 for extreme resonance)
+			const q = 0.5 + (filterResonance * 9.5);
+			
+			// Apply proper biquad filter based on type
+			let filtered = sample;
+			if (filterType === 'lowpass') {
+				filtered = this.applyLowpassFilter(sample, cutoff, q, filterState);
+			} else if (filterType === 'highpass') {
+				filtered = this.applyHighpassFilter(sample, cutoff, q, filterState);
+			} else if (filterType === 'bandpass') {
+				filtered = this.applyBandpassFilter(sample, cutoff, q, filterState);
+			}
+			
+			return filtered;
 
 		case 'distortion':
-			// Simple distortion/saturation
-			const distortionDrive = settings.drive !== undefined ? settings.drive : 0.5;
-			const distortionAmount = settings.amount !== undefined ? settings.amount : 0.3;
-			// Apply drive and tanh saturation - make it more aggressive
-			const driven = sample * (1 + distortionDrive * 4); // Increased from 2
-			const distorted = Math.tanh(driven);
-			// Mix between dry and distorted
+			// Distortion/saturation that can go from subtle to extreme
+			const distortionDrive = settings.drive !== undefined ? Math.max(0, Math.min(1, settings.drive)) : 0.5;
+			const distortionAmount = settings.amount !== undefined ? Math.max(0, Math.min(1, settings.amount)) : 0.3;
+			
+			// Drive can go from 1x (no drive) to 20x (extreme drive) for maximum distortion
+			const driveMultiplier = 1 + (distortionDrive * 19);
+			const driven = sample * driveMultiplier;
+			
+			// Apply tanh saturation for soft clipping, then add hard clipping for extreme settings
+			let distorted = Math.tanh(driven);
+			// At high drive, add hard clipping for more aggressive distortion
+			if (distortionDrive > 0.7) {
+				const hardClipAmount = (distortionDrive - 0.7) / 0.3; // 0 to 1 when drive > 0.7
+				distorted = distorted * (1 - hardClipAmount) + Math.max(-1, Math.min(1, driven)) * hardClipAmount;
+			}
+			
+			// Mix between dry and distorted - at max amount, completely distorted
 			return sample * (1 - distortionAmount) + distorted * distortionAmount;
 
 		case 'compressor':
-			// Simple compression
-			const compThreshold = settings.threshold !== undefined ? settings.threshold : 0.7;
-			const compRatio = settings.ratio !== undefined ? settings.ratio : 4;
-			const compAttack = settings.attack !== undefined ? settings.attack : 0.01;
-			const compRelease = settings.release !== undefined ? settings.release : 0.1;
+			// Compressor that can go from subtle to extreme (limiter at max ratio)
+			const compThreshold = settings.threshold !== undefined ? Math.max(0, Math.min(1, settings.threshold)) : 0.7;
+			const compRatio = settings.ratio !== undefined ? Math.max(1, Math.min(20, settings.ratio)) : 4;
+			const compAttack = settings.attack !== undefined ? Math.max(0, Math.min(1, settings.attack)) : 0.01;
+			const compRelease = settings.release !== undefined ? Math.max(0, Math.min(1, settings.release)) : 0.1;
+			
+			// Initialize compressor state if needed
+			if (!this._compressorStates) {
+				this._compressorStates = new Map();
+			}
+			const compKey = 'global';
+			
+			if (!this._compressorStates.has(compKey)) {
+				this._compressorStates.set(compKey, { envelope: 0 });
+			}
+			const compState = this._compressorStates.get(compKey);
+			
 			const absSample = Math.abs(sample);
+			
+			// Calculate target gain reduction
+			let targetGain = 1.0;
 			if (absSample > compThreshold) {
 				const excess = absSample - compThreshold;
 				const compressed = compThreshold + excess / compRatio;
-				return Math.sign(sample) * compressed;
+				targetGain = compressed / absSample; // Gain reduction factor
 			}
-			return sample;
+			
+			// Apply attack and release envelope
+			const attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
+			const releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
+			
+			if (targetGain < compState.envelope) {
+				// Attack phase
+				compState.envelope = targetGain + (compState.envelope - targetGain) * attackCoeff;
+			} else {
+				// Release phase
+				compState.envelope = targetGain + (compState.envelope - targetGain) * releaseCoeff;
+			}
+			
+			// Apply gain reduction
+			return sample * compState.envelope;
 
 		case 'chorus':
-			// Chorus would need delay buffers - simple approximation for now
-			const chorusWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const chorusRate = settings.rate !== undefined ? settings.rate : 0.5;
-			const chorusDepth = settings.depth !== undefined ? settings.depth : 0.6;
-			const chorusDelay = settings.delay !== undefined ? settings.delay : 0.02;
-			// Make chorus more noticeable - use delay buffer with modulation
+			// Chorus with delay buffers - can be pushed to extreme for flanger-like effects
+			const chorusWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			// Rate: 0 = very slow (0.1 Hz), 1 = very fast (10 Hz) for extreme modulation
+			const chorusRate = settings.rate !== undefined ? Math.max(0, Math.min(1, settings.rate)) : 0.5;
+			// Depth: 0 = no modulation, 1 = extreme modulation (100% of delay time)
+			const chorusDepth = settings.depth !== undefined ? Math.max(0, Math.min(1, settings.depth)) : 0.6;
+			// Delay: 0 = no delay, 0.1 = 100ms max delay
+			const chorusDelay = settings.delay !== undefined ? Math.max(0, Math.min(0.1, settings.delay)) : 0.02;
+			
 			if (!this._chorusBuffers) {
 				this._chorusBuffers = new Map();
 				this._chorusPhases = new Map();
 			}
 			const chorusKey = 'global';
+			const maxDelay = 0.1; // Maximum delay time
+			const chorusBufferSize = Math.floor(sampleRate * maxDelay * 1.5);
+			
 			if (!this._chorusBuffers.has(chorusKey)) {
-				const bufferSize = Math.floor(sampleRate * chorusDelay * 2);
 				this._chorusBuffers.set(chorusKey, {
-					buffer: new Float32Array(bufferSize),
+					buffer: new Float32Array(chorusBufferSize),
 					writeIndex: 0
 				});
 				this._chorusPhases.set(chorusKey, 0);
 			}
 			const chorusState = this._chorusBuffers.get(chorusKey);
 			const chorusPhase = this._chorusPhases.get(chorusKey);
+			
 			// Write current sample
 			chorusState.buffer[chorusState.writeIndex] = sample;
 			chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
+			
 			// Calculate modulated delay (LFO)
-			const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusRate);
+			// Map rate from 0-1 to 0.1-10 Hz for wide range
+			const lfoFreq = 0.1 + (chorusRate * 9.9);
+			const lfo = Math.sin(chorusPhase * 2 * Math.PI * lfoFreq);
+			// Depth controls how much the delay modulates (0 to 100% of delay time)
 			const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
-			const chorusReadIndex = (chorusState.writeIndex - Math.floor(modulatedDelay * sampleRate) + chorusState.buffer.length) % chorusState.buffer.length;
-			const chorusedSample = chorusState.buffer[chorusReadIndex];
+			
+			// Read from modulated position with interpolation
+			const readPos = chorusState.writeIndex - (modulatedDelay * sampleRate);
+			const readIndex1 = Math.floor(readPos);
+			const readIndex2 = readIndex1 + 1;
+			const frac = readPos - readIndex1;
+			
+			// Wrap indices
+			const idx1 = ((readIndex1 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
+			const idx2 = ((readIndex2 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
+			
+			const sample1 = chorusState.buffer[idx1];
+			const sample2 = chorusState.buffer[idx2];
+			const chorusedSample = sample1 * (1 - frac) + sample2 * frac;
+			
 			// Update phase
-			this._chorusPhases.set(chorusKey, (chorusPhase + chorusRate / sampleRate) % 1.0);
-			// Mix dry and wet
+			this._chorusPhases.set(chorusKey, (chorusPhase + lfoFreq / sampleRate) % 1.0);
+			
+			// Mix dry and wet - at max wet, completely chorused
 			return sample * (1 - chorusWet) + chorusedSample * chorusWet;
 
 		default:
 			return sample;
 		}
+	}
+	
+	/**
+	 * Apply a lowpass filter (biquad)
+	 */
+	applyLowpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
+		const a1 = 1.0 / (1.0 + q * c + c * c);
+		const a2 = 2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (1.0 - c * c) * a1;
+		const b2 = (1.0 - q * c + c * c) * a1;
+
+		const output = a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply a highpass filter (biquad)
+	 */
+	applyHighpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
+		const a1 = 1.0 / (1.0 + q * c + c * c);
+		const a2 = -2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (c * c - 1.0) * a1;
+		const b2 = (1.0 - q * c + c * c) * a1;
+
+		const output = a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply a bandpass filter (biquad)
+	 */
+	applyBandpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const w = 2.0 * Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate;
+		const cosw = Math.cos(w);
+		const sinw = Math.sin(w);
+		const alpha = sinw / (2.0 * q);
+		
+		const b0 = alpha;
+		const b1 = 0;
+		const b2 = -alpha;
+		const a0 = 1 + alpha;
+		const a1 = -2 * cosw;
+		const a2 = 1 - alpha;
+
+		const output = (b0 / a0) * input + (b1 / a0) * state.x1 + (b2 / a0) * state.x2
+			- (a1 / a0) * state.y1 - (a2 / a0) * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
 	}
 }
 
@@ -919,6 +1582,11 @@ class EnvelopesProcessor {
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
 		this.timelineTracks = []; // Timeline tracks (for validation)
 		this.processor = null; // Reference to processor for debug logging
+		
+		// Performance optimization caches
+		this._activeEnvelopeValuesCache = new Map(); // trackId_patternId_beat -> envelopeValues
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
 	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null) {
@@ -927,6 +1595,9 @@ class EnvelopesProcessor {
 		this.patternToTrackId = patternToTrackId || new Map();
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
+		
+		// Clear caches when reinitializing
+		this.clearCaches();
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
@@ -944,6 +1615,14 @@ class EnvelopesProcessor {
 	}
 
 	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._activeEnvelopeValuesCache.clear();
+		this._lastCacheUpdateBeat = -1;
+	}
+
+	/**
 	 * Update envelope settings in real-time
 	 * @param {string} envelopeId - The envelope ID to update
 	 * @param {Object} settings - New settings object (will be merged with existing settings)
@@ -952,7 +1631,7 @@ class EnvelopesProcessor {
 		const envelope = this.envelopes.find(e => e.id === envelopeId);
 		if (envelope) {
 			// Update envelope settings
-			envelope.settings = { ...envelope.settings, ...settings };
+			envelope.settings = Object.assign({}, envelope.settings || {}, settings);
 		}
 	}
 
@@ -976,6 +1655,36 @@ class EnvelopesProcessor {
 			};
 		}
 
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(currentBeat);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
+
+		// Check cache first
+		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cached = this._activeEnvelopeValuesCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+			return cached.values;
+		}
+
+		// Cache miss - calculate envelope values
+		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat, patternId);
+
+		// Store in cache
+		this._activeEnvelopeValuesCache.set(cacheKey, {
+			beat: currentBeat,
+			values: envelopeValues
+		});
+
+		return envelopeValues;
+	}
+
+	/**
+	 * Calculate envelope values (uncached version)
+	 */
+	_calculateEnvelopeValues(trackId, currentBeat, patternId = null) {
 		const envelopeValues = {
 			volume: 1.0,
 			filter: 1.0,
@@ -1017,7 +1726,10 @@ class EnvelopesProcessor {
 						if (this.processor && this.processor.port) {
 							// Track last log time per envelope ID to avoid spam
 							const lastLogKey = `missing_envelope_${timelineEnvelope.envelopeId}`;
-							const lastLogTime = this._missingEnvelopeLogTimes?.[lastLogKey] || 0;
+							if (!this._missingEnvelopeLogTimes) {
+								this._missingEnvelopeLogTimes = {};
+							}
+							const lastLogTime = (this._missingEnvelopeLogTimes && this._missingEnvelopeLogTimes[lastLogKey]) ? this._missingEnvelopeLogTimes[lastLogKey] : 0;
 							if (!this._missingEnvelopeLogTimes) {
 								this._missingEnvelopeLogTimes = {};
 							}
@@ -1141,6 +1853,23 @@ class EnvelopesProcessor {
 
 		return Math.max(0, Math.min(1, value)); // Clamp to 0-1
 	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(currentBeat) {
+		// Clear old cache entries (keep only recent ones)
+		const cacheKeysToDelete = [];
+		for (const [key, cached] of this._activeEnvelopeValuesCache.entries()) {
+			if (Math.abs(currentBeat - cached.beat) > this._cacheUpdateInterval * 4) {
+				cacheKeysToDelete.push(key);
+			}
+		}
+		for (const key of cacheKeysToDelete) {
+			this._activeEnvelopeValuesCache.delete(key);
+		}
+	}
 }
 
 
@@ -1200,17 +1929,17 @@ class ProjectManager {
 			data: {
 				viewMode,
 				isArrangementView: this.isArrangementView,
-				tracksCount: tracks?.length || 0,
+				tracksCount: (tracks && tracks.length) ? tracks.length : 0,
 				eventsCount: this.events.length,
-				timelineLength: timeline?.totalLength || 0,
-				clipsCount: timeline?.clips?.length || 0,
+				timelineLength: (timeline && timeline.totalLength) ? timeline.totalLength : 0,
+				clipsCount: (timeline && timeline.clips && timeline.clips.length) ? timeline.clips.length : 0,
 				firstEvent: this.events[0] || null,
-				firstTrack: tracks?.[0] || null
+				firstTrack: (tracks && tracks.length > 0) ? tracks[0] : null
 			}
 		});
 		
 		// Set base meter track (defaults to first track if not specified)
-		this.baseMeterTrackId = baseMeterTrackId || (tracks?.[0]?.id);
+		this.baseMeterTrackId = baseMeterTrackId || ((tracks && tracks.length > 0 && tracks[0] && tracks[0].id) ? tracks[0].id : null);
 		
 		// Build pattern to track ID mapping for effect/envelope assignment
 		this.patternToTrackId.clear();
@@ -1235,16 +1964,19 @@ class ProjectManager {
 		}
 		
 		// Initialize effects and envelopes processors
-		const timelineEffects = timeline?.effects || [];
-		const timelineEnvelopes = timeline?.envelopes || [];
-		const timelineTracks = timeline?.tracks || [];
+		const timelineEffects = (timeline && timeline.effects) ? timeline.effects : [];
+		const timelineEnvelopes = (timeline && timeline.envelopes) ? timeline.envelopes : [];
+		const timelineTracks = (timeline && timeline.tracks) ? timeline.tracks : [];
 		// Pass automation data to effects processor
 		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
 		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
 	}
 
 	getTrack(trackId) {
-		return this.tracks?.find(t => t.id === trackId);
+		if (this.tracks) {
+			return this.tracks.find(t => t.id === trackId);
+		}
+		return null;
 	}
 
 	updatePatternTree(trackId, patternTree) {
@@ -1318,9 +2050,11 @@ class ProjectManager {
 			const lastUnderscore = trackId.lastIndexOf('_');
 			if (lastUnderscore > '__pattern_'.length) {
 				const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
-				const pattern = this.patterns?.find(p => p.id === patternId);
-				if (pattern) {
-					baseMeter = pattern.baseMeter || 4;
+				if (this.patterns) {
+					const pattern = this.patterns.find(p => p.id === patternId);
+					if (pattern) {
+						baseMeter = pattern.baseMeter || 4;
+					}
 				}
 			}
 		}
@@ -1357,7 +2091,7 @@ class ProjectManager {
 	updateTrackSettings(trackId, settings) {
 		const track = this.getTrack(trackId);
 		if (track) {
-			track.settings = { ...track.settings, ...settings };
+			track.settings = Object.assign({}, track.settings || {}, settings);
 		}
 	}
 
@@ -1415,7 +2149,10 @@ class ProjectManager {
 	getTimelineTrackVolume(trackId) {
 		if (this.timeline && this.timeline.tracks) {
 			const track = this.timeline.tracks.find(t => t.id === trackId);
-			return track?.volume ?? 1.0;
+			if (track && track.volume !== undefined && track.volume !== null) {
+				return track.volume;
+			}
+			return 1.0;
 		}
 		return 1.0;
 	}
@@ -1464,10 +2201,7 @@ class SynthManager {
 				}
 				
 				// Merge settings - use track settings and instrumentSettings
-				const settings = {
-					...(track.settings || {}),
-					...(track.instrumentSettings || {})
-				};
+				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
 				
 				synth = this.processor.synthFactory.create(instrumentType, settings);
 				if (synth) {
@@ -1511,7 +2245,7 @@ class SynthManager {
 					data: {
 						trackId,
 						patternId: patternId || 'none',
-						availableTracks: this.processor.projectManager.tracks?.map(t => ({ id: t.id, instrumentType: t.instrumentType })) || []
+						availableTracks: (this.processor.projectManager.tracks) ? this.processor.projectManager.tracks.map(t => ({ id: t.id, instrumentType: t.instrumentType })) : []
 					}
 				});
 			}
@@ -1616,15 +2350,30 @@ class AudioMixer {
 		
 		// Debug tracking (per-track to avoid infinite loops)
 		this._lastDebugStates = new Map(); // trackId_patternId -> {muted, soloed, beat}
+		
+		// Performance optimization caches
+		this._trackToTimelineTracks = new Map(); // trackId -> timelineTrack[]
+		this._trackToPatternId = new Map(); // trackId -> patternId
+		this._trackToTimelineVolume = new Map(); // trackId -> volume multiplier
+		this._activeClipsCache = new Map(); // patternId -> {beat: number, clips: clip[]}
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
 	mixSynths(synths, masterGain = 0.3, currentBeat = 0, isArrangementView = false) {
 		let leftSample = 0;
 		let rightSample = 0;
 		
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(isArrangementView);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
+		
 		// Check if any timeline track is soloed (for arrangement view)
 		let hasSoloedTimelineTrack = false;
-		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.tracks) {
+		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline && this.processor.projectManager.timeline.tracks) {
 			hasSoloedTimelineTrack = this.processor.projectManager.timeline.tracks.some((t) => t.type === 'pattern' && t.solo === true);
 		}
 		
@@ -1632,18 +2381,14 @@ class AudioMixer {
 		
 		for (const [trackId, synth] of synths.entries()) {
 			if (synth.process) {
-				// Find all timeline tracks this audio track belongs to
-				const timelineTracks = [];
-				if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
-					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
-						if (audioTrackIds.includes(trackId)) {
-							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
-							if (timelineTrack && timelineTrack.type === 'pattern') {
-								timelineTracks.push(timelineTrack);
-							}
-						}
-					}
+				// Early mute check - skip expensive lookups if already muted (pattern view only)
+				const isMuted = this.trackStateManager.isMuted(trackId);
+				if (isMuted && !isArrangementView) {
+					continue; // Skip muted tracks in pattern view
 				}
+				
+				// Use cached timeline tracks lookup
+				const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
 				
 				// Check timeline track mute/solo state (for arrangement view)
 				// For mute: Check if there's at least one active clip on a non-muted timeline track
@@ -1651,29 +2396,29 @@ class AudioMixer {
 				let isTimelineMuted = false;
 				let isTimelineSoloed = false;
 				if (isArrangementView && timelineTracks.length > 0) {
-					// Get pattern ID to find active clips
-					let patternId = null;
-					if (trackId && trackId.startsWith('__pattern_')) {
-						const patternPrefix = '__pattern_';
-						const afterPrefix = trackId.substring(patternPrefix.length);
-						const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-						if (uuidMatch) {
-							patternId = uuidMatch[1];
-						}
-					}
+					// Use cached pattern ID
+					const patternId = this._trackToPatternId.get(trackId);
 					
-					// Find active clips for this pattern at current beat
-					if (patternId && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
-						const activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
-							return clip.patternId === patternId &&
-							       currentBeat >= clip.startBeat &&
-							       currentBeat < clip.startBeat + clip.duration;
-						});
+					// Use cached active clips (updated periodically)
+					let activeClips = [];
+					if (patternId) {
+						const cached = this._activeClipsCache.get(patternId);
+						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+							activeClips = cached.clips;
+						} else if (this.processor && this.processor.projectManager && this.processor.projectManager.timeline && this.processor.projectManager.timeline.clips) {
+							// Fallback: calculate if cache is stale
+							activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
+								return clip.patternId === patternId &&
+								       currentBeat >= clip.startBeat &&
+								       currentBeat < clip.startBeat + clip.duration;
+							});
+						}
 						
 						if (activeClips.length > 0) {
 							// Check if all active clips are on muted timeline tracks
 							const allClipsMuted = activeClips.every((clip) => {
-								const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+								const timeline = this.processor.projectManager.timeline;
+								const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 								return clipTrack && clipTrack.mute === true;
 							});
 							
@@ -1682,14 +2427,16 @@ class AudioMixer {
 							if (hasSoloedTimelineTrack) {
 								// Solo mode: play if ANY active clip is on a soloed track
 								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return clipTrack && clipTrack.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
 							} else {
 								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
 								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return clipTrack && clipTrack.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
@@ -1699,7 +2446,7 @@ class AudioMixer {
 							
 							// Debug: Log mute/solo decision for this track (track-specific, throttled)
 							const debugKey = `${trackId}_${patternId}`;
-							const lastDebugState = this._lastDebugStates?.get(debugKey);
+							const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
 							const stateChanged = !lastDebugState || 
 							                    lastDebugState.muted !== isTimelineMuted || 
 							                    lastDebugState.soloed !== isTimelineSoloed ||
@@ -1716,13 +2463,14 @@ class AudioMixer {
 								});
 								
 								const clipInfo = activeClips.map((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return {
 										clipId: clip.id,
 										trackId: clip.trackId,
-										trackName: clipTrack?.name || 'unknown',
-										mute: clipTrack?.mute || false,
-										solo: clipTrack?.solo || false,
+										trackName: (clipTrack && clipTrack.name) ? clipTrack.name : 'unknown',
+										mute: (clipTrack && clipTrack.mute) ? clipTrack.mute : false,
+										solo: (clipTrack && clipTrack.solo) ? clipTrack.solo : false,
 										startBeat: clip.startBeat,
 										duration: clip.duration,
 										clipEndBeat: clip.startBeat + clip.duration
@@ -1759,8 +2507,7 @@ class AudioMixer {
 					}
 				}
 				
-				// Check audio track mute/solo state (for pattern view or standalone tracks)
-				const isMuted = this.trackStateManager.isMuted(trackId);
+				// Get solo state (isMuted already declared above)
 				const isSoloed = this.trackStateManager.isSoloed(trackId);
 				
 				// Combine mute states: muted if audio track is muted OR any timeline track is muted
@@ -1781,45 +2528,15 @@ class AudioMixer {
 				let trackVolume = this.trackStateManager.getVolume(trackId);
 				let trackPan = this.trackStateManager.getPan(trackId);
 				
-				// Apply timeline track volume if this audio track belongs to a timeline track
-				if (this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
-					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
-						if (audioTrackIds.includes(trackId)) {
-							// This audio track belongs to a timeline track, apply timeline track volume
-							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
-							if (timelineTrack && timelineTrack.volume !== undefined) {
-								trackVolume *= timelineTrack.volume;
-							}
-							break;
-						}
-					}
+				// Apply cached timeline track volume
+				const timelineVolume = this._trackToTimelineVolume.get(trackId);
+				if (timelineVolume !== undefined) {
+					trackVolume *= timelineVolume;
 				}
 				
-				// Get pattern ID from track ID (if it's a pattern track)
-				// Track ID format: __pattern_{patternId}_{instrumentId}
-				// Also check processor's patternToTrackId map for reverse lookup
-				// And check if synth has a stored patternId
-				let patternId = null;
-				if (trackId && trackId.startsWith('__pattern_')) {
-					// Extract pattern ID: __pattern_{patternId}_{instrumentId}
-					// Pattern ID is the UUID immediately after '__pattern_'
-					// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars)
-					const patternPrefix = '__pattern_';
-					const afterPrefix = trackId.substring(patternPrefix.length);
-					const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-					if (uuidMatch) {
-						patternId = uuidMatch[1];
-					}
-				} else if (this.processor && this.processor.projectManager && this.processor.projectManager.patternToTrackId) {
-					// Reverse lookup: find pattern ID for this track ID
-					for (const [pid, tid] of this.processor.projectManager.patternToTrackId.entries()) {
-						if (tid === trackId) {
-							patternId = pid;
-							break;
-						}
-					}
-				}
-				// Also check if synth has a stored patternId (from event)
+				// Use cached pattern ID
+				let patternId = this._trackToPatternId.get(trackId);
+				// Fallback: check if synth has a stored patternId (from event)
 				if (!patternId && synth._patternId) {
 					patternId = synth._patternId;
 				}
@@ -1976,6 +2693,111 @@ class AudioMixer {
 	}
 
 	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._trackToTimelineTracks.clear();
+		this._trackToPatternId.clear();
+		this._trackToTimelineVolume.clear();
+		this._activeClipsCache.clear();
+		this._lastCacheUpdateBeat = -1;
+	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(isArrangementView) {
+		// Clear old caches
+		this._trackToTimelineTracks.clear();
+		this._trackToPatternId.clear();
+		this._trackToTimelineVolume.clear();
+		
+		if (!this.processor || !this.processor.projectManager) {
+			return;
+		}
+		
+		const projectManager = this.processor.projectManager;
+		const synths = this.processor.synthManager.getAllSynths();
+		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+		
+		// Build reverse lookup: audioTrackId -> timelineTracks[]
+		if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
+			for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
+				const timeline = projectManager.timeline;
+				const timelineTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === timelineTrackId) : null;
+				if (timelineTrack && timelineTrack.type === 'pattern') {
+					for (const audioTrackId of audioTrackIds) {
+						if (!this._trackToTimelineTracks.has(audioTrackId)) {
+							this._trackToTimelineTracks.set(audioTrackId, []);
+						}
+						this._trackToTimelineTracks.get(audioTrackId).push(timelineTrack);
+					}
+				}
+			}
+		}
+		
+		// Build trackId -> patternId map and trackId -> timelineVolume map
+		for (const [trackId] of synths.entries()) {
+			// Extract pattern ID from track ID
+			let patternId = null;
+			if (trackId && trackId.startsWith('__pattern_')) {
+				const patternPrefix = '__pattern_';
+				const afterPrefix = trackId.substring(patternPrefix.length);
+				const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+				if (uuidMatch) {
+					patternId = uuidMatch[1];
+					this._trackToPatternId.set(trackId, patternId);
+				}
+			} else if (projectManager.patternToTrackId) {
+				// Reverse lookup: find pattern ID for this track ID
+				for (const [pid, tid] of projectManager.patternToTrackId.entries()) {
+					if (tid === trackId) {
+						patternId = pid;
+						this._trackToPatternId.set(trackId, patternId);
+						break;
+					}
+				}
+			}
+			
+			// Build timeline volume cache
+			if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
+				for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
+					if (audioTrackIds.includes(trackId)) {
+						const timeline = projectManager.timeline;
+						const timelineTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === timelineTrackId) : null;
+						if (timelineTrack && timelineTrack.volume !== undefined) {
+							this._trackToTimelineVolume.set(trackId, timelineTrack.volume);
+						}
+						break;
+					}
+				}
+			}
+		}
+		
+		// Cache active clips per pattern (for current beat)
+		if (isArrangementView && projectManager.timeline && projectManager.timeline.clips) {
+			this._activeClipsCache.clear();
+			const allPatternIds = new Set(this._trackToPatternId.values());
+			
+			for (const patternId of allPatternIds) {
+				const activeClips = projectManager.timeline.clips.filter((clip) => {
+					return clip.patternId === patternId &&
+					       currentBeat >= clip.startBeat &&
+					       currentBeat < clip.startBeat + clip.duration;
+				});
+				
+				if (activeClips.length > 0) {
+					this._activeClipsCache.set(patternId, {
+						beat: currentBeat,
+						clips: activeClips
+					});
+				}
+			}
+		}
+	}
+
+	/**
 	 * Apply a simple lowpass filter
 	 * @param {number} input - Input sample
 	 * @param {number} cutoff - Cutoff frequency in Hz
@@ -2103,6 +2925,10 @@ class AudioProcessor {
 		this.processor = processor;
 		this.lastPlaybackUpdateTime = 0;
 		this.playbackUpdateInterval = processor.sampleRate * 0.05; // Update every 50ms
+		// Batch event IDs for playback updates to reduce message frequency
+		this._batchedEventIds = [];
+		this._lastBatchedSampleTime = 0;
+		this._batchInterval = processor.sampleRate * 0.02; // Batch events for 20ms before sending
 	}
 
 	/**
@@ -2123,47 +2949,25 @@ class AudioProcessor {
 		// Schedule events ahead of time
 		this.processor.eventScheduler.scheduleEvents();
 
+		// Pre-calculate samples per beat for efficiency
+		const samplesPerBeat = this.processor.playbackController.samplesPerBeat;
+		const startTime = this.processor.currentTime;
+		
 		// Process audio
 		for (let i = 0; i < bufferLength; i++) {
-			const sampleTime = Math.floor(this.processor.currentTime + i);
-			const currentBeat = (this.processor.currentTime + i) / this.processor.playbackController.samplesPerBeat;
+			const sampleTime = Math.floor(startTime + i);
+			// Calculate currentBeat more efficiently (avoid division every sample)
+			const currentBeat = (startTime + i) / samplesPerBeat;
 
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);
 			if (eventsAtTime) {
-				const eventIds = [];
 				for (const event of eventsAtTime) {
-					// Debug: Log event trigger (disabled for cleaner logs)
-					// if (!this._lastTriggerTime || (sampleTime - this._lastTriggerTime) > this.processor.sampleRate * 0.1) {
-					// 	this._lastTriggerTime = sampleTime;
-					// 	this.processor.port.postMessage({
-					// 		type: 'debug',
-					// 		message: 'AudioProcessor: Triggering event',
-					// 		data: {
-					// 			sampleTime,
-					// 			currentBeat: currentBeat.toFixed(3),
-					// 			instrumentId: event.instrumentId,
-					// 			patternId: event.patternId || 'none',
-					// 			pitch: event.pitch,
-					// 			velocity: event.velocity,
-					// 			eventTime: event.time
-					// 		}
-					// 	});
-					// }
 					this.processor.triggerEvent(event);
-					// Track event IDs for visual feedback
-					eventIds.push(event.instrumentId + ':' + (event.time || 0));
+					// Batch event IDs for visual feedback instead of sending immediately
+					this._batchedEventIds.push(event.instrumentId + ':' + (event.time || 0));
 				}
 				this.processor.eventScheduler.removeEventsAtTime(sampleTime);
-				
-				// Send playback update to UI
-				if (eventIds.length > 0) {
-					this.processor.port.postMessage({
-						type: 'playbackUpdate',
-						time: currentBeat,
-						eventIds: eventIds
-					});
-				}
 			}
 
 			// Mix all synths with per-track volume, pan, effects, and envelopes
@@ -2185,6 +2989,19 @@ class AudioProcessor {
 		}
 
 		this.processor.currentTime += bufferLength;
+
+		// Send batched playback updates periodically
+		const timeSinceLastBatch = this.processor.currentTime - this._lastBatchedSampleTime;
+		if (this._batchedEventIds.length > 0 && timeSinceLastBatch >= this._batchInterval) {
+			const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+			this.processor.port.postMessage({
+				type: 'playbackUpdate',
+				time: currentBeat,
+				eventIds: this._batchedEventIds
+			});
+			this._batchedEventIds = [];
+			this._lastBatchedSampleTime = this.processor.currentTime;
+		}
 
 		// Send periodic playback position updates
 		if (this.processor.currentTime - this.lastPlaybackUpdateTime >= this.playbackUpdateInterval) {
@@ -2376,6 +3193,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
 		this.synthManager.clear();
+		// Clear audio mixer caches when reloading
+		this.audioMixer.clearCaches();
 		
 		// Reset playback position when loading new project
 		this.currentTime = 0;
@@ -4185,7 +5004,7 @@ class FMSynth {
 		const totalDuration = attack + decay + release;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
-		const op = this.settings.operators?.[0] || { frequency: 1, amplitude: 1, waveform: 'sine' };
+		const op = (this.settings.operators && this.settings.operators.length > 0) ? this.settings.operators[0] : { frequency: 1, amplitude: 1, waveform: 'sine' };
 		
 		// Use waveform type for operator
 		const opFreq = freq * op.frequency;

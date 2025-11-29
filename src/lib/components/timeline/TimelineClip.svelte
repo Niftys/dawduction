@@ -12,7 +12,7 @@
 	export let onMouseDown: (e: MouseEvent) => void;
 	export let onClick: (e: MouseEvent) => void;
 	export let onContextMenu: (e: MouseEvent) => void;
-	export const onDelete: () => void = () => {};
+	export let onDelete: (() => void) | undefined = undefined;
 
 	$: clipLeft = beatToPixel(clip.startBeat, pixelsPerBeat);
 	$: clipWidth = Math.max(20, beatToPixel(clip.duration, pixelsPerBeat));

@@ -16,7 +16,7 @@
 	export let onClick: (e: MouseEvent) => void;
 	export let onKeyDown: (e: KeyboardEvent) => void;
 	export let onContextMenu: (e: MouseEvent) => void;
-	export const onDelete: () => void = () => {};
+	export let onDelete: (() => void) | undefined = undefined;
 
 	$: effectLeft = beatToPixel(timelineEffect.startBeat, pixelsPerBeat);
 	$: effectWidth = Math.max(20, beatToPixel(timelineEffect.duration, pixelsPerBeat));

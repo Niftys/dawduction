@@ -15,10 +15,10 @@ class TrackStateManager {
 		if (!tracks) return;
 		
 		for (const track of tracks) {
-			this.trackVolumes.set(track.id, track.volume ?? 1.0);
-			this.trackPans.set(track.id, track.pan ?? 0.0);
-			this.trackMutes.set(track.id, track.mute ?? false);
-			this.trackSolos.set(track.id, track.solo ?? false);
+			this.trackVolumes.set(track.id, (track.volume !== undefined && track.volume !== null) ? track.volume : 1.0);
+			this.trackPans.set(track.id, (track.pan !== undefined && track.pan !== null) ? track.pan : 0.0);
+			this.trackMutes.set(track.id, (track.mute !== undefined && track.mute !== null) ? track.mute : false);
+			this.trackSolos.set(track.id, (track.solo !== undefined && track.solo !== null) ? track.solo : false);
 		}
 	}
 
@@ -54,19 +54,23 @@ class TrackStateManager {
 	}
 
 	getVolume(trackId) {
-		return this.trackVolumes.get(trackId) ?? 1.0;
+		const volume = this.trackVolumes.get(trackId);
+		return (volume !== undefined && volume !== null) ? volume : 1.0;
 	}
 
 	getPan(trackId) {
-		return this.trackPans.get(trackId) ?? 0.0;
+		const pan = this.trackPans.get(trackId);
+		return (pan !== undefined && pan !== null) ? pan : 0.0;
 	}
 
 	isMuted(trackId) {
-		return this.trackMutes.get(trackId) ?? false;
+		const muted = this.trackMutes.get(trackId);
+		return (muted !== undefined && muted !== null) ? muted : false;
 	}
 
 	isSoloed(trackId) {
-		return this.trackSolos.get(trackId) ?? false;
+		const soloed = this.trackSolos.get(trackId);
+		return (soloed !== undefined && soloed !== null) ? soloed : false;
 	}
 
 	hasAnySoloedTrack() {

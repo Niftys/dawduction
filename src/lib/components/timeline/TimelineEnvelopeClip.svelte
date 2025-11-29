@@ -15,7 +15,7 @@
 	export let onClick: (e: MouseEvent) => void;
 	export let onKeyDown: (e: KeyboardEvent) => void;
 	export let onContextMenu: (e: MouseEvent) => void;
-	export const onDelete: () => void = () => {};
+	export let onDelete: (() => void) | undefined = undefined;
 
 	$: envelopeLeft = beatToPixel(timelineEnvelope.startBeat, pixelsPerBeat);
 	$: envelopeWidth = Math.max(20, beatToPixel(timelineEnvelope.duration, pixelsPerBeat));

@@ -84,7 +84,8 @@ class EffectsProcessor {
 		
 		if (!this.automation) return;
 		
-		for (const [automationId, automation] of Object.entries(this.automation)) {
+		for (const automationId in this.automation) {
+			const automation = this.automation[automationId];
 			if (!automation || typeof automation !== 'object') continue;
 			if (automation.targetType !== 'effect' || !automation.timelineInstanceId) continue;
 			
@@ -93,12 +94,12 @@ class EffectsProcessor {
 				this._automationByEffectInstance.set(timelineEffectId, []);
 			}
 			// Store automation with its ID for cache lookup
-			const automationWithId = { ...automation, id: automationId };
+			const automationWithId = Object.assign({}, automation, { id: automationId });
 			this._automationByEffectInstance.get(timelineEffectId).push(automationWithId);
 			
 			// Pre-sort and cache points for this automation
 			if (automation.points && automation.points.length > 0) {
-				const sortedPoints = [...automation.points].sort((a, b) => a.beat - b.beat);
+				const sortedPoints = automation.points.slice().sort((a, b) => a.beat - b.beat);
 				this._sortedPointsCache.set(automationId, sortedPoints);
 			}
 		}
@@ -113,7 +114,7 @@ class EffectsProcessor {
 		const effect = this.effects.find(e => e.id === effectId);
 		if (effect) {
 			// Update effect settings
-			effect.settings = { ...effect.settings, ...settings };
+			effect.settings = Object.assign({}, effect.settings || {}, settings);
 		}
 	}
 
@@ -125,7 +126,8 @@ class EffectsProcessor {
 	 * @param {string} patternId - Optional pattern ID for pattern-specific effects
 	 * @returns {Array} Array of active effect definitions with their settings
 	 */
-	getActiveEffects(trackId, currentBeat, isArrangementView, patternId = null) {
+	getActiveEffects(trackId, currentBeat, isArrangementView, patternId) {
+		if (patternId === undefined) patternId = null;
 		if (!isArrangementView) {
 			// In pattern view, return global effects or pattern-specific effects
 			// For now, return empty array - pattern view effects can be added later
@@ -140,7 +142,7 @@ class EffectsProcessor {
 		}
 
 		// Check cache first (track-specific)
-		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cacheKey = trackId + '_' + (patternId || 'null') + '_' + Math.floor(currentBeat / this._cacheUpdateInterval);
 		const cached = this._activeEffectsCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 			return cached.effects;
@@ -171,7 +173,7 @@ class EffectsProcessor {
 		const trackSpecificEffects = this._calculateTrackSpecificEffects(trackId, currentBeat, patternId);
 
 		// Combine global and track-specific effects
-		const activeEffects = [...globalEffects, ...trackSpecificEffects];
+		const activeEffects = globalEffects.concat(trackSpecificEffects);
 
 		// Store in cache
 		this._activeEffectsCache.set(cacheKey, {
@@ -219,11 +221,10 @@ class EffectsProcessor {
 							endBeat
 						);
 						
-						globalEffects.push({
-							...effectDef,
+						globalEffects.push(Object.assign({}, effectDef, {
 							settings: automatedSettings,
 							progress: (currentBeat - startBeat) / (endBeat - startBeat)
-						});
+						}));
 					}
 				}
 			}
@@ -235,14 +236,18 @@ class EffectsProcessor {
 	/**
 	 * Calculate track-specific effects (pattern-specific or track-specific)
 	 */
-	_calculateTrackSpecificEffects(trackId, currentBeat, patternId = null) {
+	_calculateTrackSpecificEffects(trackId, currentBeat, patternId) {
+		if (patternId === undefined) patternId = null;
 		const trackSpecificEffects = [];
 		
 		// Use cached timeline track ID lookup
 		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
 		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
 			// Fallback: calculate if not cached
-			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
 				if (audioTrackIds.includes(trackId)) {
 					timelineTrackId = tId;
 					this._trackToTimelineTrackId.set(trackId, tId);
@@ -262,13 +267,18 @@ class EffectsProcessor {
 				if (timelineEffect.trackId || timelineEffect.patternId) {
 					let shouldApply = false;
 					
-					// Check pattern assignment
+					// Check pattern or track assignment
 					if (timelineEffect.patternId) {
 						if (patternId && timelineEffect.patternId === patternId) {
 							shouldApply = true;
 						}
+					} else if (timelineEffect.trackId && timelineTrackId) {
+						if (timelineEffect.trackId === timelineTrackId) {
+							shouldApply = true;
+						}
+					}
 					// Note: Effects on effect tracks are now handled in _calculateGlobalEffects
-					// This method only handles pattern-specific effects
+					// This method only handles pattern- or audio-track-specific effects
 					
 					if (shouldApply) {
 						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
@@ -282,11 +292,10 @@ class EffectsProcessor {
 								endBeat
 							);
 							
-							trackSpecificEffects.push({
-								...effectDef,
+							trackSpecificEffects.push(Object.assign({}, effectDef, {
 								settings: automatedSettings,
 								progress: (currentBeat - startBeat) / (endBeat - startBeat)
-							});
+							}));
 						}
 					}
 				}
@@ -299,14 +308,18 @@ class EffectsProcessor {
 	/**
 	 * Calculate active effects (uncached version) - DEPRECATED, use _calculateGlobalEffects + _calculateTrackSpecificEffects
 	 */
-	_calculateActiveEffects(trackId, currentBeat, patternId = null) {
+	_calculateActiveEffects(trackId, currentBeat, patternId) {
+		if (patternId === undefined) patternId = null;
 		const activeEffects = [];
 
 		// Use cached timeline track ID lookup
 		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
 		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
 			// Fallback: calculate if not cached
-			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
 				if (audioTrackIds.includes(trackId)) {
 					timelineTrackId = tId;
 					this._trackToTimelineTrackId.set(trackId, tId);
@@ -325,9 +338,9 @@ class EffectsProcessor {
 				let matchStatus = 'not active';
 				if (isActive) {
 					if (te.patternId) {
-						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : `NO MATCH: patternId mismatch (effect=${te.patternId}, track=${patternId})`;
+						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : 'NO MATCH: patternId mismatch (effect=' + te.patternId + ', track=' + patternId + ')';
 					} else if (te.trackId) {
-						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : `NO MATCH: trackId mismatch (effect=${te.trackId}, audioTrack=${timelineTrackId})`;
+						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : 'NO MATCH: trackId mismatch (effect=' + te.trackId + ', audioTrack=' + timelineTrackId + ')';
 					} else {
 						matchStatus = 'MATCH (global effect)';
 					}
@@ -353,11 +366,20 @@ class EffectsProcessor {
 					currentBeat: currentBeat.toFixed(2),
 					timelineEffectsCount: this.timelineEffects.length,
 					timelineEffects: matchingDetails,
-					timelineTrackMapping: Array.from(this.timelineTrackToAudioTracks.entries()).map(([tid, aids]) => ({
-						timelineTrackId: tid,
-						audioTrackIds: aids,
-						includesCurrentTrack: aids.includes(trackId)
-					}))
+					timelineTrackMapping: (function() {
+						const result = [];
+						const entries = this.timelineTrackToAudioTracks.entries();
+						for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+							const tid = entry.value[0];
+							const aids = entry.value[1];
+							result.push({
+								timelineTrackId: tid,
+								audioTrackIds: aids,
+								includesCurrentTrack: aids.includes(trackId)
+							});
+						}
+						return result;
+					}.call(this))
 				}
 			});
 		}
@@ -379,7 +401,7 @@ class EffectsProcessor {
 						shouldApply = true;
 						matchReason = 'patternId match';
 					} else {
-						matchReason = `patternId mismatch: effect=${timelineEffect.patternId}, track=${patternId}`;
+						matchReason = 'patternId mismatch: effect=' + timelineEffect.patternId + ', track=' + patternId;
 					}
 				} else if (timelineEffect.trackId) {
 					// Effect is assigned to a specific timeline track
@@ -392,7 +414,7 @@ class EffectsProcessor {
 							matchReason = 'effect track (global)';
 						} else {
 							// Effect is incorrectly placed on a non-effect track (shouldn't happen, but handle gracefully)
-							matchReason = `effect on wrong track type: effect=${timelineEffect.trackId} (type=${effectTimelineTrack.type}, should be 'effect')`;
+							matchReason = 'effect on wrong track type: effect=' + timelineEffect.trackId + ' (type=' + effectTimelineTrack.type + ', should be \'effect\')';
 						}
 					} else {
 						// Timeline track not found - this shouldn't happen but handle gracefully
@@ -408,7 +430,7 @@ class EffectsProcessor {
 								}
 							});
 						}
-						matchReason = `trackId mismatch: effect=${timelineEffect.trackId} (track not found), audioTrack=${timelineTrackId}`;
+						matchReason = 'trackId mismatch: effect=' + timelineEffect.trackId + ' (track not found), audioTrack=' + timelineTrackId;
 					}
 				} else {
 					// Global effect (no trackId or patternId) - applies to all tracks
@@ -428,20 +450,19 @@ class EffectsProcessor {
 							endBeat
 						);
 						
-						activeEffects.push({
-							...effectDef,
+						activeEffects.push(Object.assign({}, effectDef, {
 							settings: automatedSettings,
 							progress: (currentBeat - startBeat) / (endBeat - startBeat) // 0-1 progress through effect
-						});
+						}));
 					} else {
 						// Debug: Effect definition not found (throttled to avoid spam)
 						if (this.processor && this.processor.port) {
-							// Track last log time per effect ID to avoid spam
-							const lastLogKey = `missing_effect_${timelineEffect.effectId}`;
-							const lastLogTime = this._missingEffectLogTimes?.[lastLogKey] || 0;
-							if (!this._missingEffectLogTimes) {
-								this._missingEffectLogTimes = {};
-							}
+						// Track last log time per effect ID to avoid spam
+						const lastLogKey = 'missing_effect_' + timelineEffect.effectId;
+						if (!this._missingEffectLogTimes) {
+							this._missingEffectLogTimes = {};
+						}
+						const lastLogTime = (this._missingEffectLogTimes && this._missingEffectLogTimes[lastLogKey]) ? this._missingEffectLogTimes[lastLogKey] : 0;
 							
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
@@ -473,7 +494,7 @@ class EffectsProcessor {
 								audioPatternId: patternId,
 								audioTimelineTrackId: timelineTrackId,
 								currentBeat: currentBeat.toFixed(2),
-								effectTimeRange: `${startBeat.toFixed(2)}-${endBeat.toFixed(2)}`
+								effectTimeRange: startBeat.toFixed(2) + '-' + endBeat.toFixed(2)
 							}
 						});
 					}
@@ -491,8 +512,12 @@ class EffectsProcessor {
 	_updateCaches(currentBeat) {
 		// Build trackId -> timelineTrackId map (only if not already built)
 		if (this._trackToTimelineTrackId.size === 0 && this.timelineTrackToAudioTracks) {
-			for (const [timelineTrackId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
-				for (const audioTrackId of audioTrackIds) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const timelineTrackId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				for (let i = 0; i < audioTrackIds.length; i++) {
+					const audioTrackId = audioTrackIds[i];
 					if (!this._trackToTimelineTrackId.has(audioTrackId)) {
 						this._trackToTimelineTrackId.set(audioTrackId, timelineTrackId);
 					}
@@ -502,7 +527,10 @@ class EffectsProcessor {
 
 		// Clear old cache entries (keep only recent ones)
 		const cacheKeysToDelete = [];
-		for (const [key, cached] of this._activeEffectsCache.entries()) {
+		const cacheEntries = this._activeEffectsCache.entries();
+		for (let entry = cacheEntries.next(); !entry.done; entry = cacheEntries.next()) {
+			const key = entry.value[0];
+			const cached = entry.value[1];
 			if (Math.abs(currentBeat - cached.beat) > this._cacheUpdateInterval * 4) {
 				cacheKeysToDelete.push(key);
 			}
@@ -545,14 +573,14 @@ class EffectsProcessor {
 		}
 
 		// Check cache first (cache per 0.1 beats to reduce recalculations)
-		const cacheKey = `${timelineEffectId}_${Math.floor(currentBeat / 0.1)}`;
+		const cacheKey = timelineEffectId + '_' + Math.floor(currentBeat / 0.1);
 		const cached = this._automationSettingsCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < 0.15) {
 			return cached.settings;
 		}
 
 		// Start with base settings
-		const automatedSettings = { ...(effectDef.settings || {}) };
+		const automatedSettings = Object.assign({}, effectDef.settings || {});
 
 		// Use pre-built automation map for fast lookup
 		const automations = this._automationByEffectInstance.get(timelineEffectId);
@@ -563,7 +591,7 @@ class EffectsProcessor {
 					// Get cached sorted points or sort if not cached
 					let sortedPoints = this._sortedPointsCache.get(auto.id || '');
 					if (!sortedPoints && auto.points && auto.points.length > 0) {
-						sortedPoints = [...auto.points].sort((a, b) => a.beat - b.beat);
+						sortedPoints = auto.points.slice().sort((a, b) => a.beat - b.beat);
 						if (auto.id) {
 							this._sortedPointsCache.set(auto.id, sortedPoints);
 						}
@@ -587,7 +615,10 @@ class EffectsProcessor {
 		// Clean old cache entries (keep only recent ones)
 		if (this._automationSettingsCache.size > 100) {
 			const keysToDelete = [];
-			for (const [key, cached] of this._automationSettingsCache.entries()) {
+			const cacheEntries = this._automationSettingsCache.entries();
+			for (let entry = cacheEntries.next(); !entry.done; entry = cacheEntries.next()) {
+				const key = entry.value[0];
+				const cached = entry.value[1];
 				if (Math.abs(currentBeat - cached.beat) > 1.0) {
 					keysToDelete.push(key);
 				}
@@ -614,7 +645,7 @@ class EffectsProcessor {
 		}
 
 		// Sort points by beat (fallback for uncached calls)
-		const sortedPoints = [...points].sort((a, b) => a.beat - b.beat);
+		const sortedPoints = points.slice().sort((a, b) => a.beat - b.beat);
 		return this.getAutomationValueAtBeatFast(sortedPoints, beat, min, max);
 	}
 	
@@ -696,7 +727,7 @@ class EffectsProcessor {
 				// Create multiple comb filters and allpass filters for realistic reverb
 				// Using prime numbers for delay times to avoid comb filtering artifacts
 				const maxReverbTime = 3.0; // Maximum reverb time in seconds
-				const bufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
+				const reverbBufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
 				
 				// 4 comb filters with different delay times (in samples)
 				const combDelays = [
@@ -714,22 +745,25 @@ class EffectsProcessor {
 				
 				this._reverbBuffers.set(reverbKey, {
 					// Comb filter buffers and indices
-					combBuffers: combDelays.map(() => new Float32Array(bufferSize)),
+					combBuffers: combDelays.map(() => new Float32Array(reverbBufferSize)),
 					combIndices: combDelays.map(() => 0),
 					combDelays: combDelays,
 					combFeedbacks: combDelays.map(() => 0),
 					
 					// Allpass filter buffers and indices
-					allpassBuffers: allpassDelays.map(() => new Float32Array(bufferSize)),
+					allpassBuffers: allpassDelays.map(() => new Float32Array(reverbBufferSize)),
 					allpassIndices: allpassDelays.map(() => 0),
 					allpassDelays: allpassDelays,
 					
-					// Lowpass filter state for dampening
-					lowpassState: 0
+					// Lowpass filter states for dampening (one per comb filter)
+					lowpassStates: combDelays.map(() => 0)
 				});
 			}
 			
 			const reverbState = this._reverbBuffers.get(reverbKey);
+			if (!reverbState) {
+				return sample; // Safety check
+			}
 			
 			// Map room size to reverb time (0.02s to 3.0s)
 			const reverbTime = 0.02 + (reverbRoomSize * 2.98);
@@ -767,8 +801,8 @@ class EffectsProcessor {
 					const cutoff = 20000 * (1 - reverbDampening * 0.975); // 20kHz to 500Hz
 					const rc = 1.0 / (cutoff * 2 * Math.PI / sampleRate);
 					const alpha = 1.0 / (1.0 + rc);
-					reverbState.lowpassState = alpha * dampened + (1 - alpha) * reverbState.lowpassState;
-					dampened = reverbState.lowpassState;
+					reverbState.lowpassStates[i] = alpha * dampened + (1 - alpha) * reverbState.lowpassStates[i];
+					dampened = reverbState.lowpassStates[i];
 				}
 				
 				// Calculate feedback based on reverb time
@@ -801,11 +835,11 @@ class EffectsProcessor {
 			}
 			const delayKey = 'global';
 			const maxDelayTime = 2.0; // Maximum delay time in seconds
-			const bufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
+			const delayBufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
 			
 			if (!this._delayBuffers.has(delayKey)) {
 				this._delayBuffers.set(delayKey, {
-					buffer: new Float32Array(bufferSize),
+					buffer: new Float32Array(delayBufferSize),
 					writeIndex: 0
 				});
 			}
@@ -813,11 +847,11 @@ class EffectsProcessor {
 			
 			// Calculate read position based on delayTime (in samples)
 			const delaySamples = Math.floor(delayTime * sampleRate);
-			const delayReadIndex = (delayState.writeIndex - delaySamples + bufferSize) % bufferSize;
+			const delayReadIndex = (delayState.writeIndex - delaySamples + delayBufferSize) % delayBufferSize;
 			
 			// Read delayed sample (with linear interpolation for smooth changes)
 			const delayReadIndex1 = Math.floor(delayReadIndex);
-			const delayReadIndex2 = (delayReadIndex1 + 1) % bufferSize;
+			const delayReadIndex2 = (delayReadIndex1 + 1) % delayBufferSize;
 			const delayFrac = delayReadIndex - delayReadIndex1;
 			const delayedSample1 = delayState.buffer[delayReadIndex1];
 			const delayedSample2 = delayState.buffer[delayReadIndex2];
@@ -825,7 +859,7 @@ class EffectsProcessor {
 			
 			// Write current sample + feedback (can create many repeats at high feedback)
 			delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
-			delayState.writeIndex = (delayState.writeIndex + 1) % bufferSize;
+			delayState.writeIndex = (delayState.writeIndex + 1) % delayBufferSize;
 			
 			// Mix dry and wet - at max wet/dry extremes, can be completely wet or dry
 			return sample * delayDry + delayedSample * delayWet;
@@ -846,6 +880,9 @@ class EffectsProcessor {
 				this._filterStates.set(filterKey, { x1: 0, x2: 0, y1: 0, y2: 0 });
 			}
 			const filterState = this._filterStates.get(filterKey);
+			if (!filterState) {
+				return sample; // Safety check
+			}
 			
 			// Map frequency (0-1) to actual cutoff frequency
 			// 0 = very low (20Hz), 1 = very high (20kHz)
@@ -947,11 +984,11 @@ class EffectsProcessor {
 			}
 			const chorusKey = 'global';
 			const maxDelay = 0.1; // Maximum delay time
-			const bufferSize = Math.floor(sampleRate * maxDelay * 1.5);
+			const chorusBufferSize = Math.floor(sampleRate * maxDelay * 1.5);
 			
 			if (!this._chorusBuffers.has(chorusKey)) {
 				this._chorusBuffers.set(chorusKey, {
-					buffer: new Float32Array(bufferSize),
+					buffer: new Float32Array(chorusBufferSize),
 					writeIndex: 0
 				});
 				this._chorusPhases.set(chorusKey, 0);
@@ -977,8 +1014,8 @@ class EffectsProcessor {
 			const frac = readPos - readIndex1;
 			
 			// Wrap indices
-			const idx1 = ((readIndex1 % bufferSize) + bufferSize) % bufferSize;
-			const idx2 = ((readIndex2 % bufferSize) + bufferSize) % bufferSize;
+			const idx1 = ((readIndex1 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
+			const idx2 = ((readIndex2 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
 			
 			const sample1 = chorusState.buffer[idx1];
 			const sample2 = chorusState.buffer[idx2];

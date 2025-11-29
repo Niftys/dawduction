@@ -48,7 +48,7 @@ class FMSynth {
 		const totalDuration = attack + decay + release;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
-		const op = this.settings.operators?.[0] || { frequency: 1, amplitude: 1, waveform: 'sine' };
+		const op = (this.settings.operators && this.settings.operators.length > 0) ? this.settings.operators[0] : { frequency: 1, amplitude: 1, waveform: 'sine' };
 		
 		// Use waveform type for operator
 		const opFreq = freq * op.frequency;

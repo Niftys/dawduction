@@ -228,7 +228,7 @@ class EventScheduler {
 		if (this.processor.projectManager.baseMeterTrackId) {
 			const baseTrack = this.processor.projectManager.getTrack(this.processor.projectManager.baseMeterTrackId);
 			if (baseTrack) {
-				const rootDivision = baseTrack.patternTree?.division || 4;
+				const rootDivision = (baseTrack.patternTree && baseTrack.patternTree.division) ? baseTrack.patternTree.division : 4;
 				
 				// Check if this is a pattern instrument (ID starts with __pattern_)
 				if (baseTrack.id && baseTrack.id.startsWith('__pattern_')) {
@@ -236,7 +236,8 @@ class EventScheduler {
 					const lastUnderscore = baseTrack.id.lastIndexOf('_');
 					if (lastUnderscore > '__pattern_'.length) {
 						const patternId = baseTrack.id.substring('__pattern_'.length, lastUnderscore);
-						const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+						const patterns = this.processor.projectManager.patterns;
+						const pattern = (patterns) ? patterns.find(p => p.id === patternId) : null;
 						if (pattern) {
 							baseMeter = pattern.baseMeter || 4;
 						}
@@ -247,16 +248,17 @@ class EventScheduler {
 				// The hierarchical structure is preserved because children split parent's duration proportionally
 				patternLength = baseMeter;
 			}
-		} else if (this.processor.projectManager.tracks?.[0]) {
+		} else if (this.processor.projectManager.tracks && this.processor.projectManager.tracks.length > 0) {
 			const firstTrack = this.processor.projectManager.tracks[0];
-			const rootDivision = firstTrack.patternTree?.division || 4;
+			const rootDivision = (firstTrack.patternTree && firstTrack.patternTree.division) ? firstTrack.patternTree.division : 4;
 			
 			// Check if this is a pattern instrument
 			if (firstTrack.id && firstTrack.id.startsWith('__pattern_')) {
 				const lastUnderscore = firstTrack.id.lastIndexOf('_');
 				if (lastUnderscore > '__pattern_'.length) {
 					const patternId = firstTrack.id.substring('__pattern_'.length, lastUnderscore);
-					const pattern = this.processor.projectManager.patterns?.find(p => p.id === patternId);
+					const patterns = this.processor.projectManager.patterns;
+					const pattern = (patterns) ? patterns.find(p => p.id === patternId) : null;
 					if (pattern) {
 						baseMeter = pattern.baseMeter || 4;
 					}

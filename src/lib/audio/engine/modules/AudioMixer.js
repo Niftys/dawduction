@@ -40,7 +40,7 @@ class AudioMixer {
 		
 		// Check if any timeline track is soloed (for arrangement view)
 		let hasSoloedTimelineTrack = false;
-		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.tracks) {
+		if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timeline && this.processor.projectManager.timeline.tracks) {
 			hasSoloedTimelineTrack = this.processor.projectManager.timeline.tracks.some((t) => t.type === 'pattern' && t.solo === true);
 		}
 		
@@ -72,7 +72,7 @@ class AudioMixer {
 						const cached = this._activeClipsCache.get(patternId);
 						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 							activeClips = cached.clips;
-						} else if (this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
+						} else if (this.processor && this.processor.projectManager && this.processor.projectManager.timeline && this.processor.projectManager.timeline.clips) {
 							// Fallback: calculate if cache is stale
 							activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
 								return clip.patternId === patternId &&
@@ -84,7 +84,8 @@ class AudioMixer {
 						if (activeClips.length > 0) {
 							// Check if all active clips are on muted timeline tracks
 							const allClipsMuted = activeClips.every((clip) => {
-								const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+								const timeline = this.processor.projectManager.timeline;
+								const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 								return clipTrack && clipTrack.mute === true;
 							});
 							
@@ -93,14 +94,16 @@ class AudioMixer {
 							if (hasSoloedTimelineTrack) {
 								// Solo mode: play if ANY active clip is on a soloed track
 								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return clipTrack && clipTrack.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
 							} else {
 								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
 								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return clipTrack && clipTrack.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
@@ -110,7 +113,7 @@ class AudioMixer {
 							
 							// Debug: Log mute/solo decision for this track (track-specific, throttled)
 							const debugKey = `${trackId}_${patternId}`;
-							const lastDebugState = this._lastDebugStates?.get(debugKey);
+							const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
 							const stateChanged = !lastDebugState || 
 							                    lastDebugState.muted !== isTimelineMuted || 
 							                    lastDebugState.soloed !== isTimelineSoloed ||
@@ -127,13 +130,14 @@ class AudioMixer {
 								});
 								
 								const clipInfo = activeClips.map((clip) => {
-									const clipTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === clip.trackId);
+									const timeline = this.processor.projectManager.timeline;
+									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
 									return {
 										clipId: clip.id,
 										trackId: clip.trackId,
-										trackName: clipTrack?.name || 'unknown',
-										mute: clipTrack?.mute || false,
-										solo: clipTrack?.solo || false,
+										trackName: (clipTrack && clipTrack.name) ? clipTrack.name : 'unknown',
+										mute: (clipTrack && clipTrack.mute) ? clipTrack.mute : false,
+										solo: (clipTrack && clipTrack.solo) ? clipTrack.solo : false,
 										startBeat: clip.startBeat,
 										duration: clip.duration,
 										clipEndBeat: clip.startBeat + clip.duration
@@ -387,7 +391,8 @@ class AudioMixer {
 		// Build reverse lookup: audioTrackId -> timelineTracks[]
 		if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
 			for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
-				const timelineTrack = projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+				const timeline = projectManager.timeline;
+				const timelineTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === timelineTrackId) : null;
 				if (timelineTrack && timelineTrack.type === 'pattern') {
 					for (const audioTrackId of audioTrackIds) {
 						if (!this._trackToTimelineTracks.has(audioTrackId)) {
@@ -426,7 +431,8 @@ class AudioMixer {
 			if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
 				for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
 					if (audioTrackIds.includes(trackId)) {
-						const timelineTrack = projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+						const timeline = projectManager.timeline;
+						const timelineTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === timelineTrackId) : null;
 						if (timelineTrack && timelineTrack.volume !== undefined) {
 							this._trackToTimelineVolume.set(trackId, timelineTrack.volume);
 						}
@@ -437,7 +443,7 @@ class AudioMixer {
 		}
 		
 		// Cache active clips per pattern (for current beat)
-		if (isArrangementView && projectManager.timeline?.clips) {
+		if (isArrangementView && projectManager.timeline && projectManager.timeline.clips) {
 			this._activeClipsCache.clear();
 			const allPatternIds = new Set(this._trackToPatternId.values());
 			
