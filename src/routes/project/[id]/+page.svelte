@@ -456,15 +456,18 @@
 			return;
 		}
 		
-		// Don't handle clicks on interactive elements
+		// Don't handle clicks on interactive elements or the properties sidebar
 		if (target.closest('.timeline-clip') || 
 		    target.closest('.row-label') || 
 		    target.closest('button') ||
-		    target.closest('.timeline-ruler-container')) {
+		    target.closest('.timeline-ruler-container') ||
+		    target.closest('.effect-envelope-properties')) {
 			return;
 		}
 		
-		// Removed click-to-seek functionality - clicking in timeline no longer seeks
+		// Deselect effect/envelope when clicking on empty timeline area
+		selectedEffectId = null;
+		selectedEnvelopeId = null;
 	}
 
 	function handleRulerClick(e: MouseEvent) {
@@ -485,7 +488,9 @@
 			return;
 		}
 		
-		// Removed click-to-seek functionality - clicking on ruler no longer seeks
+		// Deselect effect/envelope when clicking on ruler
+		selectedEffectId = null;
+		selectedEnvelopeId = null;
 	}
 
 	function findPatternById(patternId: string | undefined): Pattern | null {
@@ -592,6 +597,11 @@
 
 	function deleteClip(clipId: string) {
 		projectStore.deleteTimelineClip(clipId);
+		// Reload project if in arrangement view to update engine
+		// The reload handler will preserve playback if it was playing
+		if (viewMode === 'arrangement') {
+			window.dispatchEvent(new CustomEvent('reloadProject'));
+		}
 	}
 
 	function extendClip(clipId: string, by: number) {
@@ -842,6 +852,11 @@
 		// End batching if we were dragging or resizing
 		if (isResizing || isDraggingClip) {
 			projectStore.endBatch();
+			// Reload project if in arrangement view to update engine with clip changes
+			// The reload handler will preserve playback if it was playing
+			if (viewMode === 'arrangement') {
+				window.dispatchEvent(new CustomEvent('reloadProject'));
+			}
 		}
 		isResizing = null;
 		isDraggingClip = null;
@@ -868,6 +883,10 @@
 			const beat = Math.max(0, snapToBeat(pixelToBeatLocal(x)));
 			
 			addClipToTimeline(patternId, beat, trackId);
+		} else {
+			// Clicked on empty area of non-pattern track - deselect effect/envelope
+			selectedEffectId = null;
+			selectedEnvelopeId = null;
 		}
 	}
 
@@ -987,10 +1006,20 @@
 
 	function deleteTimelineEffect(effectId: string) {
 		projectStore.deleteTimelineEffect(effectId);
+		// Reload project if in arrangement view to update engine
+		// The reload handler will preserve playback if it was playing
+		if (viewMode === 'arrangement') {
+			window.dispatchEvent(new CustomEvent('reloadProject'));
+		}
 	}
 
 	function deleteTimelineEnvelope(envelopeId: string) {
 		projectStore.deleteTimelineEnvelope(envelopeId);
+		// Reload project if in arrangement view to update engine
+		// The reload handler will preserve playback if it was playing
+		if (viewMode === 'arrangement') {
+			window.dispatchEvent(new CustomEvent('reloadProject'));
+		}
 	}
 
 	function extendTimelineEffect(effectId: string, by: number) {

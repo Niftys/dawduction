@@ -18,6 +18,11 @@ class EffectsProcessor {
 		this._activeEffectsCache = new Map(); // trackId_patternId_beat -> activeEffects[]
 		this._lastCacheUpdateBeat = -1;
 		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
+		
+		// Automation optimization caches
+		this._automationByEffectInstance = new Map(); // timelineEffectId -> automation[]
+		this._sortedPointsCache = new Map(); // automationId -> sortedPoints[]
+		this._automationSettingsCache = new Map(); // timelineEffectId_beat -> settings
 	}
 
 	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks, automation) {
@@ -31,6 +36,9 @@ class EffectsProcessor {
 		
 		// Clear caches when reinitializing
 		this.clearCaches();
+		
+		// Build automation lookup map for fast access
+		this._buildAutomationMap();
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
@@ -57,6 +65,39 @@ class EffectsProcessor {
 		this._trackToTimelineTrackId.clear();
 		this._activeEffectsCache.clear();
 		this._lastCacheUpdateBeat = -1;
+		this._automationByEffectInstance.clear();
+		this._sortedPointsCache.clear();
+		this._automationSettingsCache.clear();
+	}
+	
+	/**
+	 * Build automation lookup map indexed by effect instance ID
+	 * This avoids iterating through all automation entries every sample
+	 */
+	_buildAutomationMap() {
+		this._automationByEffectInstance.clear();
+		this._sortedPointsCache.clear();
+		
+		if (!this.automation) return;
+		
+		for (const [automationId, automation] of Object.entries(this.automation)) {
+			if (!automation || typeof automation !== 'object') continue;
+			if (automation.targetType !== 'effect' || !automation.timelineInstanceId) continue;
+			
+			const timelineEffectId = automation.timelineInstanceId;
+			if (!this._automationByEffectInstance.has(timelineEffectId)) {
+				this._automationByEffectInstance.set(timelineEffectId, []);
+			}
+			// Store automation with its ID for cache lookup
+			const automationWithId = { ...automation, id: automationId };
+			this._automationByEffectInstance.get(timelineEffectId).push(automationWithId);
+			
+			// Pre-sort and cache points for this automation
+			if (automation.points && automation.points.length > 0) {
+				const sortedPoints = [...automation.points].sort((a, b) => a.beat - b.beat);
+				this._sortedPointsCache.set(automationId, sortedPoints);
+			}
+		}
 	}
 
 	/**
@@ -361,60 +402,58 @@ class EffectsProcessor {
 			return effectDef.settings || {};
 		}
 
+		// Check cache first (cache per 0.1 beats to reduce recalculations)
+		const cacheKey = `${timelineEffectId}_${Math.floor(currentBeat / 0.1)}`;
+		const cached = this._automationSettingsCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < 0.15) {
+			return cached.settings;
+		}
+
 		// Start with base settings
 		const automatedSettings = { ...(effectDef.settings || {}) };
 
-		// Find all automation curves for this effect instance
-		let automationFound = false;
-		for (const [automationId, automation] of Object.entries(this.automation)) {
-			if (!automation || typeof automation !== 'object') continue;
-			
-			const auto = automation;
-			// Check if this automation is for this effect and timeline instance
-			if (auto.targetType === 'effect' && 
-			    auto.targetId === effectDef.id && 
-			    auto.timelineInstanceId === timelineEffectId) {
-				
-				automationFound = true;
-				
-				// Get automation value at current beat
-				const value = this.getAutomationValueAtBeat(auto.points || [], currentBeat, auto.min || 0, auto.max || 1);
-				
-				// Debug: Log automation application (throttled)
-				if (this.processor && this.processor.port) {
-					const lastLogKey = `automation_${timelineEffectId}_${auto.parameterKey}`;
-					const lastLogTime = this._automationLogTimes?.[lastLogKey] || 0;
-					if (!this._automationLogTimes) {
-						this._automationLogTimes = {};
+		// Use pre-built automation map for fast lookup
+		const automations = this._automationByEffectInstance.get(timelineEffectId);
+		if (automations && automations.length > 0) {
+			for (const auto of automations) {
+				// Verify this automation is for this effect (should already be filtered, but double-check)
+				if (auto.targetId === effectDef.id) {
+					// Get cached sorted points or sort if not cached
+					let sortedPoints = this._sortedPointsCache.get(auto.id || '');
+					if (!sortedPoints && auto.points && auto.points.length > 0) {
+						sortedPoints = [...auto.points].sort((a, b) => a.beat - b.beat);
+						if (auto.id) {
+							this._sortedPointsCache.set(auto.id, sortedPoints);
+						}
 					}
 					
-					// Log once every 2 beats to verify automation is working
-					if (currentBeat - lastLogTime > 2) {
-						this._automationLogTimes[lastLogKey] = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Automation being applied',
-							data: {
-								effectId: effectDef.id,
-								timelineEffectId,
-								parameterKey: auto.parameterKey,
-								currentBeat: currentBeat.toFixed(2),
-								automatedValue: value.toFixed(3),
-								baseValue: (effectDef.settings?.[auto.parameterKey] || 0).toFixed(3),
-								pointsCount: auto.points?.length || 0,
-								points: auto.points?.map(p => ({ beat: p.beat.toFixed(2), value: p.value.toFixed(3) })) || [],
-								automationId
-							}
-						});
-					}
+					// Get automation value at current beat (using cached sorted points)
+					const value = this.getAutomationValueAtBeatFast(sortedPoints || [], currentBeat, auto.min || 0, auto.max || 1);
+					
+					// Apply to the parameter
+					automatedSettings[auto.parameterKey] = value;
 				}
-				
-				// Apply to the parameter
-				automatedSettings[auto.parameterKey] = value;
 			}
 		}
 		
-		// Debug logging removed
+		// Cache the result
+		this._automationSettingsCache.set(cacheKey, {
+			beat: currentBeat,
+			settings: automatedSettings
+		});
+		
+		// Clean old cache entries (keep only recent ones)
+		if (this._automationSettingsCache.size > 100) {
+			const keysToDelete = [];
+			for (const [key, cached] of this._automationSettingsCache.entries()) {
+				if (Math.abs(currentBeat - cached.beat) > 1.0) {
+					keysToDelete.push(key);
+				}
+			}
+			for (const key of keysToDelete) {
+				this._automationSettingsCache.delete(key);
+			}
+		}
 
 		return automatedSettings;
 	}
@@ -432,8 +471,24 @@ class EffectsProcessor {
 			return (min + max) / 2; // Default to middle value
 		}
 
-		// Sort points by beat
+		// Sort points by beat (fallback for uncached calls)
 		const sortedPoints = [...points].sort((a, b) => a.beat - b.beat);
+		return this.getAutomationValueAtBeatFast(sortedPoints, beat, min, max);
+	}
+	
+	/**
+	 * Fast version that assumes points are already sorted
+	 * Uses binary search for O(log n) lookup instead of O(n)
+	 * @param {Array} sortedPoints - Pre-sorted automation points array
+	 * @param {number} beat - Beat position
+	 * @param {number} min - Minimum value
+	 * @param {number} max - Maximum value
+	 * @returns {number} Interpolated value
+	 */
+	getAutomationValueAtBeatFast(sortedPoints, beat, min, max) {
+		if (!sortedPoints || sortedPoints.length === 0) {
+			return (min + max) / 2; // Default to middle value
+		}
 
 		// Before first point
 		if (beat <= sortedPoints[0].beat) {
@@ -445,18 +500,24 @@ class EffectsProcessor {
 			return sortedPoints[sortedPoints.length - 1].value;
 		}
 
-		// Interpolate between points
-		for (let i = 0; i < sortedPoints.length - 1; i++) {
-			const p1 = sortedPoints[i];
-			const p2 = sortedPoints[i + 1];
-
-			if (beat >= p1.beat && beat <= p2.beat) {
-				const t = (beat - p1.beat) / (p2.beat - p1.beat);
-				return p1.value + (p2.value - p1.value) * t;
+		// Binary search for the two points to interpolate between
+		let left = 0;
+		let right = sortedPoints.length - 1;
+		
+		while (left < right - 1) {
+			const mid = Math.floor((left + right) / 2);
+			if (sortedPoints[mid].beat <= beat) {
+				left = mid;
+			} else {
+				right = mid;
 			}
 		}
-
-		return sortedPoints[0].value;
+		
+		// Interpolate between sortedPoints[left] and sortedPoints[right]
+		const p1 = sortedPoints[left];
+		const p2 = sortedPoints[right];
+		const t = (beat - p1.beat) / (p2.beat - p1.beat);
+		return p1.value + (p2.value - p1.value) * t;
 	}
 
 	/**

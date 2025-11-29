@@ -28,10 +28,15 @@ class AudioProcessor {
 		// Schedule events ahead of time
 		this.processor.eventScheduler.scheduleEvents();
 
+		// Pre-calculate samples per beat for efficiency
+		const samplesPerBeat = this.processor.playbackController.samplesPerBeat;
+		const startTime = this.processor.currentTime;
+		
 		// Process audio
 		for (let i = 0; i < bufferLength; i++) {
-			const sampleTime = Math.floor(this.processor.currentTime + i);
-			const currentBeat = (this.processor.currentTime + i) / this.processor.playbackController.samplesPerBeat;
+			const sampleTime = Math.floor(startTime + i);
+			// Calculate currentBeat more efficiently (avoid division every sample)
+			const currentBeat = (startTime + i) / samplesPerBeat;
 
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);

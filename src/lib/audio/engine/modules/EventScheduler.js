@@ -7,11 +7,20 @@ class EventScheduler {
 	constructor(processor) {
 		this.processor = processor;
 		this.scheduledEvents = new Map();
+		this._lastScheduledBeat = -1;
+		this._scheduleInterval = 0.1; // Only schedule every 0.1 beats (~83ms at 120 BPM)
 	}
 
 	scheduleEvents() {
-		const lookaheadTime = 0.15; // 150ms
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+		
+		// Only schedule if we've moved forward enough (optimization)
+		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval) {
+			return; // Skip scheduling if we haven't moved forward enough
+		}
+		this._lastScheduledBeat = currentBeat;
+		
+		const lookaheadTime = 0.15; // 150ms
 		const lookaheadBeat = currentBeat + lookaheadTime * this.processor.playbackController.beatsPerSecond;
 		
 		// Get pattern length for looping
@@ -232,6 +241,7 @@ class EventScheduler {
 
 	clear() {
 		this.scheduledEvents.clear();
+		this._lastScheduledBeat = -1; // Reset scheduling state
 	}
 }
 

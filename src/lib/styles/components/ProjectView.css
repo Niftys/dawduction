@@ -86,7 +86,10 @@
 	gap: 8px;
 	padding: 16px;
 	overflow-y: auto;
-	flex: 0 0 auto;
+	overflow-x: hidden;
+	flex: 0 1 auto;
+	max-height: calc((100vh - 60px) / 2); /* Cap at half the sidebar height */
+	min-height: 0; /* Allow flexbox to shrink below content size */
 }
 
 .pattern-item {

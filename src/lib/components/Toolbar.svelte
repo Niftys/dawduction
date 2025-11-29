@@ -122,6 +122,12 @@
 					const currentViewMode = $viewStore;
 					// Use local transport state (engine.getTransportState doesn't exist)
 					const wasPlaying = transportState === 'play' && isPlaying;
+					// Get current playback position to preserve it
+					let currentPosition = 0;
+					playbackStore.subscribe((state) => {
+						currentPosition = state.currentTime || 0;
+					})();
+					
 					// Update local state to match
 					if (wasPlaying) {
 						transportState = 'play';
@@ -130,12 +136,8 @@
 					if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
 						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 						if (wasPlaying) {
-							transportState = 'stop';
-							isPlaying = false;
-							engine.setTransport('stop', 0);
-							transportState = 'play';
-							isPlaying = true;
-							engine.setTransport('play', 0);
+							// Resume playback at the same position without stopping
+							engine.setTransport('play', currentPosition);
 						}
 					} else {
 						// Pattern view - check if we're in a pattern editor page
@@ -169,26 +171,23 @@
 								
 								await engine.loadProject(tracksForEngine, bpm, tracksForEngine[0]?.id, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
-									transportState = 'play';
-									isPlaying = true;
-									engine.setTransport('play');
+									// Resume playback at the same position
+									engine.setTransport('play', currentPosition);
 								}
 							} else {
 								// Pattern not found, fall back to standalone instruments
 								await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
-									transportState = 'play';
-									isPlaying = true;
-									engine.setTransport('play');
+									// Resume playback at the same position
+									engine.setTransport('play', currentPosition);
 								}
 							}
 						} else {
 							// Regular pattern view - use standalone instruments
 						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							if (wasPlaying) {
-								transportState = 'play';
-								isPlaying = true;
-								engine.setTransport('play');
+								// Resume playback at the same position
+								engine.setTransport('play', currentPosition);
 							}
 						}
 					}
