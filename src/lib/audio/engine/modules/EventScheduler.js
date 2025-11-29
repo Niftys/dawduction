@@ -65,7 +65,7 @@ class EventScheduler {
 		const maxLookahead = isTimelineMode ? Math.min(currentBeat + 2.0, timelineLength * 0.1) : lookaheadBeat;
 		const extendedLookahead = isTimelineMode ? maxLookahead : lookaheadBeat;
 
-		const events = this.processor.projectManager.events;
+		// Use events already declared above (line 32)
 		if (!events || events.length === 0) return;
 
 		let scheduledThisCall = 0;
