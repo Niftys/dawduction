@@ -5,12 +5,14 @@
 
 import type { Pattern, StandaloneInstrument, Instrument } from '$lib/types/pattern';
 import type { NodeRenderer } from '$lib/canvas/NodeRenderer';
-import { getPlayingNodeIds } from './playbackHighlighter';
+import { getPlayingNodeIds, getUpcomingNodeIds, getPlayedNodeIds } from './playbackHighlighter';
 import {
 	createTrackSelectionChecker,
 	createInstrumentSelectionChecker,
 	createTrackPlaybackChecker,
 	createInstrumentPlaybackChecker,
+	createTrackUpcomingChecker,
+	createInstrumentUpcomingChecker,
 	isTrackGreyedOut,
 	isInstrumentGreyedOut
 } from './renderHelpers';
@@ -44,22 +46,39 @@ export function renderFrame(context: RenderContext): void {
 	// Draw very subtle grid
 	drawGrid(ctx, canvas, viewport);
 	
-	// Get playing node IDs (respecting mute/solo)
+	// Get playing, upcoming, and played node IDs (respecting mute/solo)
 	const playingNodeIds = getPlayingNodeIds({
 		project,
 		patternId,
 		pattern,
 		playbackState
 	});
+	const upcomingNodeIds = getUpcomingNodeIds({
+		project,
+		patternId,
+		pattern,
+		playbackState
+	});
+	const playedNodeIds = getPlayedNodeIds({
+		project,
+		patternId,
+		pattern,
+		playbackState
+	});
+	
+	
+	// Check if playback is active (currentTime > 0 or there are playing nodes)
+	const isPlaybackActive = playbackState?.currentTime > 0 || playingNodeIds.size > 0;
+	const isLoopStart = playbackState?.isLoopStart || false;
 	
 	// Render standalone instruments only in arrangement view (not in pattern editor mode)
 	if (!patternId) {
-		renderTracks(ctx, renderer, project, selectionState, playingNodeIds);
+		renderTracks(ctx, renderer, project, selectionState, playingNodeIds, upcomingNodeIds, playedNodeIds, isPlaybackActive, isLoopStart);
 	}
 	
 	// Render pattern instruments if in pattern editor mode
 	if (patternId && pattern) {
-		renderPatternInstruments(ctx, renderer, patternId, pattern, selectionState, playingNodeIds);
+		renderPatternInstruments(ctx, renderer, patternId, pattern, selectionState, playingNodeIds, upcomingNodeIds, playedNodeIds, isPlaybackActive, isLoopStart);
 	}
 	
 	// Draw selection box
@@ -104,23 +123,30 @@ function renderTracks(
 	renderer: NodeRenderer,
 	project: any,
 	selectionState: any,
-	playingNodeIds: Set<string>
+	playingNodeIds: Set<string>,
+	upcomingNodeIds: Set<string>,
+	playedNodeIds: Set<string>,
+	isPlaybackActive: boolean,
+	isLoopStart: boolean
 ): void {
 	const renderContext = {
 		project,
 		patternId: null,
 		pattern: null,
 		selectionState,
-		playingNodeIds
+		playingNodeIds,
+		upcomingNodeIds,
+		playedNodeIds
 	};
 	
 	// Render all standalone instruments
 	for (const instrument of project.standaloneInstruments || []) {
 		const isSelected = createTrackSelectionChecker(instrument, renderContext);
 		const isPlaying = createTrackPlaybackChecker(instrument, renderContext);
+		const isUpcoming = createTrackUpcomingChecker(instrument, renderContext);
 		const isGreyedOut = isTrackGreyedOut(instrument, project);
 		
-		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, instrument.instrumentType, isGreyedOut);
+		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart);
 	}
 }
 
@@ -134,7 +160,11 @@ function renderPatternInstruments(
 	patternId: string,
 	pattern: Pattern,
 	selectionState: any,
-	playingNodeIds: Set<string>
+	playingNodeIds: Set<string>,
+	upcomingNodeIds: Set<string>,
+	playedNodeIds: Set<string>,
+	isPlaybackActive: boolean,
+	isLoopStart: boolean
 ): void {
 	// Get instruments using the same logic as projectStore.getPatternInstruments
 	let patternInstruments: any[] = [];
@@ -165,16 +195,19 @@ function renderPatternInstruments(
 		patternId,
 		pattern,
 		selectionState,
-		playingNodeIds
+		playingNodeIds,
+		upcomingNodeIds,
+		playedNodeIds
 	};
 	
 	// Render each instrument in the pattern
 	for (const instrument of patternInstruments) {
 		const isSelected = createInstrumentSelectionChecker(instrument, patternId, renderContext);
 		const isPlaying = createInstrumentPlaybackChecker(instrument, pattern, renderContext);
+		const isUpcoming = createInstrumentUpcomingChecker(instrument, pattern, renderContext);
 		const isGreyedOut = isInstrumentGreyedOut(instrument, pattern);
 		
-		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, instrument.instrumentType, isGreyedOut);
+		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart);
 	}
 }
 

@@ -10,7 +10,7 @@ export class NodeRenderer {
 		private viewport: Viewport
 	) {}
 
-	renderNode(node: PatternNode, trackColor: string, depth: number, isSelected: boolean, isPlaying: (id: string) => boolean = () => false, instrumentType?: string, isGreyedOut: boolean = false) {
+	renderNode(node: PatternNode, trackColor: string, depth: number, isSelected: boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false) {
 		if (node.x === undefined || node.y === undefined) return;
 
 		const [sx, sy] = this.viewport.worldToScreen(node.x, node.y);
@@ -38,7 +38,7 @@ export class NodeRenderer {
 
 		// Draw connection lines to children
 		if (node.children.length > 0) {
-			this.renderConnections(node, trackColor, isPlaying, isGreyedOut);
+			this.renderConnections(node, trackColor, isPlaying, isUpcoming, playedNodeIds, isGreyedOut, isPlaybackActive, isLoopStart);
 		}
 
 		// Draw node circle
@@ -127,12 +127,24 @@ export class NodeRenderer {
 		}
 
 		// Draw border - root has visible border, others are subtle
+		// Priority: playing > upcoming > selected > default
+		// Don't show glow if node has been played (unless it's playing again)
+		const hasBeenPlayed = playedNodeIds.has(node.id) && !isPlaying(node.id);
+		
 		if (isPlaying(node.id)) {
 			// Playing highlight - bright pulsing glow
 			this.ctx.shadowColor = '#00ff88';
 			this.ctx.shadowBlur = 15 * this.viewport.zoom;
 			this.ctx.strokeStyle = '#00ff88';
 			this.ctx.lineWidth = 3 * this.viewport.zoom;
+		} else if (isUpcoming(node.id) && !hasBeenPlayed) {
+			// Upcoming highlight - dim glow
+			this.ctx.shadowColor = '#00ff88';
+			this.ctx.shadowBlur = 8 * this.viewport.zoom;
+			this.ctx.strokeStyle = '#00ff88';
+			this.ctx.lineWidth = 2 * this.viewport.zoom;
+			// Make it dimmer by reducing opacity
+			this.ctx.globalAlpha = 0.4;
 		} else if (isSelected) {
 			// Subtle selection glow
 			this.ctx.shadowColor = '#7ab8ff';
@@ -151,6 +163,7 @@ export class NodeRenderer {
 		}
 		this.ctx.stroke();
 		this.ctx.shadowBlur = 0;
+		this.ctx.globalAlpha = 1.0; // Reset alpha
 
 		// Draw number with professional styling
 		// For intermediate nodes (depth 1), show number of children instead of division
@@ -186,7 +199,7 @@ export class NodeRenderer {
 		}
 	}
 
-	private renderConnections(node: PatternNode, color: string, isPlaying: (id: string) => boolean, isGreyedOut: boolean = false) {
+	private renderConnections(node: PatternNode, color: string, isPlaying: (id: string) => boolean, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false) {
 		if (node.x === undefined || node.y === undefined) return;
 
 		// Use grey color if greyed out, otherwise use muted color
@@ -211,6 +224,52 @@ export class NodeRenderer {
 			return false;
 		};
 		
+		// Helper function to check if a node branch contains any played leaf nodes
+		const hasPlayedLeaf = (n: PatternNode): boolean => {
+			// If this is a leaf node, check if it's been played
+			if (n.children.length === 0) {
+				return playedNodeIds.has(n.id);
+			}
+			// For non-leaf nodes, check if any descendant leaf has been played
+			for (const child of n.children) {
+				if (hasPlayedLeaf(child)) return true;
+			}
+			return false;
+		};
+		
+		// Helper function to check if a node branch should show dim glow
+		// A branch shows dim glow if:
+		// 1. It's the start of a loop (no nodes played yet) - all lines glow
+		// 2. OR it has unplayed leaves AND no played leaves AND no playing leaves
+		const shouldShowDimGlow = (n: PatternNode): boolean => {
+			// Don't show dim glow if this branch has playing leaves (they get bright glow instead)
+			if (hasPlayingLeaf(n)) {
+				return false;
+			}
+			
+			// At loop start, all lines should glow (except those with playing leaves, handled above)
+			if (isLoopStart) {
+				return true;
+			}
+			
+			// If any leaf in this branch has been played, don't show dim glow
+			if (hasPlayedLeaf(n)) {
+				return false;
+			}
+			
+			// Check if this branch has any unplayed leaves
+			// If this is a leaf node
+			if (n.children.length === 0) {
+				// It's unplayed if it's marked as upcoming AND not played
+				return isUpcoming(n.id) && !playedNodeIds.has(n.id);
+			}
+			// For non-leaf nodes, check if any descendant is an unplayed leaf
+			for (const child of n.children) {
+				if (shouldShowDimGlow(child)) return true;
+			}
+			return false;
+		};
+		
 		this.ctx.lineCap = 'round';
 
 		for (const child of node.children) {
@@ -218,17 +277,29 @@ export class NodeRenderer {
 
 			// Check if this specific child branch contains any playing leaf nodes
 			const isChildBranchPlaying = hasPlayingLeaf(child);
+			const isChildBranchShouldGlow = shouldShowDimGlow(child);
+			
+			// Reset state before each connection
+			this.ctx.globalAlpha = 1.0;
+			this.ctx.shadowBlur = 0;
+			this.ctx.shadowColor = 'transparent';
 			
 			if (isChildBranchPlaying) {
-				// Highlight playing connections
+				// Highlight playing connections - bright glow
 				this.ctx.strokeStyle = '#00ff88';
 				this.ctx.lineWidth = 2 * this.viewport.zoom;
 				this.ctx.shadowColor = '#00ff88';
 				this.ctx.shadowBlur = 8 * this.viewport.zoom;
+			} else if (isChildBranchShouldGlow) {
+				// Highlight unplayed connections - dim glow (continuous until played)
+				this.ctx.strokeStyle = '#00ff88';
+				this.ctx.lineWidth = 2 * this.viewport.zoom; // Slightly thicker for visibility
+				this.ctx.shadowColor = '#00ff88';
+				this.ctx.shadowBlur = 6 * this.viewport.zoom; // Increased blur for more visibility
+				this.ctx.globalAlpha = 0.5; // Slightly brighter for visibility
 			} else {
 				this.ctx.strokeStyle = defaultStrokeStyle;
 				this.ctx.lineWidth = 1 * this.viewport.zoom;
-				this.ctx.shadowBlur = 0;
 			}
 
 			const [x1, y1] = this.viewport.worldToScreen(node.x, node.y);
@@ -240,8 +311,10 @@ export class NodeRenderer {
 			this.ctx.stroke();
 		}
 		
-		// Reset shadow
+		// Reset shadow and alpha after all connections
 		this.ctx.shadowBlur = 0;
+		this.ctx.shadowColor = 'transparent';
+		this.ctx.globalAlpha = 1.0;
 	}
 
 	private muteColor(color: string): string {
@@ -293,9 +366,9 @@ export class NodeRenderer {
 		return hex;
 	}
 
-	renderTree(rootNode: PatternNode, trackColor: string, isSelected: (id: string) => boolean, isPlaying: (id: string) => boolean = () => false, instrumentType?: string, isGreyedOut: boolean = false) {
+	renderTree(rootNode: PatternNode, trackColor: string, isSelected: (id: string) => boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false) {
 		const renderRecursive = (node: PatternNode, depth: number) => {
-			this.renderNode(node, trackColor, depth, isSelected(node.id), isPlaying, depth === 0 ? instrumentType : undefined, isGreyedOut);
+			this.renderNode(node, trackColor, depth, isSelected(node.id), isPlaying, isUpcoming, playedNodeIds, depth === 0 ? instrumentType : undefined, isGreyedOut, isPlaybackActive, isLoopStart);
 
 			for (const child of node.children) {
 				renderRecursive(child, depth + 1);

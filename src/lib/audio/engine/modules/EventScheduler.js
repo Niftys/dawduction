@@ -25,6 +25,11 @@ class EventScheduler {
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
 		const currentSampleTime = this.processor.currentTime;
 		
+		// If playback looped backwards, allow scheduling immediately
+		if (this._lastScheduledBeat > currentBeat) {
+			this._lastScheduledBeat = -1;
+		}
+		
 		// Clean up old scheduled events that have already passed
 		this._cleanupOldEvents(currentSampleTime);
 		
@@ -57,13 +62,13 @@ class EventScheduler {
 		const patternLength = this.getPatternLength();
 		const isTimelineMode = this.processor.projectManager.isArrangementView && this.processor.projectManager.timeline && this.processor.projectManager.timeline.totalLength;
 
-		// In arrangement view, schedule events more aggressively - look ahead much further
-		// For arrangement view, we want to schedule events well ahead so they're ready when needed
-		// But limit lookahead to prevent scheduling too many events at once
-		// Use a more conservative lookahead that scales with timeline length
+		// In arrangement view, schedule events with a window relative to current beat
 		const timelineLength = isTimelineMode ? this.processor.projectManager.timeline.totalLength : 0;
-		const maxLookahead = isTimelineMode ? Math.min(currentBeat + 2.0, timelineLength * 0.1) : lookaheadBeat;
-		const extendedLookahead = isTimelineMode ? maxLookahead : lookaheadBeat;
+		let extendedLookahead = lookaheadBeat;
+		if (isTimelineMode) {
+			const timelineWindow = timelineLength > 0 ? Math.min(Math.max(timelineLength * 0.1, 2.0), timelineLength) : 4.0;
+			extendedLookahead = currentBeat + timelineWindow;
+		}
 
 		// Use events already declared above (line 32)
 		if (!events || events.length === 0) return;
@@ -282,8 +287,13 @@ class EventScheduler {
 				// In arrangement view, loop based on timeline length
 				// Reset to 0 and clear scheduled events for next loop
 				this.processor.currentTime = 0;
+				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
+					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === 'number') {
+						this.processor.audioProcessor._lastBatchedSampleTime = 0;
+					}
 				}
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();
@@ -293,8 +303,13 @@ class EventScheduler {
 			} else {
 				// Pattern mode: reset to 0
 				this.processor.currentTime = 0;
+				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
+					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === 'number') {
+						this.processor.audioProcessor._lastBatchedSampleTime = 0;
+					}
 				}
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();

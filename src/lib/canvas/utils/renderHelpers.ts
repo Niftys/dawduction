@@ -11,6 +11,8 @@ export interface RenderContext {
 	pattern: Pattern | null;
 	selectionState: any;
 	playingNodeIds: Set<string>;
+	upcomingNodeIds: Set<string>;
+	playedNodeIds: Set<string>;
 }
 
 /**
@@ -66,6 +68,25 @@ export function createTrackPlaybackChecker(
 }
 
 /**
+ * Creates an upcoming checker function for a standalone instrument
+ */
+export function createTrackUpcomingChecker(
+	instrument: StandaloneInstrument,
+	context: RenderContext
+): (nodeId: string) => boolean {
+	const { project, upcomingNodeIds } = context;
+	
+	// Check if any instrument is soloed
+	const hasSoloedInstrument = project.standaloneInstruments?.some((i: StandaloneInstrument) => i.solo === true) || false;
+	
+	// Determine if nodes should be considered "upcoming" (for dim glow)
+	// Don't show upcoming if instrument is muted, or if another instrument is soloed and this one isn't
+	const shouldShowUpcoming = !instrument.mute && (!hasSoloedInstrument || instrument.solo);
+	
+	return (nodeId: string) => shouldShowUpcoming && upcomingNodeIds.has(nodeId);
+}
+
+/**
  * Creates a playback checker function for a pattern instrument
  */
 export function createInstrumentPlaybackChecker(
@@ -86,6 +107,29 @@ export function createInstrumentPlaybackChecker(
 	const shouldFlash = !pattern.mute && !instrument.mute && (!hasSoloedInstrument || instrument.solo);
 	
 	return (nodeId: string) => shouldFlash && playingNodeIds.has(nodeId);
+}
+
+/**
+ * Creates an upcoming checker function for a pattern instrument
+ */
+export function createInstrumentUpcomingChecker(
+	instrument: Instrument,
+	pattern: Pattern,
+	context: RenderContext
+): (nodeId: string) => boolean {
+	const { upcomingNodeIds } = context;
+	
+	// Check if any instrument in pattern is soloed
+	const patternInstruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+		? pattern.instruments
+		: [];
+	const hasSoloedInstrument = patternInstruments.some((inst: Instrument) => inst.solo === true);
+	
+	// Determine if nodes should be considered "upcoming" (for dim glow)
+	// Don't show upcoming if pattern or instrument is muted, or if another instrument is soloed and this one isn't
+	const shouldShowUpcoming = !pattern.mute && !instrument.mute && (!hasSoloedInstrument || instrument.solo);
+	
+	return (nodeId: string) => shouldShowUpcoming && upcomingNodeIds.has(nodeId);
 }
 
 /**

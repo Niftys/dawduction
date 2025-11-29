@@ -45,10 +45,15 @@ class AudioProcessor {
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);
 			if (eventsAtTime) {
+				// Get pattern length once for all events in this batch
+				const patternLength = this.processor.eventScheduler.getPatternLength();
 				for (const event of eventsAtTime) {
 					this.processor.triggerEvent(event);
 					// Batch event IDs for visual feedback instead of sending immediately
-					this._batchedEventIds.push(event.instrumentId + ':' + (event.time || 0));
+					// Use normalized time (within pattern) for matching with node times
+					// This ensures events match correctly even when patterns loop
+					const normalizedTime = (event.time || 0) % patternLength;
+					this._batchedEventIds.push(event.instrumentId + ':' + normalizedTime.toFixed(6));
 				}
 				this.processor.eventScheduler.removeEventsAtTime(sampleTime);
 			}

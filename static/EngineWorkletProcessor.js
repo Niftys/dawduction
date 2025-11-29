@@ -168,6 +168,11 @@ class EventScheduler {
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
 		const currentSampleTime = this.processor.currentTime;
 		
+		// If playback looped backwards, allow scheduling immediately
+		if (this._lastScheduledBeat > currentBeat) {
+			this._lastScheduledBeat = -1;
+		}
+		
 		// Clean up old scheduled events that have already passed
 		this._cleanupOldEvents(currentSampleTime);
 		
@@ -200,13 +205,13 @@ class EventScheduler {
 		const patternLength = this.getPatternLength();
 		const isTimelineMode = this.processor.projectManager.isArrangementView && this.processor.projectManager.timeline && this.processor.projectManager.timeline.totalLength;
 
-		// In arrangement view, schedule events more aggressively - look ahead much further
-		// For arrangement view, we want to schedule events well ahead so they're ready when needed
-		// But limit lookahead to prevent scheduling too many events at once
-		// Use a more conservative lookahead that scales with timeline length
+		// In arrangement view, schedule events with a window relative to current beat
 		const timelineLength = isTimelineMode ? this.processor.projectManager.timeline.totalLength : 0;
-		const maxLookahead = isTimelineMode ? Math.min(currentBeat + 2.0, timelineLength * 0.1) : lookaheadBeat;
-		const extendedLookahead = isTimelineMode ? maxLookahead : lookaheadBeat;
+		let extendedLookahead = lookaheadBeat;
+		if (isTimelineMode) {
+			const timelineWindow = timelineLength > 0 ? Math.min(Math.max(timelineLength * 0.1, 2.0), timelineLength) : 4.0;
+			extendedLookahead = currentBeat + timelineWindow;
+		}
 
 		// Use events already declared above (line 32)
 		if (!events || events.length === 0) return;
@@ -425,8 +430,13 @@ class EventScheduler {
 				// In arrangement view, loop based on timeline length
 				// Reset to 0 and clear scheduled events for next loop
 				this.processor.currentTime = 0;
+				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
+					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === "number") {
+						this.processor.audioProcessor._lastBatchedSampleTime = 0;
+					}
 				}
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();
@@ -436,8 +446,13 @@ class EventScheduler {
 			} else {
 				// Pattern mode: reset to 0
 				this.processor.currentTime = 0;
+				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
+					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === "number") {
+						this.processor.audioProcessor._lastBatchedSampleTime = 0;
+					}
 				}
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();
@@ -1908,11 +1923,12 @@ class ProjectManager {
 	loadProject(tracks, bpm, events, baseMeterTrackId, timeline, effects, envelopes, viewMode, patternToTrackId, timelineTrackToAudioTracks, automation, patterns) {
 		this.tracks = tracks;
 		this.events = events || [];
-		this.timeline = timeline || null;
+		const timelineData = this._normalizeTimeline(timeline, this.events);
+		this.timeline = timelineData;
 		this.patterns = patterns || []; // Store patterns to access baseMeter
 		this.effects = effects || [];
 		this.envelopes = envelopes || [];
-		this.isArrangementView = viewMode === 'arrangement' && timeline && timeline.clips && timeline.clips.length > 0;
+		this.isArrangementView = viewMode === 'arrangement' && timelineData && timelineData.clips && timelineData.clips.length > 0;
 		
 		// Build timeline track to audio tracks mapping
 		this.timelineTrackToAudioTracks.clear();
@@ -1931,8 +1947,8 @@ class ProjectManager {
 				isArrangementView: this.isArrangementView,
 				tracksCount: (tracks && tracks.length) ? tracks.length : 0,
 				eventsCount: this.events.length,
-				timelineLength: (timeline && timeline.totalLength) ? timeline.totalLength : 0,
-				clipsCount: (timeline && timeline.clips && timeline.clips.length) ? timeline.clips.length : 0,
+				timelineLength: (timelineData && timelineData.totalLength) ? timelineData.totalLength : 0,
+				clipsCount: (timelineData && timelineData.clips && timelineData.clips.length) ? timelineData.clips.length : 0,
 				firstEvent: this.events[0] || null,
 				firstTrack: (tracks && tracks.length > 0) ? tracks[0] : null
 			}
@@ -1949,9 +1965,9 @@ class ProjectManager {
 				for (const [patternId, trackId] of patternToTrackId) {
 					this.patternToTrackId.set(patternId, trackId);
 				}
-			} else if (timeline && timeline.clips) {
+			} else if (timelineData && timelineData.clips) {
 				// Fallback: build from tracks
-				for (const clip of timeline.clips) {
+				for (const clip of timelineData.clips) {
 					if (clip.patternId && !this.patternToTrackId.has(clip.patternId)) {
 						// Find the track ID for this pattern
 						const track = tracks.find(t => t.id && t.id.startsWith(`__pattern_${clip.patternId}`));
@@ -1964,9 +1980,9 @@ class ProjectManager {
 		}
 		
 		// Initialize effects and envelopes processors
-		const timelineEffects = (timeline && timeline.effects) ? timeline.effects : [];
-		const timelineEnvelopes = (timeline && timeline.envelopes) ? timeline.envelopes : [];
-		const timelineTracks = (timeline && timeline.tracks) ? timeline.tracks : [];
+		const timelineEffects = (timelineData && timelineData.effects) ? timelineData.effects : [];
+		const timelineEnvelopes = (timelineData && timelineData.envelopes) ? timelineData.envelopes : [];
+		const timelineTracks = (timelineData && timelineData.tracks) ? timelineData.tracks : [];
 		// Pass automation data to effects processor
 		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
 		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
@@ -2156,8 +2172,66 @@ class ProjectManager {
 		}
 		return 1.0;
 	}
+	
+	_normalizeTimeline(timeline, events) {
+		if (!timeline) return null;
+		let totalLength = (timeline.totalLength && typeof timeline.totalLength === 'number') ? timeline.totalLength : 0;
+		
+		const updateMaxLength = (start, duration) => {
+			const startBeat = typeof start === 'number' ? start : parseFloat(start) || 0;
+			const durationBeats = typeof duration === 'number' ? duration : parseFloat(duration) || 0;
+			if (!Number.isFinite(startBeat) || !Number.isFinite(durationBeats)) {
+				return;
+			}
+			const rangeEnd = startBeat + Math.max(durationBeats, 0);
+			if (rangeEnd > totalLength) {
+				totalLength = rangeEnd;
+			}
+		};
+		
+		if (Array.isArray(timeline.clips)) {
+			for (const clip of timeline.clips) {
+				if (clip) {
+					updateMaxLength(clip.startBeat || 0, clip.duration || 0);
+				}
+			}
+		}
+		
+		if (Array.isArray(timeline.effects)) {
+			for (const effect of timeline.effects) {
+				if (effect) {
+					updateMaxLength(effect.startBeat || 0, effect.duration || 0);
+				}
+			}
+		}
+		
+		if (Array.isArray(timeline.envelopes)) {
+			for (const envelope of timeline.envelopes) {
+				if (envelope) {
+					updateMaxLength(envelope.startBeat || 0, envelope.duration || 0);
+				}
+			}
+		}
+		
+		if (Array.isArray(events) && events.length > 0) {
+			const lastEvent = events[events.length - 1];
+			if (lastEvent && typeof lastEvent.time === 'number' && lastEvent.time > totalLength) {
+				totalLength = lastEvent.time;
+			}
+		}
+		
+		if (!totalLength || totalLength < 4) {
+			totalLength = 4;
+		}
+		
+		// Add a tiny guard so scheduling lookahead can cross the loop boundary cleanly
+		const bufferedLength = totalLength + 0.0001;
+		
+		return Object.assign({}, timeline, {
+			totalLength: bufferedLength
+		});
+	}
 }
-
 
 
 /**
@@ -2962,10 +3036,15 @@ class AudioProcessor {
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);
 			if (eventsAtTime) {
+				// Get pattern length once for all events in this batch
+				const patternLength = this.processor.eventScheduler.getPatternLength();
 				for (const event of eventsAtTime) {
 					this.processor.triggerEvent(event);
 					// Batch event IDs for visual feedback instead of sending immediately
-					this._batchedEventIds.push(event.instrumentId + ':' + (event.time || 0));
+					// Use normalized time (within pattern) for matching with node times
+					// This ensures events match correctly even when patterns loop
+					const normalizedTime = (event.time || 0) % patternLength;
+					this._batchedEventIds.push(event.instrumentId + ':' + normalizedTime.toFixed(6));
 				}
 				this.processor.eventScheduler.removeEventsAtTime(sampleTime);
 			}
