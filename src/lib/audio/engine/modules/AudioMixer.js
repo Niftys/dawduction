@@ -48,7 +48,7 @@ class AudioMixer {
 		
 		for (const [trackId, synth] of synths.entries()) {
 			if (synth.process) {
-				// Early mute check - skip expensive lookups if already muted
+				// Early mute check - skip expensive lookups if already muted (pattern view only)
 				const isMuted = this.trackStateManager.isMuted(trackId);
 				if (isMuted && !isArrangementView) {
 					continue; // Skip muted tracks in pattern view
@@ -170,8 +170,7 @@ class AudioMixer {
 					}
 				}
 				
-				// Check audio track mute/solo state (for pattern view or standalone tracks)
-				const isMuted = this.trackStateManager.isMuted(trackId);
+				// Get solo state (isMuted already declared above)
 				const isSoloed = this.trackStateManager.isSoloed(trackId);
 				
 				// Combine mute states: muted if audio track is muted OR any timeline track is muted
