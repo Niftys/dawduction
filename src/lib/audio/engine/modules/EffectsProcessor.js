@@ -677,33 +677,131 @@ class EffectsProcessor {
 
 		switch (effect.type) {
 		case 'reverb':
-			// Simple reverb using wet/dry mix
-			// Real reverb would need delay buffers, but this provides basic effect
-			const reverbWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const reverbDry = settings.dry !== undefined ? settings.dry : 0.5;
-			const reverbRoomSize = settings.roomSize !== undefined ? settings.roomSize : 0.7;
-			// Make reverb more noticeable - add some resonance/feedback effect
-			const reverbAmount = reverbRoomSize * 0.6; // Increased for more noticeable effect
-			// Add harmonic enhancement and slight delay-like effect to make it more audible
-			const reverbEnhanced = sample * (1 + reverbWet * reverbAmount);
-			// Add slight feedback for more realistic reverb tail
-			const reverbFeedback = this._reverbFeedback || 0;
-			this._reverbFeedback = reverbEnhanced * 0.3 * reverbRoomSize;
-			return sample * reverbDry + (reverbEnhanced + reverbFeedback * 0.5) * reverbWet;
+			// Proper reverb using Schroeder reverb algorithm with multiple delay taps
+			// Parameters can go from 0 to very high values for maximum flexibility
+			const reverbWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			const reverbDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+			// Room size: 0 = small room, 1 = huge hall (maps to 0.02s to 3.0s reverb time)
+			const reverbRoomSize = settings.roomSize !== undefined ? Math.max(0, Math.min(1, settings.roomSize)) : 0.5;
+			// Dampening: 0 = bright, 1 = very dark (lowpass filter cutoff)
+			const reverbDampening = settings.dampening !== undefined ? Math.max(0, Math.min(1, settings.dampening)) : 0.5;
+			
+			// Initialize reverb buffers if needed
+			if (!this._reverbBuffers) {
+				this._reverbBuffers = new Map();
+			}
+			const reverbKey = 'global';
+			
+			if (!this._reverbBuffers.has(reverbKey)) {
+				// Create multiple comb filters and allpass filters for realistic reverb
+				// Using prime numbers for delay times to avoid comb filtering artifacts
+				const maxReverbTime = 3.0; // Maximum reverb time in seconds
+				const bufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
+				
+				// 4 comb filters with different delay times (in samples)
+				const combDelays = [
+					Math.floor(sampleRate * 0.0297), // ~30ms
+					Math.floor(sampleRate * 0.0371), // ~37ms
+					Math.floor(sampleRate * 0.0411), // ~41ms
+					Math.floor(sampleRate * 0.0437)  // ~44ms
+				];
+				
+				// 2 allpass filters for diffusion
+				const allpassDelays = [
+					Math.floor(sampleRate * 0.005), // ~5ms
+					Math.floor(sampleRate * 0.0017) // ~1.7ms
+				];
+				
+				this._reverbBuffers.set(reverbKey, {
+					// Comb filter buffers and indices
+					combBuffers: combDelays.map(() => new Float32Array(bufferSize)),
+					combIndices: combDelays.map(() => 0),
+					combDelays: combDelays,
+					combFeedbacks: combDelays.map(() => 0),
+					
+					// Allpass filter buffers and indices
+					allpassBuffers: allpassDelays.map(() => new Float32Array(bufferSize)),
+					allpassIndices: allpassDelays.map(() => 0),
+					allpassDelays: allpassDelays,
+					
+					// Lowpass filter state for dampening
+					lowpassState: 0
+				});
+			}
+			
+			const reverbState = this._reverbBuffers.get(reverbKey);
+			
+			// Map room size to reverb time (0.02s to 3.0s)
+			const reverbTime = 0.02 + (reverbRoomSize * 2.98);
+			// Calculate feedback for comb filters based on reverb time
+			// Longer reverb time = higher feedback
+			const baseFeedback = Math.pow(0.001, reverbState.combDelays[0] / (sampleRate * reverbTime));
+			
+			// Process through allpass filters first (for diffusion)
+			let processed = sample;
+			for (let i = 0; i < reverbState.allpassDelays.length; i++) {
+				const delay = reverbState.allpassDelays[i];
+				const readIndex = (reverbState.allpassIndices[i] - delay + reverbState.allpassBuffers[i].length) % reverbState.allpassBuffers[i].length;
+				const delayed = reverbState.allpassBuffers[i][readIndex];
+				
+				// Allpass filter: output = input + delayed * feedback, store input - delayed * feedback
+				const allpassFeedback = 0.5; // Fixed feedback for allpass
+				const output = processed + delayed * allpassFeedback;
+				reverbState.allpassBuffers[i][reverbState.allpassIndices[i]] = processed - delayed * allpassFeedback;
+				reverbState.allpassIndices[i] = (reverbState.allpassIndices[i] + 1) % reverbState.allpassBuffers[i].length;
+				processed = output;
+			}
+			
+			// Process through comb filters (for reverb tail)
+			let reverbOutput = 0;
+			for (let i = 0; i < reverbState.combDelays.length; i++) {
+				const delay = reverbState.combDelays[i];
+				const readIndex = (reverbState.combIndices[i] - delay + reverbState.combBuffers[i].length) % reverbState.combBuffers[i].length;
+				const delayed = reverbState.combBuffers[i][readIndex];
+				
+				// Apply dampening (lowpass filter) to delayed signal
+				let dampened = delayed;
+				if (reverbDampening > 0) {
+					// Lowpass filter: cutoff frequency decreases with dampening
+					// 0 = no filtering, 1 = very dark (cutoff ~500Hz)
+					const cutoff = 20000 * (1 - reverbDampening * 0.975); // 20kHz to 500Hz
+					const rc = 1.0 / (cutoff * 2 * Math.PI / sampleRate);
+					const alpha = 1.0 / (1.0 + rc);
+					reverbState.lowpassState = alpha * dampened + (1 - alpha) * reverbState.lowpassState;
+					dampened = reverbState.lowpassState;
+				}
+				
+				// Calculate feedback based on reverb time
+				const feedback = baseFeedback * (1 - reverbDampening * 0.3); // Slightly reduce feedback with dampening
+				
+				// Write input + feedback to buffer
+				reverbState.combBuffers[i][reverbState.combIndices[i]] = processed + dampened * feedback;
+				reverbState.combIndices[i] = (reverbState.combIndices[i] + 1) % reverbState.combBuffers[i].length;
+				
+				// Add to reverb output
+				reverbOutput += dampened;
+			}
+			
+			// Normalize and mix
+			reverbOutput /= reverbState.combDelays.length; // Average the comb filters
+			
+			// Mix dry and wet signals
+			return sample * reverbDry + reverbOutput * reverbWet;
 
 		case 'delay':
-			// Delay with proper delay buffer and feedback
-			const delayWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const delayDry = settings.dry !== undefined ? settings.dry : 0.5;
-			const delayFeedback = settings.feedback !== undefined ? settings.feedback : 0.5;
-			const delayTime = settings.time !== undefined ? settings.time : 0.25;
+			// Delay with proper delay buffer and feedback - can be pushed to extreme
+			const delayWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			const delayDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+			// Clamp feedback to prevent infinite oscillation (0.99 max for safety)
+			const delayFeedback = settings.feedback !== undefined ? Math.max(0, Math.min(0.99, settings.feedback)) : 0.5;
+			const delayTime = settings.time !== undefined ? Math.max(0, Math.min(2.0, settings.time)) : 0.25;
 			// Use delay buffer for proper echo effect
 			if (!this._delayBuffers) {
-				this._delayBuffers = new Map(); // trackId -> { buffer, writeIndex }
+				this._delayBuffers = new Map();
 			}
-			const delayKey = 'global'; // Could be per-track if needed
-			const maxDelayTime = 2.0; // Maximum delay time in seconds (from UI max)
-			const bufferSize = Math.floor(sampleRate * maxDelayTime * 1.5); // Buffer for max delay + safety
+			const delayKey = 'global';
+			const maxDelayTime = 2.0; // Maximum delay time in seconds
+			const bufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
 			
 			if (!this._delayBuffers.has(delayKey)) {
 				this._delayBuffers.set(delayKey, {
@@ -725,62 +823,133 @@ class EffectsProcessor {
 			const delayedSample2 = delayState.buffer[delayReadIndex2];
 			const delayedSample = delayedSample1 * (1 - delayFrac) + delayedSample2 * delayFrac;
 			
-			// Write current sample + feedback
+			// Write current sample + feedback (can create many repeats at high feedback)
 			delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
 			delayState.writeIndex = (delayState.writeIndex + 1) % bufferSize;
 			
-			// Mix dry and wet
+			// Mix dry and wet - at max wet/dry extremes, can be completely wet or dry
 			return sample * delayDry + delayedSample * delayWet;
 
 		case 'filter':
-			// Simple low-pass filter approximation
-			const filterFreq = settings.frequency !== undefined ? settings.frequency : 0.5;
-			const filterResonance = settings.resonance !== undefined ? settings.resonance : 0.5;
-			// Map frequency (0-1) to a more noticeable filter effect
-			// Lower frequency = more filtering (darker sound)
-			const filterAmount = filterFreq; // 0 = full filter, 1 = no filter
-			// Add resonance boost to make it more audible
-			const resonanceBoost = 1 + (filterResonance * 0.3);
-			return sample * filterAmount * resonanceBoost;
+			// Proper filter implementation that can go from subtle to extreme
+			const filterFreq = settings.frequency !== undefined ? Math.max(0, Math.min(1, settings.frequency)) : 0.5;
+			const filterResonance = settings.resonance !== undefined ? Math.max(0, Math.min(1, settings.resonance)) : 0.5;
+			const filterType = settings.type || 'lowpass';
+			
+			// Initialize filter state if needed
+			if (!this._filterStates) {
+				this._filterStates = new Map();
+			}
+			const filterKey = 'global';
+			
+			if (!this._filterStates.has(filterKey)) {
+				this._filterStates.set(filterKey, { x1: 0, x2: 0, y1: 0, y2: 0 });
+			}
+			const filterState = this._filterStates.get(filterKey);
+			
+			// Map frequency (0-1) to actual cutoff frequency
+			// 0 = very low (20Hz), 1 = very high (20kHz)
+			const minFreq = 20;
+			const maxFreq = 20000;
+			const cutoff = minFreq + (filterFreq * (maxFreq - minFreq));
+			
+			// Map resonance (0-1) to Q factor (0.5 to 10 for extreme resonance)
+			const q = 0.5 + (filterResonance * 9.5);
+			
+			// Apply proper biquad filter based on type
+			let filtered = sample;
+			if (filterType === 'lowpass') {
+				filtered = this.applyLowpassFilter(sample, cutoff, q, filterState);
+			} else if (filterType === 'highpass') {
+				filtered = this.applyHighpassFilter(sample, cutoff, q, filterState);
+			} else if (filterType === 'bandpass') {
+				filtered = this.applyBandpassFilter(sample, cutoff, q, filterState);
+			}
+			
+			return filtered;
 
 		case 'distortion':
-			// Simple distortion/saturation
-			const distortionDrive = settings.drive !== undefined ? settings.drive : 0.5;
-			const distortionAmount = settings.amount !== undefined ? settings.amount : 0.3;
-			// Apply drive and tanh saturation - make it more aggressive
-			const driven = sample * (1 + distortionDrive * 4); // Increased from 2
-			const distorted = Math.tanh(driven);
-			// Mix between dry and distorted
+			// Distortion/saturation that can go from subtle to extreme
+			const distortionDrive = settings.drive !== undefined ? Math.max(0, Math.min(1, settings.drive)) : 0.5;
+			const distortionAmount = settings.amount !== undefined ? Math.max(0, Math.min(1, settings.amount)) : 0.3;
+			
+			// Drive can go from 1x (no drive) to 20x (extreme drive) for maximum distortion
+			const driveMultiplier = 1 + (distortionDrive * 19);
+			const driven = sample * driveMultiplier;
+			
+			// Apply tanh saturation for soft clipping, then add hard clipping for extreme settings
+			let distorted = Math.tanh(driven);
+			// At high drive, add hard clipping for more aggressive distortion
+			if (distortionDrive > 0.7) {
+				const hardClipAmount = (distortionDrive - 0.7) / 0.3; // 0 to 1 when drive > 0.7
+				distorted = distorted * (1 - hardClipAmount) + Math.max(-1, Math.min(1, driven)) * hardClipAmount;
+			}
+			
+			// Mix between dry and distorted - at max amount, completely distorted
 			return sample * (1 - distortionAmount) + distorted * distortionAmount;
 
 		case 'compressor':
-			// Simple compression
-			const compThreshold = settings.threshold !== undefined ? settings.threshold : 0.7;
-			const compRatio = settings.ratio !== undefined ? settings.ratio : 4;
-			const compAttack = settings.attack !== undefined ? settings.attack : 0.01;
-			const compRelease = settings.release !== undefined ? settings.release : 0.1;
+			// Compressor that can go from subtle to extreme (limiter at max ratio)
+			const compThreshold = settings.threshold !== undefined ? Math.max(0, Math.min(1, settings.threshold)) : 0.7;
+			const compRatio = settings.ratio !== undefined ? Math.max(1, Math.min(20, settings.ratio)) : 4;
+			const compAttack = settings.attack !== undefined ? Math.max(0, Math.min(1, settings.attack)) : 0.01;
+			const compRelease = settings.release !== undefined ? Math.max(0, Math.min(1, settings.release)) : 0.1;
+			
+			// Initialize compressor state if needed
+			if (!this._compressorStates) {
+				this._compressorStates = new Map();
+			}
+			const compKey = 'global';
+			
+			if (!this._compressorStates.has(compKey)) {
+				this._compressorStates.set(compKey, { envelope: 0 });
+			}
+			const compState = this._compressorStates.get(compKey);
+			
 			const absSample = Math.abs(sample);
+			
+			// Calculate target gain reduction
+			let targetGain = 1.0;
 			if (absSample > compThreshold) {
 				const excess = absSample - compThreshold;
 				const compressed = compThreshold + excess / compRatio;
-				return Math.sign(sample) * compressed;
+				targetGain = compressed / absSample; // Gain reduction factor
 			}
-			return sample;
+			
+			// Apply attack and release envelope
+			const attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
+			const releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
+			
+			if (targetGain < compState.envelope) {
+				// Attack phase
+				compState.envelope = targetGain + (compState.envelope - targetGain) * attackCoeff;
+			} else {
+				// Release phase
+				compState.envelope = targetGain + (compState.envelope - targetGain) * releaseCoeff;
+			}
+			
+			// Apply gain reduction
+			return sample * compState.envelope;
 
 		case 'chorus':
-			// Chorus would need delay buffers - simple approximation for now
-			const chorusWet = settings.wet !== undefined ? settings.wet : 0.5;
-			const chorusRate = settings.rate !== undefined ? settings.rate : 0.5;
-			const chorusDepth = settings.depth !== undefined ? settings.depth : 0.6;
-			const chorusDelay = settings.delay !== undefined ? settings.delay : 0.02;
-			// Make chorus more noticeable - use delay buffer with modulation
+			// Chorus with delay buffers - can be pushed to extreme for flanger-like effects
+			const chorusWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+			// Rate: 0 = very slow (0.1 Hz), 1 = very fast (10 Hz) for extreme modulation
+			const chorusRate = settings.rate !== undefined ? Math.max(0, Math.min(1, settings.rate)) : 0.5;
+			// Depth: 0 = no modulation, 1 = extreme modulation (100% of delay time)
+			const chorusDepth = settings.depth !== undefined ? Math.max(0, Math.min(1, settings.depth)) : 0.6;
+			// Delay: 0 = no delay, 0.1 = 100ms max delay
+			const chorusDelay = settings.delay !== undefined ? Math.max(0, Math.min(0.1, settings.delay)) : 0.02;
+			
 			if (!this._chorusBuffers) {
 				this._chorusBuffers = new Map();
 				this._chorusPhases = new Map();
 			}
 			const chorusKey = 'global';
+			const maxDelay = 0.1; // Maximum delay time
+			const bufferSize = Math.floor(sampleRate * maxDelay * 1.5);
+			
 			if (!this._chorusBuffers.has(chorusKey)) {
-				const bufferSize = Math.floor(sampleRate * chorusDelay * 2);
 				this._chorusBuffers.set(chorusKey, {
 					buffer: new Float32Array(bufferSize),
 					writeIndex: 0
@@ -789,22 +958,115 @@ class EffectsProcessor {
 			}
 			const chorusState = this._chorusBuffers.get(chorusKey);
 			const chorusPhase = this._chorusPhases.get(chorusKey);
+			
 			// Write current sample
 			chorusState.buffer[chorusState.writeIndex] = sample;
 			chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
+			
 			// Calculate modulated delay (LFO)
-			const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusRate);
+			// Map rate from 0-1 to 0.1-10 Hz for wide range
+			const lfoFreq = 0.1 + (chorusRate * 9.9);
+			const lfo = Math.sin(chorusPhase * 2 * Math.PI * lfoFreq);
+			// Depth controls how much the delay modulates (0 to 100% of delay time)
 			const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
-			const chorusReadIndex = (chorusState.writeIndex - Math.floor(modulatedDelay * sampleRate) + chorusState.buffer.length) % chorusState.buffer.length;
-			const chorusedSample = chorusState.buffer[chorusReadIndex];
+			
+			// Read from modulated position with interpolation
+			const readPos = chorusState.writeIndex - (modulatedDelay * sampleRate);
+			const readIndex1 = Math.floor(readPos);
+			const readIndex2 = readIndex1 + 1;
+			const frac = readPos - readIndex1;
+			
+			// Wrap indices
+			const idx1 = ((readIndex1 % bufferSize) + bufferSize) % bufferSize;
+			const idx2 = ((readIndex2 % bufferSize) + bufferSize) % bufferSize;
+			
+			const sample1 = chorusState.buffer[idx1];
+			const sample2 = chorusState.buffer[idx2];
+			const chorusedSample = sample1 * (1 - frac) + sample2 * frac;
+			
 			// Update phase
-			this._chorusPhases.set(chorusKey, (chorusPhase + chorusRate / sampleRate) % 1.0);
-			// Mix dry and wet
+			this._chorusPhases.set(chorusKey, (chorusPhase + lfoFreq / sampleRate) % 1.0);
+			
+			// Mix dry and wet - at max wet, completely chorused
 			return sample * (1 - chorusWet) + chorusedSample * chorusWet;
 
 		default:
 			return sample;
 		}
+	}
+	
+	/**
+	 * Apply a lowpass filter (biquad)
+	 */
+	applyLowpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
+		const a1 = 1.0 / (1.0 + q * c + c * c);
+		const a2 = 2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (1.0 - c * c) * a1;
+		const b2 = (1.0 - q * c + c * c) * a1;
+
+		const output = a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply a highpass filter (biquad)
+	 */
+	applyHighpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
+		const a1 = 1.0 / (1.0 + q * c + c * c);
+		const a2 = -2 * a1;
+		const a3 = a1;
+		const b1 = 2.0 * (c * c - 1.0) * a1;
+		const b2 = (1.0 - q * c + c * c) * a1;
+
+		const output = a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply a bandpass filter (biquad)
+	 */
+	applyBandpassFilter(input, cutoff, q, state) {
+		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
+		const w = 2.0 * Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate;
+		const cosw = Math.cos(w);
+		const sinw = Math.sin(w);
+		const alpha = sinw / (2.0 * q);
+		
+		const b0 = alpha;
+		const b1 = 0;
+		const b2 = -alpha;
+		const a0 = 1 + alpha;
+		const a1 = -2 * cosw;
+		const a2 = 1 - alpha;
+
+		const output = (b0 / a0) * input + (b1 / a0) * state.x1 + (b2 / a0) * state.x2
+			- (a1 / a0) * state.y1 - (a2 / a0) * state.y2;
+
+		state.x2 = state.x1;
+		state.x1 = input;
+		state.y2 = state.y1;
+		state.y1 = output;
+
+		return output;
 	}
 }
 
