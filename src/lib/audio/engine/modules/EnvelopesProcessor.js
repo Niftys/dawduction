@@ -10,6 +10,11 @@ class EnvelopesProcessor {
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
 		this.timelineTracks = []; // Timeline tracks (for validation)
 		this.processor = null; // Reference to processor for debug logging
+		
+		// Performance optimization caches
+		this._activeEnvelopeValuesCache = new Map(); // trackId_patternId_beat -> envelopeValues
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
 	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null) {
@@ -18,6 +23,9 @@ class EnvelopesProcessor {
 		this.patternToTrackId = patternToTrackId || new Map();
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
+		
+		// Clear caches when reinitializing
+		this.clearCaches();
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
@@ -32,6 +40,14 @@ class EnvelopesProcessor {
 				}
 			});
 		}
+	}
+
+	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._activeEnvelopeValuesCache.clear();
+		this._lastCacheUpdateBeat = -1;
 	}
 
 	/**
@@ -67,6 +83,36 @@ class EnvelopesProcessor {
 			};
 		}
 
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(currentBeat);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
+
+		// Check cache first
+		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cached = this._activeEnvelopeValuesCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+			return cached.values;
+		}
+
+		// Cache miss - calculate envelope values
+		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat, patternId);
+
+		// Store in cache
+		this._activeEnvelopeValuesCache.set(cacheKey, {
+			beat: currentBeat,
+			values: envelopeValues
+		});
+
+		return envelopeValues;
+	}
+
+	/**
+	 * Calculate envelope values (uncached version)
+	 */
+	_calculateEnvelopeValues(trackId, currentBeat, patternId = null) {
 		const envelopeValues = {
 			volume: 1.0,
 			filter: 1.0,
@@ -231,6 +277,23 @@ class EnvelopesProcessor {
 		}
 
 		return Math.max(0, Math.min(1, value)); // Clamp to 0-1
+	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(currentBeat) {
+		// Clear old cache entries (keep only recent ones)
+		const cacheKeysToDelete = [];
+		for (const [key, cached] of this._activeEnvelopeValuesCache.entries()) {
+			if (Math.abs(currentBeat - cached.beat) > this._cacheUpdateInterval * 4) {
+				cacheKeysToDelete.push(key);
+			}
+		}
+		for (const key of cacheKeysToDelete) {
+			this._activeEnvelopeValuesCache.delete(key);
+		}
 	}
 }
 

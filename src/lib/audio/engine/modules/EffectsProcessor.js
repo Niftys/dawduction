@@ -12,6 +12,12 @@ class EffectsProcessor {
 		this.timelineTracks = []; // Timeline tracks (for looking up patternId on pattern tracks)
 		this.processor = null; // Reference to processor for accessing ProjectManager
 		this.automation = null; // Project automation data
+		
+		// Performance optimization caches
+		this._trackToTimelineTrackId = new Map(); // trackId -> timelineTrackId
+		this._activeEffectsCache = new Map(); // trackId_patternId_beat -> activeEffects[]
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
 	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks, automation) {
@@ -22,6 +28,9 @@ class EffectsProcessor {
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
 		this.automation = automation || null;
+		
+		// Clear caches when reinitializing
+		this.clearCaches();
 		
 		// Debug: Log initialization
 		if (this.processor && this.processor.port) {
@@ -39,6 +48,15 @@ class EffectsProcessor {
 				}
 			});
 		}
+	}
+
+	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._trackToTimelineTrackId.clear();
+		this._activeEffectsCache.clear();
+		this._lastCacheUpdateBeat = -1;
 	}
 
 	/**
@@ -69,14 +87,46 @@ class EffectsProcessor {
 			return [];
 		}
 
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(currentBeat);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
+
+		// Check cache first
+		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cached = this._activeEffectsCache.get(cacheKey);
+		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+			return cached.effects;
+		}
+
+		// Cache miss - calculate active effects
+		const activeEffects = this._calculateActiveEffects(trackId, currentBeat, patternId);
+
+		// Store in cache
+		this._activeEffectsCache.set(cacheKey, {
+			beat: currentBeat,
+			effects: activeEffects
+		});
+
+		return activeEffects;
+	}
+
+	/**
+	 * Calculate active effects (uncached version)
+	 */
+	_calculateActiveEffects(trackId, currentBeat, patternId = null) {
 		const activeEffects = [];
 
-		// Find which timeline track this audio track belongs to
-		let timelineTrackId = null;
-		if (this.timelineTrackToAudioTracks) {
+		// Use cached timeline track ID lookup
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			// Fallback: calculate if not cached
 			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
 				if (audioTrackIds.includes(trackId)) {
 					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
 					break;
 				}
 			}
@@ -249,6 +299,34 @@ class EffectsProcessor {
 		}
 
 		return activeEffects;
+	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(currentBeat) {
+		// Build trackId -> timelineTrackId map (only if not already built)
+		if (this._trackToTimelineTrackId.size === 0 && this.timelineTrackToAudioTracks) {
+			for (const [timelineTrackId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+				for (const audioTrackId of audioTrackIds) {
+					if (!this._trackToTimelineTrackId.has(audioTrackId)) {
+						this._trackToTimelineTrackId.set(audioTrackId, timelineTrackId);
+					}
+				}
+			}
+		}
+
+		// Clear old cache entries (keep only recent ones)
+		const cacheKeysToDelete = [];
+		for (const [key, cached] of this._activeEffectsCache.entries()) {
+			if (Math.abs(currentBeat - cached.beat) > this._cacheUpdateInterval * 4) {
+				cacheKeysToDelete.push(key);
+			}
+		}
+		for (const key of cacheKeysToDelete) {
+			this._activeEffectsCache.delete(key);
+		}
 	}
 
 	/**
