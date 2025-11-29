@@ -48,6 +48,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.eventScheduler.clear();
 		// Clear old synths when reloading
 		this.synthManager.clear();
+		// Clear audio mixer caches when reloading
+		this.audioMixer.clearCaches();
 		
 		// Reset playback position when loading new project
 		this.currentTime = 0;

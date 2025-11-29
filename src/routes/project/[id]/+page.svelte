@@ -356,12 +356,8 @@
 	}
 
 	onDestroy(() => {
-		// Clean up global event listeners
+		// Clean up click outside listener
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('mousemove', handleGlobalMouseMove);
-			window.removeEventListener('mouseup', handleGlobalMouseUp);
-			
-			// Clean up click outside listener
 			if (clickOutsideListenerAttached) {
 				window.removeEventListener('click', handleClickOutside);
 				clickOutsideListenerAttached = false;
@@ -445,75 +441,9 @@
 		return pixelToBeat(pixel, PIXELS_PER_BEAT);
 	}
 
-	// Playhead dragging state
-	let isDraggingPlayhead = false;
-	let wasPlayingBeforeDrag = false;
-
-	function handlePlayheadMouseDown(e: MouseEvent) {
-		if (e.button !== 0) return; // Only left mouse button
-		e.preventDefault();
-		e.stopPropagation();
-		
-		const engine = $engineStore;
-		if (!engine) return;
-		
-		isDraggingPlayhead = true;
-		wasPlayingBeforeDrag = playbackState?.isPlaying || false;
-		
-		// Pause playback while dragging
-		if (wasPlayingBeforeDrag) {
-			engine.setTransport('pause');
-		}
-		
-		// Update position immediately
-		updatePlayheadPosition(e);
-		
-		// Add global mouse event listeners for dragging
-		if (typeof window !== 'undefined') {
-			window.addEventListener('mousemove', handleGlobalMouseMove);
-			window.addEventListener('mouseup', handleGlobalMouseUp);
-		}
-	}
-
-	function updatePlayheadPosition(e: MouseEvent) {
-		if (!isDraggingPlayhead) return;
-		
-		const timelineArea = timelineAreaElement;
-		if (!timelineArea) return;
-		
-		const rect = timelineArea.getBoundingClientRect();
-		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
-		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
-		
-		const engine = $engineStore;
-		if (engine) {
-			// Update engine position
-			engine.setTransport(wasPlayingBeforeDrag ? 'play' : 'stop', beat);
-		}
-	}
-
-	function handleGlobalMouseMove(e: MouseEvent) {
-		if (isDraggingPlayhead) {
-			updatePlayheadPosition(e);
-		}
-	}
-
-	function handleGlobalMouseUp() {
-		if (isDraggingPlayhead) {
-			isDraggingPlayhead = false;
-			wasPlayingBeforeDrag = false;
-			
-			// Remove global listeners
-			if (typeof window !== 'undefined') {
-				window.removeEventListener('mousemove', handleGlobalMouseMove);
-				window.removeEventListener('mouseup', handleGlobalMouseUp);
-			}
-		}
-	}
-
 	function handleTimelineClick(e: MouseEvent) {
-		// Don't handle clicks if we're dragging playhead or interacting with clips
-		if (isDraggingPlayhead || isResizing || isDraggingClip) return;
+		// Don't handle clicks if we're interacting with clips
+		if (isResizing || isDraggingClip) return;
 		
 		const target = e.target as HTMLElement;
 		
@@ -534,27 +464,10 @@
 			return;
 		}
 		
-		const timelineArea = timelineAreaElement;
-		if (!timelineArea) return;
-		
-		const rect = timelineArea.getBoundingClientRect();
-		const x = e.clientX - rect.left - ROW_LABEL_WIDTH;
-		
-		// Only seek if clicking in the timeline content area (not the label area)
-		if (x < 0) return;
-		
-		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
-		
-		const engine = $engineStore;
-		if (engine) {
-			const isPlaying = playbackState?.isPlaying || false;
-			engine.setTransport(isPlaying ? 'play' : 'stop', beat);
-		}
+		// Removed click-to-seek functionality - clicking in timeline no longer seeks
 	}
 
 	function handleRulerClick(e: MouseEvent) {
-		if (isDraggingPlayhead) return; // Don't handle click if we just finished dragging
-		
 		const target = e.target as HTMLElement;
 		
 		// CRITICAL: Check for dropdown menu elements FIRST
@@ -572,18 +485,7 @@
 			return;
 		}
 		
-		const rulerElement = target.closest('.timeline-ruler');
-		if (!rulerElement) return;
-		
-		const rulerRect = rulerElement.getBoundingClientRect();
-		const x = e.clientX - rulerRect.left;
-		const beat = Math.max(0, Math.min(timeline.totalLength, snapToBeat(pixelToBeatLocal(x))));
-		
-		const engine = $engineStore;
-		if (engine) {
-			const isPlaying = playbackState?.isPlaying || false;
-			engine.setTransport(isPlaying ? 'play' : 'stop', beat);
-		}
+		// Removed click-to-seek functionality - clicking on ruler no longer seeks
 	}
 
 	function findPatternById(patternId: string | undefined): Pattern | null {
@@ -1555,16 +1457,10 @@
 
 					<div class="playhead-container">
 						<div 
-							class="playhead {isDraggingPlayhead ? 'dragging' : ''}" 
+							class="playhead" 
 							style="left: {ROW_LABEL_WIDTH + beatToPixelLocal(currentBeat)}px;"
 						>
-							<div 
-								class="playhead-handle"
-								on:mousedown={handlePlayheadMouseDown}
-								role="slider"
-								aria-label="Playhead position"
-								tabindex="0"
-							></div>
+							<!-- Playhead is now non-interactive, just visual indicator -->
 						</div>
 					</div>
 

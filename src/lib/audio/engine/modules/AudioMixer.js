@@ -17,11 +17,26 @@ class AudioMixer {
 		
 		// Debug tracking (per-track to avoid infinite loops)
 		this._lastDebugStates = new Map(); // trackId_patternId -> {muted, soloed, beat}
+		
+		// Performance optimization caches
+		this._trackToTimelineTracks = new Map(); // trackId -> timelineTrack[]
+		this._trackToPatternId = new Map(); // trackId -> patternId
+		this._trackToTimelineVolume = new Map(); // trackId -> volume multiplier
+		this._activeClipsCache = new Map(); // patternId -> {beat: number, clips: clip[]}
+		this._lastCacheUpdateBeat = -1;
+		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
 	mixSynths(synths, masterGain = 0.3, currentBeat = 0, isArrangementView = false) {
 		let leftSample = 0;
 		let rightSample = 0;
+		
+		// Update caches periodically (not every sample)
+		const shouldUpdateCache = Math.abs(currentBeat - this._lastCacheUpdateBeat) >= this._cacheUpdateInterval;
+		if (shouldUpdateCache) {
+			this._updateCaches(isArrangementView);
+			this._lastCacheUpdateBeat = currentBeat;
+		}
 		
 		// Check if any timeline track is soloed (for arrangement view)
 		let hasSoloedTimelineTrack = false;
@@ -33,18 +48,14 @@ class AudioMixer {
 		
 		for (const [trackId, synth] of synths.entries()) {
 			if (synth.process) {
-				// Find all timeline tracks this audio track belongs to
-				const timelineTracks = [];
-				if (isArrangementView && this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
-					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
-						if (audioTrackIds.includes(trackId)) {
-							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
-							if (timelineTrack && timelineTrack.type === 'pattern') {
-								timelineTracks.push(timelineTrack);
-							}
-						}
-					}
+				// Early mute check - skip expensive lookups if already muted
+				const isMuted = this.trackStateManager.isMuted(trackId);
+				if (isMuted && !isArrangementView) {
+					continue; // Skip muted tracks in pattern view
 				}
+				
+				// Use cached timeline tracks lookup
+				const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
 				
 				// Check timeline track mute/solo state (for arrangement view)
 				// For mute: Check if there's at least one active clip on a non-muted timeline track
@@ -52,24 +63,23 @@ class AudioMixer {
 				let isTimelineMuted = false;
 				let isTimelineSoloed = false;
 				if (isArrangementView && timelineTracks.length > 0) {
-					// Get pattern ID to find active clips
-					let patternId = null;
-					if (trackId && trackId.startsWith('__pattern_')) {
-						const patternPrefix = '__pattern_';
-						const afterPrefix = trackId.substring(patternPrefix.length);
-						const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-						if (uuidMatch) {
-							patternId = uuidMatch[1];
-						}
-					}
+					// Use cached pattern ID
+					const patternId = this._trackToPatternId.get(trackId);
 					
-					// Find active clips for this pattern at current beat
-					if (patternId && this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
-						const activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
-							return clip.patternId === patternId &&
-							       currentBeat >= clip.startBeat &&
-							       currentBeat < clip.startBeat + clip.duration;
-						});
+					// Use cached active clips (updated periodically)
+					let activeClips = [];
+					if (patternId) {
+						const cached = this._activeClipsCache.get(patternId);
+						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+							activeClips = cached.clips;
+						} else if (this.processor && this.processor.projectManager && this.processor.projectManager.timeline?.clips) {
+							// Fallback: calculate if cache is stale
+							activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
+								return clip.patternId === patternId &&
+								       currentBeat >= clip.startBeat &&
+								       currentBeat < clip.startBeat + clip.duration;
+							});
+						}
 						
 						if (activeClips.length > 0) {
 							// Check if all active clips are on muted timeline tracks
@@ -182,45 +192,15 @@ class AudioMixer {
 				let trackVolume = this.trackStateManager.getVolume(trackId);
 				let trackPan = this.trackStateManager.getPan(trackId);
 				
-				// Apply timeline track volume if this audio track belongs to a timeline track
-				if (this.processor && this.processor.projectManager && this.processor.projectManager.timelineTrackToAudioTracks) {
-					for (const [timelineTrackId, audioTrackIds] of this.processor.projectManager.timelineTrackToAudioTracks.entries()) {
-						if (audioTrackIds.includes(trackId)) {
-							// This audio track belongs to a timeline track, apply timeline track volume
-							const timelineTrack = this.processor.projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
-							if (timelineTrack && timelineTrack.volume !== undefined) {
-								trackVolume *= timelineTrack.volume;
-							}
-							break;
-						}
-					}
+				// Apply cached timeline track volume
+				const timelineVolume = this._trackToTimelineVolume.get(trackId);
+				if (timelineVolume !== undefined) {
+					trackVolume *= timelineVolume;
 				}
 				
-				// Get pattern ID from track ID (if it's a pattern track)
-				// Track ID format: __pattern_{patternId}_{instrumentId}
-				// Also check processor's patternToTrackId map for reverse lookup
-				// And check if synth has a stored patternId
-				let patternId = null;
-				if (trackId && trackId.startsWith('__pattern_')) {
-					// Extract pattern ID: __pattern_{patternId}_{instrumentId}
-					// Pattern ID is the UUID immediately after '__pattern_'
-					// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars)
-					const patternPrefix = '__pattern_';
-					const afterPrefix = trackId.substring(patternPrefix.length);
-					const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
-					if (uuidMatch) {
-						patternId = uuidMatch[1];
-					}
-				} else if (this.processor && this.processor.projectManager && this.processor.projectManager.patternToTrackId) {
-					// Reverse lookup: find pattern ID for this track ID
-					for (const [pid, tid] of this.processor.projectManager.patternToTrackId.entries()) {
-						if (tid === trackId) {
-							patternId = pid;
-							break;
-						}
-					}
-				}
-				// Also check if synth has a stored patternId (from event)
+				// Use cached pattern ID
+				let patternId = this._trackToPatternId.get(trackId);
+				// Fallback: check if synth has a stored patternId (from event)
 				if (!patternId && synth._patternId) {
 					patternId = synth._patternId;
 				}
@@ -374,6 +354,109 @@ class AudioMixer {
 			right: rightSample * masterGain,
 			mono: (leftSample + rightSample) * 0.5 * masterGain
 		};
+	}
+
+	/**
+	 * Clear all performance caches (call when project changes)
+	 */
+	clearCaches() {
+		this._trackToTimelineTracks.clear();
+		this._trackToPatternId.clear();
+		this._trackToTimelineVolume.clear();
+		this._activeClipsCache.clear();
+		this._lastCacheUpdateBeat = -1;
+	}
+
+	/**
+	 * Update performance caches to avoid expensive lookups per-sample
+	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	_updateCaches(isArrangementView) {
+		// Clear old caches
+		this._trackToTimelineTracks.clear();
+		this._trackToPatternId.clear();
+		this._trackToTimelineVolume.clear();
+		
+		if (!this.processor || !this.processor.projectManager) {
+			return;
+		}
+		
+		const projectManager = this.processor.projectManager;
+		const synths = this.processor.synthManager.getAllSynths();
+		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+		
+		// Build reverse lookup: audioTrackId -> timelineTracks[]
+		if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
+			for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
+				const timelineTrack = projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+				if (timelineTrack && timelineTrack.type === 'pattern') {
+					for (const audioTrackId of audioTrackIds) {
+						if (!this._trackToTimelineTracks.has(audioTrackId)) {
+							this._trackToTimelineTracks.set(audioTrackId, []);
+						}
+						this._trackToTimelineTracks.get(audioTrackId).push(timelineTrack);
+					}
+				}
+			}
+		}
+		
+		// Build trackId -> patternId map and trackId -> timelineVolume map
+		for (const [trackId] of synths.entries()) {
+			// Extract pattern ID from track ID
+			let patternId = null;
+			if (trackId && trackId.startsWith('__pattern_')) {
+				const patternPrefix = '__pattern_';
+				const afterPrefix = trackId.substring(patternPrefix.length);
+				const uuidMatch = afterPrefix.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
+				if (uuidMatch) {
+					patternId = uuidMatch[1];
+					this._trackToPatternId.set(trackId, patternId);
+				}
+			} else if (projectManager.patternToTrackId) {
+				// Reverse lookup: find pattern ID for this track ID
+				for (const [pid, tid] of projectManager.patternToTrackId.entries()) {
+					if (tid === trackId) {
+						patternId = pid;
+						this._trackToPatternId.set(trackId, patternId);
+						break;
+					}
+				}
+			}
+			
+			// Build timeline volume cache
+			if (isArrangementView && projectManager.timelineTrackToAudioTracks) {
+				for (const [timelineTrackId, audioTrackIds] of projectManager.timelineTrackToAudioTracks.entries()) {
+					if (audioTrackIds.includes(trackId)) {
+						const timelineTrack = projectManager.timeline?.tracks?.find((t) => t.id === timelineTrackId);
+						if (timelineTrack && timelineTrack.volume !== undefined) {
+							this._trackToTimelineVolume.set(trackId, timelineTrack.volume);
+						}
+						break;
+					}
+				}
+			}
+		}
+		
+		// Cache active clips per pattern (for current beat)
+		if (isArrangementView && projectManager.timeline?.clips) {
+			this._activeClipsCache.clear();
+			const allPatternIds = new Set(this._trackToPatternId.values());
+			
+			for (const patternId of allPatternIds) {
+				const activeClips = projectManager.timeline.clips.filter((clip) => {
+					return clip.patternId === patternId &&
+					       currentBeat >= clip.startBeat &&
+					       currentBeat < clip.startBeat + clip.duration;
+				});
+				
+				if (activeClips.length > 0) {
+					this._activeClipsCache.set(patternId, {
+						beat: currentBeat,
+						clips: activeClips
+					});
+				}
+			}
+		}
 	}
 
 	/**
