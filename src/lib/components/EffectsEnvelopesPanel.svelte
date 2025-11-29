@@ -128,6 +128,51 @@
 	});
 
 	export let onDragStart: ((e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
+	export let onTouchDragStart: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
+	
+	function handleEffectTouchStart(e: TouchEvent, effectId: string) {
+		if (editingEffectId !== effectId && e.touches.length === 1 && onTouchDragStart) {
+			const data: { type: 'effect', id: string } = { type: 'effect', id: effectId };
+			onTouchDragStart(data);
+			e.preventDefault();
+		}
+	}
+	
+	function handleEnvelopeTouchStart(e: TouchEvent, envelopeId: string) {
+		if (editingEnvelopeId !== envelopeId && e.touches.length === 1 && onTouchDragStart) {
+			const data: { type: 'envelope', id: string } = { type: 'envelope', id: envelopeId };
+			onTouchDragStart(data);
+			e.preventDefault();
+		}
+	}
+	
+	function handleEffectDragStart(e: DragEvent, effectId: string) {
+		if (editingEffectId !== effectId) {
+			const data: { type: 'effect', id: string } = { type: 'effect', id: effectId };
+			if (e.dataTransfer) {
+				e.dataTransfer.effectAllowed = 'copy';
+				e.dataTransfer.setData('text/plain', effectId);
+				e.dataTransfer.setData('application/json', JSON.stringify(data));
+			}
+			if (onDragStart) {
+				onDragStart(e, data);
+			}
+		}
+	}
+	
+	function handleEnvelopeDragStart(e: DragEvent, envelopeId: string) {
+		if (editingEnvelopeId !== envelopeId) {
+			const data: { type: 'envelope', id: string } = { type: 'envelope', id: envelopeId };
+			if (e.dataTransfer) {
+				e.dataTransfer.effectAllowed = 'copy';
+				e.dataTransfer.setData('text/plain', envelopeId);
+				e.dataTransfer.setData('application/json', JSON.stringify(data));
+			}
+			if (onDragStart) {
+				onDragStart(e, data);
+			}
+		}
+	}
 </script>
 
 <div class="effects-envelopes-panel">
@@ -189,19 +234,8 @@
 						<button
 							class="item {effect.type}"
 							draggable={editingEffectId !== effect.id}
-							on:dragstart={(e) => {
-								if (editingEffectId !== effect.id) {
-								const data = { type: 'effect', id: effect.id };
-								if (e.dataTransfer) {
-									e.dataTransfer.effectAllowed = 'copy';
-									e.dataTransfer.setData('text/plain', effect.id);
-									e.dataTransfer.setData('application/json', JSON.stringify(data));
-								}
-								if (onDragStart) {
-									onDragStart(e, data);
-									}
-								}
-							}}
+							on:dragstart={(e) => handleEffectDragStart(e, effect.id)}
+							on:touchstart={(e) => handleEffectTouchStart(e, effect.id)}
 						>
 							<div class="item-color" style="background: {effect.color};"></div>
 							{#if editingEffectId === effect.id}
@@ -299,19 +333,8 @@
 						<button
 							class="item {envelope.type}"
 							draggable={editingEnvelopeId !== envelope.id}
-							on:dragstart={(e) => {
-								if (editingEnvelopeId !== envelope.id) {
-								const data = { type: 'envelope', id: envelope.id };
-								if (e.dataTransfer) {
-									e.dataTransfer.effectAllowed = 'copy';
-									e.dataTransfer.setData('text/plain', envelope.id);
-									e.dataTransfer.setData('application/json', JSON.stringify(data));
-								}
-								if (onDragStart) {
-									onDragStart(e, data);
-									}
-								}
-							}}
+							on:dragstart={(e) => handleEnvelopeDragStart(e, envelope.id)}
+							on:touchstart={(e) => handleEnvelopeTouchStart(e, envelope.id)}
 						>
 							<div class="item-color" style="background: {envelope.color};"></div>
 							{#if editingEnvelopeId === envelope.id}

@@ -13,6 +13,9 @@
 	export let deletePattern: (id: string) => void;
 	export let selectPattern: (id: string) => void;
 	export let handleEffectEnvelopeDragStart: (e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void;
+	export let handlePatternDragStart: ((e: DragEvent, patternId: string) => void) | undefined = undefined;
+	export let onTouchDragStart: ((patternId: string) => void) | undefined = undefined;
+	export let onEffectEnvelopeTouchDragStart: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
 	
 	let editingPatternInput: HTMLInputElement | null = null;
 	
@@ -22,12 +25,72 @@
 	}
 	
 	function handleDragStart(e: DragEvent, patternId: string) {
-		if (viewMode !== 'arrangement') return;
+		if (viewMode !== 'arrangement') {
+			e.preventDefault();
+			return;
+		}
+		if (editingPatternId === patternId) {
+			e.preventDefault();
+			return;
+		}
 		if (e.dataTransfer) {
 			e.dataTransfer.effectAllowed = 'copy';
 			e.dataTransfer.setData('text/plain', patternId);
 			e.dataTransfer.setData('application/json', JSON.stringify({ type: 'pattern', id: patternId }));
 		}
+		// Notify parent component about drag start (for desktop drag)
+		if (handlePatternDragStart) {
+			handlePatternDragStart(e, patternId);
+		}
+	}
+	
+	// Touch drag state for mobile
+	let touchDragState: { patternId: string; startX: number; startY: number } | null = null;
+	let touchDragElement: HTMLElement | null = null;
+	
+	function handleTouchStart(e: TouchEvent, patternId: string) {
+		if (viewMode !== 'arrangement' || editingPatternId === patternId) return;
+		if (e.touches.length !== 1) return;
+		
+		const touch = e.touches[0];
+		touchDragState = {
+			patternId,
+			startX: touch.clientX,
+			startY: touch.clientY
+		};
+		touchDragElement = e.currentTarget as HTMLElement;
+		
+		// Set dragged pattern ID for timeline drop detection
+		if (onTouchDragStart) {
+			onTouchDragStart(patternId);
+		}
+		
+		e.preventDefault();
+	}
+	
+	function handleTouchMove(e: TouchEvent) {
+		if (!touchDragState || e.touches.length !== 1) return;
+		
+		const touch = e.touches[0];
+		const moveX = touch.clientX - touchDragState.startX;
+		const moveY = touch.clientY - touchDragState.startY;
+		const distanceSq = moveX * moveX + moveY * moveY;
+		
+		// Start drag after 100ms pause and 5px movement
+		if (distanceSq > 25) {
+			// Create a visual drag indicator (optional - could show a ghost element)
+			// For now, just allow the drag to proceed
+			e.preventDefault();
+		}
+	}
+	
+	function handleTouchEnd(e: TouchEvent) {
+		if (!touchDragState) return;
+		
+		// If we have a valid drag state, we'll handle drop in the timeline area
+		// The timeline drop handlers will check for the dragged pattern ID
+		touchDragState = null;
+		touchDragElement = null;
 	}
 </script>
 
@@ -52,6 +115,10 @@
 						handleDragStart(e, pattern.id);
 					}
 				}}
+				on:touchstart={(e) => handleTouchStart(e, pattern.id)}
+				on:touchmove={handleTouchMove}
+				on:touchend={handleTouchEnd}
+				on:touchcancel={handleTouchEnd}
 				draggable={viewMode === 'arrangement' && editingPatternId !== pattern.id}
 				tabindex="0"
 			>
@@ -110,6 +177,6 @@
 			<div class="empty-state">No patterns yet. Create one to get started!</div>
 		{/if}
 	</div>
-	<EffectsEnvelopesPanel onDragStart={handleEffectEnvelopeDragStart} />
+	<EffectsEnvelopesPanel onDragStart={handleEffectEnvelopeDragStart} onTouchDragStart={onEffectEnvelopeTouchDragStart} />
 </div>
 

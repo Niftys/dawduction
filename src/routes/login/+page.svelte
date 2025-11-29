@@ -198,5 +198,38 @@
 	.auth-footer a:hover {
 		text-decoration: underline;
 	}
+
+	/* Responsive tweaks for smaller screens */
+	@media (max-width: 768px) {
+		.auth-container {
+			padding: 1.5rem;
+		}
+
+		.auth-card {
+			padding: 1.5rem;
+		}
+
+		h1 {
+			font-size: 1.75rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.auth-container {
+			padding: 1.25rem 1rem;
+		}
+
+		.auth-card {
+			padding: 1.5rem 1.25rem;
+		}
+
+		h1 {
+			font-size: 1.6rem;
+		}
+
+		.subtitle {
+			font-size: 0.85rem;
+		}
+	}
 </style>
 

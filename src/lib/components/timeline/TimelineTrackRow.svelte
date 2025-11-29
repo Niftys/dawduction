@@ -38,12 +38,17 @@
 	export let onRowDragLeave: (e: DragEvent) => void;
 	export let onRowDrop: (e: DragEvent) => void;
 	export let onRowClick: (e: MouseEvent) => void;
+	export let onRowTouchEnd: ((e: TouchEvent) => void) | undefined = undefined;
 	export let onTrackVolumeMouseDown: (e: MouseEvent, trackId: string) => void;
 	export let onToggleTrackMute: (trackId: string) => void;
 	export let onToggleTrackSolo: (trackId: string) => void;
 	export let onDeleteTrack: (trackId: string) => void;
 	export let onChangeTrackColor: (trackId: string, color: string) => void = () => {};
 	export let onClipMouseDown: (e: MouseEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void;
+	// Optional touch handlers so mobile can reuse clip drag/resize logic without changing desktop behavior
+	export let onClipTouchStart: ((e: TouchEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void) | undefined = undefined;
+	export let onClipTouchMove: ((e: TouchEvent) => void) | undefined = undefined;
+	export let onClipTouchEnd: (() => void) | undefined = undefined;
 	export let onClipClick: (clipId: string, type: 'effect' | 'envelope') => void;
 	export let onClipKeyDown: (clipId: string, type: 'effect' | 'envelope') => void;
 	export let onDeleteClip: (clipId: string, type: 'clip' | 'effect' | 'envelope') => void;
@@ -146,6 +151,8 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 	on:dragover={handleRowDragOver}
 	on:dragleave={onRowDragLeave}
 	on:drop={handleRowDrop}
+	on:touchend={onRowTouchEnd}
+	on:touchcancel={onRowTouchEnd}
 >
 	<div 
 		class="row-label" 
@@ -276,6 +283,9 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 							isDragging={isDraggingClip?.id === clip.id && isDraggingClip?.type === 'clip'}
 							{isGreyedOut}
 							onMouseDown={(e) => onClipMouseDown(e, clip, 'clip')}
+							onTouchStart={onClipTouchStart ? (e) => onClipTouchStart(e, clip, 'clip') : undefined}
+							onTouchMove={onClipTouchMove}
+							onTouchEnd={onClipTouchEnd}
 							onClick={(e) => {
 								if (!isResizing && !isDraggingClip) {
 									e.stopPropagation();
@@ -305,6 +315,7 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 							isDragging={isDraggingClip?.id === timelineEffect.id && isDraggingClip?.type === 'effect'}
 							{automationCurves}
 							onMouseDown={(e) => onClipMouseDown(e, timelineEffect, 'effect')}
+							onTouchStart={onClipTouchStart ? (e) => onClipTouchStart(e, timelineEffect, 'effect') : undefined}
 							onClick={() => {
 								if (!isResizing && !isDraggingClip) {
 									onClipClick(timelineEffect.id, 'effect');
@@ -338,6 +349,7 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 							isSelected={selectedEnvelopeId === timelineEnvelope.id}
 							isDragging={isDraggingClip?.id === timelineEnvelope.id && isDraggingClip?.type === 'envelope'}
 							onMouseDown={(e) => onClipMouseDown(e, timelineEnvelope, 'envelope')}
+							onTouchStart={onClipTouchStart ? (e) => onClipTouchStart(e, timelineEnvelope, 'envelope') : undefined}
 							onClick={() => {
 								if (!isResizing && !isDraggingClip) {
 									onClipClick(timelineEnvelope.id, 'envelope');

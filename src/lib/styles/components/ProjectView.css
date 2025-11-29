@@ -87,9 +87,23 @@
 	padding: 16px;
 	overflow-y: auto;
 	overflow-x: hidden;
-	flex: 0 1 auto;
-	max-height: calc((100vh - 60px) / 2); /* Cap at half the sidebar height */
+	flex: 1 3 auto;
+	max-height: calc((100vh - 60px) / 2.5); /* Cap at half the sidebar height */
 	min-height: 0; /* Allow flexbox to shrink below content size */
+}
+
+/* Mobile: Make patterns list same size as effects/envelopes panel */
+@media (max-width: 1000px) {
+	.patterns-list {
+		flex: 1 2 0; /* Match effects/envelopes panel flex behavior - equal height */
+		max-height: none; /* Remove height cap on mobile */
+		min-height: 0; /* Allow flexbox to shrink properly */
+	}
+	
+	.effects-envelopes-panel {
+		flex: 2 1 0; /* Ensure equal flex basis */
+		min-height: 0; /* Allow flexbox to shrink properly */
+	}
 }
 
 .pattern-item {
@@ -120,6 +134,12 @@
 
 .pattern-item[draggable="true"] {
 	cursor: move;
+	-webkit-user-drag: element;
+	user-select: none;
+}
+
+.pattern-item[draggable="true"]:active {
+	cursor: grabbing;
 }
 
 .pattern-color {

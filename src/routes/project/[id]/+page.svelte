@@ -645,6 +645,21 @@
 			e.dataTransfer.setData('application/json', JSON.stringify({ type: 'pattern', id: patternId }));
 		}
 	}
+	
+	// Touch drag start for mobile (sets drag state without DragEvent)
+	function handleTouchDragStart(patternId: string) {
+		if (viewMode !== 'arrangement') return;
+		draggedPatternId = patternId;
+	}
+	
+	function handleEffectEnvelopeTouchDragStart(data: { type: 'effect' | 'envelope', id: string }) {
+		if (viewMode !== 'arrangement') return;
+		if (data.type === 'effect') {
+			draggedEffectId = data.id;
+		} else {
+			draggedEnvelopeId = data.id;
+		}
+	}
 
 	function handleEffectEnvelopeDragStart(e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) {
 		if (viewMode !== 'arrangement') return;
@@ -774,6 +789,112 @@
 			};
 		}
 	}
+
+	// Touch drag delay state for timeline clips (prevents accidental drags)
+	let clipDragDelayTimeout: ReturnType<typeof setTimeout> | null = null;
+	let pendingClipDrag: { clip: TimelineClip | TimelineEffect | TimelineEnvelope; type: 'clip' | 'effect' | 'envelope'; startX: number; touch: Touch } | null = null;
+
+	// Touch equivalent of handleClipMouseDown for mobile drag/resize in arrangement view
+	function handleClipTouchStart(e: TouchEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope' = 'clip') {
+		if (!timelineAreaElement) return;
+		if (!e.touches || e.touches.length === 0) return;
+		e.stopPropagation();
+
+		const touch = e.touches[0];
+		const target = e.target as HTMLElement;
+
+		// Check if touching a resize handle - no delay for resize
+		const resizeHandle = target.closest('.clip-resize-handle-left, .clip-resize-handle-right') as HTMLElement;
+		if (resizeHandle) {
+			// Clear any pending drag
+			if (clipDragDelayTimeout) {
+				clearTimeout(clipDragDelayTimeout);
+				clipDragDelayTimeout = null;
+			}
+			pendingClipDrag = null;
+			
+			projectStore.startBatch();
+			const side = resizeHandle.classList.contains('clip-resize-handle-left') ? 'left' : 'right';
+			const clipContainer = e.currentTarget as HTMLElement;
+			if (!clipContainer) return;
+			const rect = clipContainer.closest('.timeline-area')?.getBoundingClientRect();
+			if (!rect) return;
+
+			const startX = touch.clientX - rect.left - ROW_LABEL_WIDTH;
+			isResizing = {
+				type,
+				id: clip.id,
+				side,
+				startBeat: clip.startBeat,
+				startDuration: clip.duration,
+				startX
+			};
+		} else {
+			// For dragging, require 100ms pause before starting
+			// Clear any existing pending drag
+			if (clipDragDelayTimeout) {
+				clearTimeout(clipDragDelayTimeout);
+				clipDragDelayTimeout = null;
+			}
+			
+			const clipContainer = e.currentTarget as HTMLElement;
+			if (!clipContainer) return;
+			const rect = clipContainer.closest('.timeline-area')?.getBoundingClientRect();
+			if (!rect) return;
+
+			const startX = touch.clientX - rect.left - ROW_LABEL_WIDTH;
+			
+			// Store pending drag info
+			pendingClipDrag = {
+				clip,
+				type,
+				startX,
+				touch
+			};
+			
+			// Start drag after 100ms delay
+			clipDragDelayTimeout = setTimeout(() => {
+				if (pendingClipDrag) {
+					projectStore.startBatch();
+					isDraggingClip = {
+						type: pendingClipDrag.type,
+						id: pendingClipDrag.clip.id,
+						startBeat: pendingClipDrag.clip.startBeat,
+						startX: pendingClipDrag.startX
+					};
+					pendingClipDrag = null;
+					clipDragDelayTimeout = null;
+				}
+			}, 100);
+		}
+	}
+	
+	// Cancel pending drag if touch moves or ends before delay completes
+	function handleClipTouchMove(e: TouchEvent) {
+		if (pendingClipDrag && e.touches.length > 0) {
+			const touch = e.touches[0];
+			const moveX = touch.clientX - pendingClipDrag.touch.clientX;
+			const moveY = touch.clientY - pendingClipDrag.touch.clientY;
+			const distanceSq = moveX * moveX + moveY * moveY;
+			
+			// If moved more than 5px, cancel pending drag (user is scrolling/panning)
+			if (distanceSq > 25) {
+				if (clipDragDelayTimeout) {
+					clearTimeout(clipDragDelayTimeout);
+					clipDragDelayTimeout = null;
+				}
+				pendingClipDrag = null;
+			}
+		}
+	}
+	
+	function handleClipTouchEnd() {
+		if (clipDragDelayTimeout) {
+			clearTimeout(clipDragDelayTimeout);
+			clipDragDelayTimeout = null;
+		}
+		pendingClipDrag = null;
+	}
 	
 	function handleTimelineMouseMove(e: MouseEvent) {
 		// Only process if we're actually resizing or dragging
@@ -860,6 +981,100 @@
 			}
 		}
 	}
+
+	// Touch move equivalent for clip drag/resize
+	function handleTimelineTouchMove(e: TouchEvent) {
+		// Only process if we're actually resizing or dragging
+		if (!isResizing && !isDraggingClip) return;
+		if (!e || !e.currentTarget) return;
+
+		const target = e.currentTarget as HTMLElement;
+		if (!target) return;
+
+		const rect = target.getBoundingClientRect();
+		if (!rect) return;
+
+		const touch = e.touches[0];
+		if (!touch) return;
+
+		const clientX = touch.clientX;
+
+		if (isResizing) {
+			const resize = isResizing;
+			const currentX = clientX - rect.left - ROW_LABEL_WIDTH;
+			const deltaX = currentX - resize.startX;
+			const deltaBeat = pixelToBeatLocal(deltaX);
+
+			if (resize.type === 'clip') {
+				const clip = timeline.clips?.find((c: TimelineClip) => c.id === resize.id);
+				if (clip) {
+					if (resize.side === 'right') {
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						projectStore.updateTimelineClip(resize.id, { duration: newDuration });
+					} else {
+						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						if (newDuration > 0) {
+							projectStore.updateTimelineClip(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+				}
+			} else if (resize.type === 'effect') {
+				const effect = timeline.effects?.find((e) => e.id === resize.id);
+				if (effect) {
+					if (resize.side === 'right') {
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						projectStore.updateTimelineEffect(resize.id, { duration: newDuration });
+					} else {
+						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						if (newDuration > 0) {
+							projectStore.updateTimelineEffect(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+				}
+			} else if (resize.type === 'envelope') {
+				const envelope = timeline.envelopes?.find((e) => e.id === resize.id);
+				if (envelope) {
+					if (resize.side === 'right') {
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						projectStore.updateTimelineEnvelope(resize.id, { duration: newDuration });
+					} else {
+						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						if (newDuration > 0) {
+							projectStore.updateTimelineEnvelope(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+				}
+			}
+		} else if (isDraggingClip) {
+			const drag = isDraggingClip;
+			const currentX = clientX - rect.left - ROW_LABEL_WIDTH;
+			const deltaX = currentX - drag.startX;
+			const deltaBeat = pixelToBeatLocal(deltaX);
+			const newStart = Math.max(0, snapToBeat(drag.startBeat + deltaBeat));
+
+			if (drag.type === 'clip') {
+				const clip = timeline.clips?.find((c: TimelineClip) => c.id === drag.id);
+				if (clip) {
+					projectStore.updateTimelineClip(drag.id, { startBeat: newStart });
+				}
+			} else if (drag.type === 'effect') {
+				const effect = timeline.effects?.find((e) => e.id === drag.id);
+				if (effect) {
+					projectStore.updateTimelineEffect(drag.id, { startBeat: newStart });
+				}
+			} else if (drag.type === 'envelope') {
+				const envelope = timeline.envelopes?.find((e) => e.id === drag.id);
+				if (envelope) {
+					projectStore.updateTimelineEnvelope(drag.id, { startBeat: newStart });
+				}
+			}
+		}
+
+		e.preventDefault();
+	}
 	
 	function handleTimelineMouseUp() {
 		// End batching if we were dragging or resizing
@@ -900,6 +1115,49 @@
 			// Clicked on empty area of non-pattern track - deselect effect/envelope
 			selectedEffectId = null;
 			selectedEnvelopeId = null;
+		}
+	}
+	
+	// Touch drop handler for mobile - handles dropping patterns/effects/envelopes from sidebar
+	function handleRowTouchEnd(e: TouchEvent, track: TimelineTrack) {
+		if (viewMode !== 'arrangement' || !e.changedTouches || e.changedTouches.length === 0) return;
+		
+		const touch = e.changedTouches[0];
+		const target = e.target as HTMLElement;
+		
+		// Don't drop if touching a clip or controls
+		if (target && (
+			target.closest('.timeline-clip') || 
+			target.closest('.clip-controls') || 
+			target.closest('.clip-resize-handle-left') ||
+			target.closest('.clip-resize-handle-right') ||
+			target.closest('button')
+		)) return;
+		
+		const rowTarget = e.currentTarget as HTMLElement;
+		if (!rowTarget) return;
+		const rect = rowTarget.getBoundingClientRect();
+		const x = touch.clientX - rect.left - ROW_LABEL_WIDTH;
+		const beat = Math.max(0, snapToBeat(pixelToBeatLocal(x)));
+		
+		// Check for dragged pattern
+		if (draggedPatternId && track.type === 'pattern') {
+			if (track.patternId === draggedPatternId) {
+				addClipToTimeline(draggedPatternId, beat, track.id);
+				draggedPatternId = null;
+			}
+		}
+		
+		// Check for dragged effect
+		if (draggedEffectId && track.type === 'effect') {
+			addEffectToTimeline(draggedEffectId, beat, 4, undefined, track.id);
+			draggedEffectId = null;
+		}
+		
+		// Check for dragged envelope
+		if (draggedEnvelopeId && track.type === 'envelope') {
+			addEnvelopeToTimeline(draggedEnvelopeId, beat, 4, undefined, track.id);
+			draggedEnvelopeId = null;
 		}
 	}
 
@@ -1540,6 +1798,9 @@
 			{deletePattern}
 			{selectPattern}
 			{handleEffectEnvelopeDragStart}
+			handlePatternDragStart={handleDragStart}
+			onTouchDragStart={handleTouchDragStart}
+			onEffectEnvelopeTouchDragStart={handleEffectEnvelopeTouchDragStart}
 		/>
 	{/if}
 
@@ -1561,6 +1822,9 @@
 					on:mousemove={(e) => handleTimelineMouseMove(e)}
 					on:mouseup={() => handleTimelineMouseUp()}
 					on:mouseleave={() => handleTimelineMouseUp()}
+					on:touchmove={(e) => handleTimelineTouchMove(e)}
+					on:touchend={() => handleTimelineMouseUp()}
+					on:touchcancel={() => handleTimelineMouseUp()}
 					on:load={() => {
 						if (timelineAreaElement) {
 							timelineAreaElement.scrollLeft = 0;
@@ -1629,6 +1893,7 @@
 								onRowDragLeave={handleRowDragLeave}
 								onRowDrop={(e) => handleRowDrop(e, track)}
 								onRowClick={(e) => handleRowClick(e, track.id, track.patternId)}
+								onRowTouchEnd={(e) => handleRowTouchEnd(e, track)}
 								onTrackVolumeMouseDown={handleTrackVolumeMouseDown}
 								onToggleTrackMute={toggleTrackMute}
 								onToggleTrackSolo={toggleTrackSolo}
@@ -1637,6 +1902,9 @@
 									projectStore.updateTimelineTrack(trackId, { color });
 								}}
 								onClipMouseDown={handleClipMouseDown}
+								onClipTouchStart={handleClipTouchStart}
+								onClipTouchMove={handleClipTouchMove}
+								onClipTouchEnd={handleClipTouchEnd}
 								onClipClick={(clipId, type) => {
 									if (type === 'effect') {
 										selectedEffectId = clipId;

@@ -38,6 +38,7 @@
 	
 	// Renderer
 	import { renderFrame, type RenderContext } from '$lib/canvas/utils/renderer';
+	import { findNodeAtPosition } from '$lib/canvas/utils/nodeFinder';
 	
 	import NodeContextMenu from './NodeContextMenu.svelte';
 	import type { PatternNode, Pattern } from '$lib/types/pattern';
@@ -122,6 +123,62 @@
 		};
 	}
 
+	// Helper to find node at touch position (for mobile node dragging)
+	function findNodeAtTouchPosition(clientX: number, clientY: number): { node: PatternNode; patternId: string | null; trackId: string | null; instrumentId?: string | null; isRoot: boolean } | null {
+		if (!canvas) return null;
+		
+		// Get fresh project state to ensure we're searching in the current tree
+		let currentProject: any = null;
+		projectStore.subscribe((p) => (currentProject = p))();
+		if (!currentProject) return null;
+		
+		const rect = canvas.getBoundingClientRect();
+		const canvasX = clientX - rect.left;
+		const canvasY = clientY - rect.top;
+		const [wx, wy] = viewport.screenToWorld(canvasX, canvasY);
+		
+		// Get current pattern if in pattern editor mode
+		let currentPattern: Pattern | null = null;
+		if (patternId && currentProject) {
+			currentPattern = currentProject.patterns?.find((p: Pattern) => p.id === patternId) || null;
+		}
+		
+		// Search in all standalone instruments first (they take priority)
+		for (const instrument of currentProject.standaloneInstruments || []) {
+			const result = findNodeAtPosition(instrument.patternTree, wx, wy, 0, null, instrument.id);
+			if (result) {
+				return {
+					node: result.node,
+					isRoot: result.isRoot,
+					patternId: null,
+					trackId: instrument.id
+				};
+			}
+		}
+		
+		// If no track node found and we're in pattern editor mode, check pattern instruments
+		if (patternId && currentPattern) {
+			const patternInstruments = currentPattern.instruments && Array.isArray(currentPattern.instruments) && currentPattern.instruments.length > 0
+				? currentPattern.instruments
+				: [];
+			
+			for (const instrument of patternInstruments) {
+				const result = findNodeAtPosition(instrument.patternTree, wx, wy, 0, patternId, null, instrument.id);
+				if (result) {
+					return {
+						node: result.node,
+						isRoot: result.isRoot,
+						patternId,
+						trackId: null,
+						instrumentId: instrument.id
+					};
+				}
+			}
+		}
+		
+		return null;
+	}
+
 	// Drag state
 	let dragState: DragState = {
 		isDragging: false,
@@ -130,6 +187,16 @@
 		draggedNode: null,
 		lastMousePos: { x: 0, y: 0 }
 	};
+
+	// Touch interaction state (mobile-only behavior, desktop logic unchanged)
+	let isTouchPanning = false;
+	let isTouchDraggingNode = false;
+	let lastTouchPos = { x: 0, y: 0 };
+	let touchStartPos = { x: 0, y: 0 };
+	let touchMoved = false;
+	let longPressFired = false;
+	let longPressTimeout: ReturnType<typeof setTimeout> | null = null;
+	let touchStartNode: { node: PatternNode; patternId: string | null; trackId: string | null; instrumentId?: string | null; isRoot: boolean } | null = null;
 
 	onMount(() => {
 		if (!canvas) return;
@@ -176,14 +243,22 @@
 			contextMenu = null;
 			}
 		};
+		const handleTouchStartOutside = (e: TouchEvent) => {
+			// Close context menu on any touch outside as well (mobile)
+			if (contextMenu) {
+				contextMenu = null;
+			}
+		};
 		window.addEventListener('mousedown', handleMouseDownOutside);
 		window.addEventListener('contextmenu', handleClickOutside);
+		window.addEventListener('touchstart', handleTouchStartOutside);
 
 		return () => {
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousedown', handleMouseDownOutside);
 			window.removeEventListener('contextmenu', handleClickOutside);
+			window.removeEventListener('touchstart', handleTouchStartOutside);
 			cancelAnimationFrame(animationFrame);
 		};
 	});
@@ -333,6 +408,335 @@
 		handleWheel(e, getMouseContext());
 	}
 
+	// Touch handlers (mobile) - map taps/long-press to mouse semantics and allow panning/node dragging
+	function onTouchStart(e: TouchEvent) {
+		if (!canvas) return;
+		if (e.touches.length !== 1) return;
+
+		const touch = e.touches[0];
+		lastTouchPos = { x: touch.clientX, y: touch.clientY };
+		touchStartPos = { x: touch.clientX, y: touch.clientY };
+		touchMoved = false;
+		longPressFired = false;
+		isTouchPanning = false;
+		isTouchDraggingNode = false;
+		touchStartNode = null;
+
+		// Reset any previous drag state completely before starting new touch
+		dragState.isDraggingNode = false;
+		dragState.draggedNode = null;
+		isDraggingNode = false;
+		pendingPositionUpdate = null;
+		if (positionUpdateTimeout) {
+			clearTimeout(positionUpdateTimeout);
+			positionUpdateTimeout = null;
+		}
+
+		// Check if we touched a node
+		const touchedNode = findNodeAtTouchPosition(touch.clientX, touch.clientY);
+		if (touchedNode) {
+			// Cancel long-press since we might be starting node drag
+			if (longPressTimeout) {
+				clearTimeout(longPressTimeout);
+				longPressTimeout = null;
+			}
+			touchStartNode = touchedNode;
+			// Don't set isTouchDraggingNode yet - wait for movement threshold
+			// Start node dragging setup (similar to mouse down on node)
+			const rect = canvas.getBoundingClientRect();
+			const startCanvasX = touch.clientX - rect.left;
+			const startCanvasY = touch.clientY - rect.top;
+			
+			// Deep clone the tree
+			const cloneTree = (node: PatternNode): PatternNode => ({
+				...node,
+				children: node.children.map(cloneTree)
+			});
+			
+			// Get current selection for group movement
+			let currentSelection: any = null;
+			selectionStore.subscribe((s) => (currentSelection = s))();
+			
+			// Get fresh project state to ensure we have the latest tree (after any previous drags)
+			let currentProject: any = null;
+			projectStore.subscribe((p) => (currentProject = p))();
+			
+			// Find the instrument/track to get the CURRENT tree state
+			let originalTree: PatternNode | null = null;
+			if (touchedNode.trackId) {
+				const track = currentProject?.standaloneInstruments?.find((i: any) => i.id === touchedNode.trackId);
+				if (track) {
+					originalTree = cloneTree(track.patternTree);
+				}
+			} else if (touchedNode.patternId && touchedNode.instrumentId) {
+				const pattern = currentProject?.patterns?.find((p: Pattern) => p.id === touchedNode.patternId);
+				if (pattern) {
+					const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+						? pattern.instruments
+						: [];
+					const instrument = instruments.find((inst: any) => inst.id === touchedNode.instrumentId);
+					if (instrument) {
+						originalTree = cloneTree(instrument.patternTree);
+					}
+				}
+			}
+			
+			if (originalTree) {
+				// Select the node first if not already selected, then get fresh selection
+				if (!currentSelection?.selectedNodes?.has(touchedNode.node.id)) {
+					selectionStore.selectNode(
+						touchedNode.node.id,
+						touchedNode.trackId,
+						touchedNode.isRoot,
+						false,
+						touchedNode.patternId,
+						touchedNode.instrumentId
+					);
+					// Get updated selection after selecting
+					selectionStore.subscribe((s) => (currentSelection = s))();
+				}
+				
+				// Now set up drag state with fresh selection
+				// Use touch position as start - this is correct because we calculate delta from touch
+				dragState.draggedNode = {
+					patternId: touchedNode.patternId,
+					trackId: touchedNode.trackId,
+					nodeId: touchedNode.node.id,
+					selectedNodeIds: currentSelection?.selectedNodes || new Set([touchedNode.node.id]),
+					originalTree,
+					startScreenX: startCanvasX,
+					startScreenY: startCanvasY,
+					isRoot: touchedNode.isRoot,
+					instrumentId: touchedNode.instrumentId
+				};
+				// Don't set isDraggingNode yet - wait for movement threshold
+				// dragState.isDraggingNode will be set when movement starts
+			}
+		}
+
+		// Long-press -> right click (context menu) - only if not touching a node
+		if (!touchedNode && longPressTimeout) clearTimeout(longPressTimeout);
+		if (!touchedNode) {
+			longPressTimeout = setTimeout(() => {
+				if (!touchMoved && !longPressFired && !isTouchDraggingNode) {
+					longPressFired = true;
+					// Synthesize a right-click at touch position
+					const rect = canvas.getBoundingClientRect();
+					const eventInit: MouseEventInit = {
+						clientX: touch.clientX,
+						clientY: touch.clientY,
+						button: 2
+					};
+					const fakeEvent = new MouseEvent('contextmenu', eventInit);
+					// Adjust coordinates relative to canvas as existing handler expects
+					(fakeEvent as any).preventDefault = () => {};
+					onContextMenu(fakeEvent);
+				}
+			}, 1000); // 1 second for right-click (long-press)
+		}
+
+		e.preventDefault();
+	}
+
+	function onTouchMove(e: TouchEvent) {
+		if (!canvas || e.touches.length !== 1) return;
+		const touch = e.touches[0];
+		const moveX = touch.clientX - touchStartPos.x;
+		const moveY = touch.clientY - touchStartPos.y;
+		const distanceSq = moveX * moveX + moveY * moveY;
+
+		// If we started on a node and moved past threshold, start node dragging
+		if (touchStartNode && !isTouchDraggingNode && distanceSq > 25) {
+			isTouchDraggingNode = true;
+			dragState.isDraggingNode = true;
+			isDraggingNode = true;
+			touchMoved = true;
+			if (longPressTimeout) {
+				clearTimeout(longPressTimeout);
+				longPressTimeout = null;
+			}
+		}
+		
+		// If we're dragging a node, update node position
+		if (isTouchDraggingNode && dragState.draggedNode && dragState.isDraggingNode) {
+			touchMoved = true;
+			if (longPressTimeout) {
+				clearTimeout(longPressTimeout);
+				longPressTimeout = null;
+			}
+			
+			// Update node position using same logic as mouse drag
+			const rect = canvas.getBoundingClientRect();
+			const canvasX = touch.clientX - rect.left;
+			const canvasY = touch.clientY - rect.top;
+			const [currentWx, currentWy] = viewport.screenToWorld(canvasX, canvasY);
+			const [startWx, startWy] = viewport.screenToWorld(dragState.draggedNode.startScreenX, dragState.draggedNode.startScreenY);
+			const dx = currentWx - startWx;
+			const dy = currentWy - startWy;
+			
+			// Helper to move tree
+			const moveTree = (node: PatternNode): PatternNode => {
+				const origX = node.x ?? 0;
+				const origY = node.y ?? 0;
+				return {
+					...node,
+					x: origX + dx,
+					y: origY + dy,
+					children: node.children.map(moveTree)
+				};
+			};
+			
+			// Helper to move individual node or group of nodes
+			const moveNode = (node: PatternNode): PatternNode => {
+				if (!dragState.draggedNode) return node;
+				
+				// Check if this node is in the selected set (for group movement)
+				const isSelected = dragState.draggedNode.selectedNodeIds.has(node.id);
+				
+				if (isSelected) {
+					const origX = node.x ?? 0;
+					const origY = node.y ?? 0;
+					return {
+						...node,
+						x: origX + dx,
+						y: origY + dy,
+						children: node.children.map(moveNode)
+					};
+				} else {
+					return {
+						...node,
+						children: node.children.map(moveNode)
+					};
+				}
+			};
+			
+			const newTree = dragState.draggedNode.isRoot
+				? moveTree(dragState.draggedNode.originalTree)
+				: moveNode(dragState.draggedNode.originalTree);
+			
+			// Update immediately for smooth visuals, but skip history during drag
+			if (dragState.draggedNode.patternId) {
+				// Update the instrument in the pattern
+				if (dragState.draggedNode.instrumentId) {
+					projectStore.updatePatternInstrument(dragState.draggedNode.patternId, dragState.draggedNode.instrumentId, { patternTree: newTree }, true);
+				} else {
+					// Legacy: update pattern directly
+					projectStore.updatePattern(dragState.draggedNode.patternId, { patternTree: newTree }, true);
+				}
+				pendingPositionUpdate = {
+					patternId: dragState.draggedNode.patternId,
+					trackId: null,
+					patternTree: newTree,
+					instrumentId: dragState.draggedNode.instrumentId
+				};
+			} else if (dragState.draggedNode.trackId) {
+				// Update immediately with skipHistory=true to avoid undo entries during drag
+				projectStore.updateStandaloneInstrument(dragState.draggedNode.trackId, { patternTree: newTree }, true);
+				pendingPositionUpdate = {
+					patternId: null,
+					trackId: dragState.draggedNode.trackId,
+					patternTree: newTree
+				};
+			}
+		} else {
+			// If finger has moved more than a small threshold, treat as pan and cancel long-press
+			if (distanceSq > 25) {
+				touchMoved = true;
+				if (longPressTimeout) {
+					clearTimeout(longPressTimeout);
+					longPressTimeout = null;
+				}
+				// Start panning once movement threshold exceeded
+				if (!isTouchPanning) {
+					isTouchPanning = true;
+					lastTouchPos = { x: touch.clientX, y: touch.clientY };
+				}
+			}
+
+			if (isTouchPanning) {
+				const dx = -(touch.clientX - lastTouchPos.x) / viewport.zoom;
+				const dy = -(touch.clientY - lastTouchPos.y) / viewport.zoom;
+				canvasStore.pan(dx, dy);
+			}
+		}
+
+		lastTouchPos = { x: touch.clientX, y: touch.clientY };
+		e.preventDefault();
+	}
+
+	function onTouchEnd(e: TouchEvent) {
+		if (longPressTimeout) {
+			clearTimeout(longPressTimeout);
+			longPressTimeout = null;
+		}
+
+		// No remaining touches: potentially a tap or end of drag
+		if (e.touches.length === 0) {
+			// If we were dragging a node, finalize the drag
+			if (isTouchDraggingNode && dragState.isDraggingNode && dragState.draggedNode) {
+				// Save final position with history when drag ends (same as mouse up)
+				if (pendingPositionUpdate) {
+					if (positionUpdateTimeout) clearTimeout(positionUpdateTimeout);
+					if (pendingPositionUpdate.patternId) {
+						// For patterns, update the instrument
+						if (pendingPositionUpdate.instrumentId) {
+							projectStore.updatePatternInstrument(pendingPositionUpdate.patternId, pendingPositionUpdate.instrumentId, { patternTree: pendingPositionUpdate.patternTree }, false);
+						} else {
+							// Legacy: update pattern directly
+							projectStore.updatePattern(pendingPositionUpdate.patternId, { patternTree: pendingPositionUpdate.patternTree }, false);
+						}
+					} else if (pendingPositionUpdate.trackId) {
+						// For standalone instruments, update with skipHistory=false to create history entry
+						projectStore.updateStandaloneInstrument(pendingPositionUpdate.trackId, { patternTree: pendingPositionUpdate.patternTree }, false);
+					}
+					pendingPositionUpdate = null;
+					positionUpdateTimeout = null;
+				}
+				
+				// Reset drag state
+				dragState.isDraggingNode = false;
+				dragState.draggedNode = null;
+				isDraggingNode = false;
+				isTouchDraggingNode = false;
+				touchStartNode = null;
+			} else if (touchStartNode && !isTouchDraggingNode) {
+				// Touched a node but didn't drag - clean up drag state and treat as tap
+				dragState.isDraggingNode = false;
+				dragState.draggedNode = null;
+				isDraggingNode = false;
+				touchStartNode = null;
+				
+				if (!touchMoved && !longPressFired && canvas) {
+					// Short tap on node -> left click
+					const touch = e.changedTouches[0];
+					const eventInit: MouseEventInit = {
+						clientX: touch.clientX,
+						clientY: touch.clientY,
+						button: 0
+					};
+					const downEvent = new MouseEvent('mousedown', eventInit);
+					const upEvent = new MouseEvent('mouseup', eventInit);
+					onMouseDown(downEvent);
+					onMouseUp(upEvent);
+				}
+			} else if (!touchMoved && !longPressFired && !isTouchDraggingNode && canvas) {
+				// Short tap -> left click (only if not dragging a node)
+				const touch = e.changedTouches[0];
+				const eventInit: MouseEventInit = {
+					clientX: touch.clientX,
+					clientY: touch.clientY,
+					button: 0
+				};
+				const downEvent = new MouseEvent('mousedown', eventInit);
+				const upEvent = new MouseEvent('mouseup', eventInit);
+				onMouseDown(downEvent);
+				onMouseUp(upEvent);
+			}
+			isTouchPanning = false;
+			touchMoved = false;
+		}
+	}
+
 	function onNodeClick(e: MouseEvent) {
 		if (contextMenu) return;
 		handleNodeClick(e, getNodeClickContext());
@@ -388,6 +792,9 @@
 	on:mousemove={onMouseMove}
 	on:mouseup={onMouseUp}
 	on:wheel={onWheel}
+	on:touchstart={onTouchStart}
+	on:touchmove={onTouchMove}
+	on:touchend={onTouchEnd}
 	on:contextmenu={onContextMenu}
 	style="cursor: {isDraggingNode ? 'grabbing' : isSelecting ? 'crosshair' : 'grab'};"
 	class:grabbing={isDragging || isDraggingNode}

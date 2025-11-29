@@ -10,6 +10,9 @@
 	export let isDragging: boolean;
 	export let isGreyedOut: boolean;
 	export let onMouseDown: (e: MouseEvent) => void;
+	export let onTouchStart: ((e: TouchEvent) => void) | undefined = undefined;
+	export let onTouchMove: ((e: TouchEvent) => void) | undefined = undefined;
+	export let onTouchEnd: (() => void) | undefined = undefined;
 	export let onClick: (e: MouseEvent) => void;
 	export let onContextMenu: (e: MouseEvent) => void;
 	export let onDelete: (() => void) | undefined = undefined;
@@ -32,6 +35,10 @@
 		tabindex="0"
 		aria-label="Timeline clip: {pattern.name}"
 		on:mousedown={onMouseDown}
+		on:touchstart={onTouchStart}
+		on:touchmove={onTouchMove}
+		on:touchend={onTouchEnd}
+		on:touchcancel={onTouchEnd}
 		on:click|stopPropagation={onClick}
 		on:keydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
