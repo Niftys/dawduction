@@ -16,6 +16,8 @@ class EffectsProcessor {
 		// Performance optimization caches
 		this._trackToTimelineTrackId = new Map(); // trackId -> timelineTrackId
 		this._activeEffectsCache = new Map(); // trackId_patternId_beat -> activeEffects[]
+		this._globalEffectsCache = null; // Cached global effects (beat -> activeEffects[])
+		this._lastGlobalCacheBeat = -1;
 		this._lastCacheUpdateBeat = -1;
 		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 		
@@ -64,6 +66,8 @@ class EffectsProcessor {
 	clearCaches() {
 		this._trackToTimelineTrackId.clear();
 		this._activeEffectsCache.clear();
+		this._globalEffectsCache = null;
+		this._lastGlobalCacheBeat = -1;
 		this._lastCacheUpdateBeat = -1;
 		this._automationByEffectInstance.clear();
 		this._sortedPointsCache.clear();
@@ -135,15 +139,39 @@ class EffectsProcessor {
 			this._lastCacheUpdateBeat = currentBeat;
 		}
 
-		// Check cache first
+		// Check cache first (track-specific)
 		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
 		const cached = this._activeEffectsCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 			return cached.effects;
 		}
 
-		// Cache miss - calculate active effects
-		const activeEffects = this._calculateActiveEffects(trackId, currentBeat, patternId);
+		// Optimize: For global effects, calculate once and reuse
+		// Check if we need to recalculate global effects
+		const beatBucket = Math.floor(currentBeat / this._cacheUpdateInterval);
+		const shouldRecalcGlobal = !this._globalEffectsCache || 
+		                           Math.abs(currentBeat - this._lastGlobalCacheBeat) >= this._cacheUpdateInterval;
+		
+		let globalEffects = [];
+		if (shouldRecalcGlobal) {
+			// Calculate global effects once (effects with no trackId and no patternId)
+			globalEffects = this._calculateGlobalEffects(currentBeat);
+			this._globalEffectsCache = {
+				beat: currentBeat,
+				beatBucket: beatBucket,
+				effects: globalEffects
+			};
+			this._lastGlobalCacheBeat = currentBeat;
+		} else {
+			// Reuse cached global effects
+			globalEffects = this._globalEffectsCache.effects;
+		}
+
+		// Calculate track-specific effects (pattern-specific or track-specific)
+		const trackSpecificEffects = this._calculateTrackSpecificEffects(trackId, currentBeat, patternId);
+
+		// Combine global and track-specific effects
+		const activeEffects = [...globalEffects, ...trackSpecificEffects];
 
 		// Store in cache
 		this._activeEffectsCache.set(cacheKey, {
@@ -155,7 +183,121 @@ class EffectsProcessor {
 	}
 
 	/**
-	 * Calculate active effects (uncached version)
+	 * Calculate global effects (effects with no trackId/patternId OR effects on effect tracks)
+	 * These apply to all tracks, so we calculate once and reuse
+	 */
+	_calculateGlobalEffects(currentBeat) {
+		const globalEffects = [];
+		
+		for (const timelineEffect of this.timelineEffects) {
+			const startBeat = timelineEffect.startBeat || 0;
+			const endBeat = startBeat + (timelineEffect.duration || 0);
+			
+			// Check if effect is active at current position
+			if (currentBeat >= startBeat && currentBeat < endBeat) {
+				// Include global effects: no trackId/patternId OR on effect track
+				let isGlobal = false;
+				if (!timelineEffect.trackId && !timelineEffect.patternId) {
+					isGlobal = true;
+				} else if (timelineEffect.trackId) {
+					// Check if it's on an effect track (which makes it global)
+					const effectTimelineTrack = this.timelineTracks.find(t => t.id === timelineEffect.trackId);
+					if (effectTimelineTrack && effectTimelineTrack.type === 'effect') {
+						isGlobal = true;
+					}
+				}
+				
+				if (isGlobal) {
+					const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
+					if (effectDef) {
+						// Apply automation to effect settings
+						const automatedSettings = this.applyAutomationToEffect(
+							effectDef,
+							timelineEffect.id,
+							currentBeat,
+							startBeat,
+							endBeat
+						);
+						
+						globalEffects.push({
+							...effectDef,
+							settings: automatedSettings,
+							progress: (currentBeat - startBeat) / (endBeat - startBeat)
+						});
+					}
+				}
+			}
+		}
+		
+		return globalEffects;
+	}
+	
+	/**
+	 * Calculate track-specific effects (pattern-specific or track-specific)
+	 */
+	_calculateTrackSpecificEffects(trackId, currentBeat, patternId = null) {
+		const trackSpecificEffects = [];
+		
+		// Use cached timeline track ID lookup
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			// Fallback: calculate if not cached
+			for (const [tId, audioTrackIds] of this.timelineTrackToAudioTracks.entries()) {
+				if (audioTrackIds.includes(trackId)) {
+					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
+					break;
+				}
+			}
+		}
+		
+		// Find timeline effects that are active at this position and track-specific
+		for (const timelineEffect of this.timelineEffects) {
+			const startBeat = timelineEffect.startBeat || 0;
+			const endBeat = startBeat + (timelineEffect.duration || 0);
+			
+			// Check if effect is active at current position
+			if (currentBeat >= startBeat && currentBeat < endBeat) {
+				// Skip global effects (already handled)
+				if (timelineEffect.trackId || timelineEffect.patternId) {
+					let shouldApply = false;
+					
+					// Check pattern assignment
+					if (timelineEffect.patternId) {
+						if (patternId && timelineEffect.patternId === patternId) {
+							shouldApply = true;
+						}
+					// Note: Effects on effect tracks are now handled in _calculateGlobalEffects
+					// This method only handles pattern-specific effects
+					
+					if (shouldApply) {
+						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
+						if (effectDef) {
+							// Apply automation to effect settings
+							const automatedSettings = this.applyAutomationToEffect(
+								effectDef,
+								timelineEffect.id,
+								currentBeat,
+								startBeat,
+								endBeat
+							);
+							
+							trackSpecificEffects.push({
+								...effectDef,
+								settings: automatedSettings,
+								progress: (currentBeat - startBeat) / (endBeat - startBeat)
+							});
+						}
+					}
+				}
+			}
+		}
+		
+		return trackSpecificEffects;
+	}
+	
+	/**
+	 * Calculate active effects (uncached version) - DEPRECATED, use _calculateGlobalEffects + _calculateTrackSpecificEffects
 	 */
 	_calculateActiveEffects(trackId, currentBeat, patternId = null) {
 		const activeEffects = [];

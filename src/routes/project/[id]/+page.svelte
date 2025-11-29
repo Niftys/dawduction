@@ -43,6 +43,8 @@
 	let hasScrolledToStart = false;
 	let currentProjectId: string | null = null;
 	let showWelcomeModal = false;
+	let showDeletePatternConfirm = false;
+	let patternToDelete: Pattern | null = null;
 	
 	projectStore.subscribe((p) => {
 		project = p;
@@ -540,7 +542,18 @@
 	}
 
 	function deletePattern(patternId: string) {
-		projectStore.deletePattern(patternId);
+		const pattern = project?.patterns?.find((p: Pattern) => p.id === patternId);
+		if (pattern) {
+			patternToDelete = pattern;
+			showDeletePatternConfirm = true;
+		}
+	}
+	
+	function handleDeletePatternConfirm() {
+		if (!patternToDelete) return;
+		projectStore.deletePattern(patternToDelete.id);
+		showDeletePatternConfirm = false;
+		patternToDelete = null;
 	}
 
 	async function selectPattern(patternId: string) {
@@ -1409,6 +1422,81 @@
 </script>
 
 <style>
+	/* Delete Pattern Confirmation Dialog Styles */
+	.delete-dialog-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.8);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 2000;
+		backdrop-filter: blur(4px);
+	}
+
+	.delete-dialog {
+		background: #1a1a1a;
+		border: 1px solid #333;
+		border-radius: 12px;
+		padding: 2rem;
+		max-width: 400px;
+		width: 90%;
+		box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+	}
+
+	.delete-dialog h3 {
+		margin: 0 0 1rem 0;
+		color: #ffffff;
+		font-size: 1.5rem;
+		font-weight: 600;
+	}
+
+	.delete-dialog p {
+		margin: 0 0 1.5rem 0;
+		color: rgba(255, 255, 255, 0.7);
+		line-height: 1.5;
+	}
+
+	.dialog-buttons {
+		display: flex;
+		gap: 1rem;
+		justify-content: flex-end;
+	}
+
+	.cancel-button,
+	.delete-button {
+		padding: 0.75rem 1.5rem;
+		border-radius: 4px;
+		font-size: 0.9rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s;
+		border: none;
+	}
+
+	.cancel-button {
+		background: transparent;
+		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+	}
+
+	.cancel-button:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: #ffffff;
+	}
+
+	.delete-button {
+		background: #ff4444;
+		color: #ffffff;
+	}
+
+	.delete-button:hover {
+		background: #ff3333;
+	}
+
 	/* Ensure margin is set immediately via CSS for arrangement view */
 	/* Use :global() since this is a scoped style block */
 	:global(.project-view .main-content.has-sidebar) {
@@ -1620,4 +1708,46 @@
 		{/if}
 	</div>
 </div>
+{/if}
+
+<!-- Delete Pattern Confirmation Dialog -->
+{#if showDeletePatternConfirm && patternToDelete}
+	<div 
+		class="delete-dialog-overlay" 
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="delete-pattern-dialog-title"
+		on:click={() => {
+			showDeletePatternConfirm = false;
+			patternToDelete = null;
+		}}
+		on:keydown={(e) => {
+			if (e.key === 'Escape') {
+				showDeletePatternConfirm = false;
+				patternToDelete = null;
+			}
+		}}
+		tabindex="-1"
+	>
+		<div 
+			class="delete-dialog" 
+			on:click|stopPropagation 
+			role="document"
+			on:keydown={(e) => e.stopPropagation()}
+		>
+			<h3 id="delete-pattern-dialog-title">Delete Pattern</h3>
+			<p>Are you sure you want to delete "{patternToDelete.name || 'this pattern'}"? This action cannot be undone.</p>
+			<div class="dialog-buttons">
+				<button class="cancel-button" on:click={() => {
+					showDeletePatternConfirm = false;
+					patternToDelete = null;
+				}}>
+					Cancel
+				</button>
+				<button class="delete-button" on:click={handleDeletePatternConfirm}>
+					Delete
+				</button>
+			</div>
+		</div>
+	</div>
 {/if}

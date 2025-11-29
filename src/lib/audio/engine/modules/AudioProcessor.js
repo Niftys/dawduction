@@ -8,6 +8,10 @@ class AudioProcessor {
 		this.processor = processor;
 		this.lastPlaybackUpdateTime = 0;
 		this.playbackUpdateInterval = processor.sampleRate * 0.05; // Update every 50ms
+		// Batch event IDs for playback updates to reduce message frequency
+		this._batchedEventIds = [];
+		this._lastBatchedSampleTime = 0;
+		this._batchInterval = processor.sampleRate * 0.02; // Batch events for 20ms before sending
 	}
 
 	/**
@@ -41,39 +45,12 @@ class AudioProcessor {
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);
 			if (eventsAtTime) {
-				const eventIds = [];
 				for (const event of eventsAtTime) {
-					// Debug: Log event trigger (disabled for cleaner logs)
-					// if (!this._lastTriggerTime || (sampleTime - this._lastTriggerTime) > this.processor.sampleRate * 0.1) {
-					// 	this._lastTriggerTime = sampleTime;
-					// 	this.processor.port.postMessage({
-					// 		type: 'debug',
-					// 		message: 'AudioProcessor: Triggering event',
-					// 		data: {
-					// 			sampleTime,
-					// 			currentBeat: currentBeat.toFixed(3),
-					// 			instrumentId: event.instrumentId,
-					// 			patternId: event.patternId || 'none',
-					// 			pitch: event.pitch,
-					// 			velocity: event.velocity,
-					// 			eventTime: event.time
-					// 		}
-					// 	});
-					// }
 					this.processor.triggerEvent(event);
-					// Track event IDs for visual feedback
-					eventIds.push(event.instrumentId + ':' + (event.time || 0));
+					// Batch event IDs for visual feedback instead of sending immediately
+					this._batchedEventIds.push(event.instrumentId + ':' + (event.time || 0));
 				}
 				this.processor.eventScheduler.removeEventsAtTime(sampleTime);
-				
-				// Send playback update to UI
-				if (eventIds.length > 0) {
-					this.processor.port.postMessage({
-						type: 'playbackUpdate',
-						time: currentBeat,
-						eventIds: eventIds
-					});
-				}
 			}
 
 			// Mix all synths with per-track volume, pan, effects, and envelopes
@@ -95,6 +72,19 @@ class AudioProcessor {
 		}
 
 		this.processor.currentTime += bufferLength;
+
+		// Send batched playback updates periodically
+		const timeSinceLastBatch = this.processor.currentTime - this._lastBatchedSampleTime;
+		if (this._batchedEventIds.length > 0 && timeSinceLastBatch >= this._batchInterval) {
+			const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+			this.processor.port.postMessage({
+				type: 'playbackUpdate',
+				time: currentBeat,
+				eventIds: this._batchedEventIds
+			});
+			this._batchedEventIds = [];
+			this._lastBatchedSampleTime = this.processor.currentTime;
+		}
 
 		// Send periodic playback position updates
 		if (this.processor.currentTime - this.lastPlaybackUpdateTime >= this.playbackUpdateInterval) {

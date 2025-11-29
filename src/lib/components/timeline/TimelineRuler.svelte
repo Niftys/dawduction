@@ -193,11 +193,11 @@
 				class="ruler-mark {mark.isBar ? 'bar' : 'beat'}"
 				style="left: {mark.x}px;"
 			>
-				{#if mark.isBar}
-					<span class="ruler-label bar-label">{mark.barNumber + 1}</span>
-				{:else if mark.beatInBar > 0}
-					<span class="ruler-label beat-label">{mark.beatInBar + 1}</span>
-				{/if}
+			{#if mark.isBar}
+				<span class="ruler-label bar-label">{mark.barNumber + 1}</span>
+			{:else if mark.beatInBar > 0}
+				<span class="ruler-label beat-label">{mark.beat + 1}</span>
+			{/if}
 			</div>
 		{/each}
 	</div>

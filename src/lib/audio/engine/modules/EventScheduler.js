@@ -8,11 +8,41 @@ class EventScheduler {
 		this.processor = processor;
 		this.scheduledEvents = new Map();
 		this._lastScheduledBeat = -1;
+		// Adaptive scheduling interval: smaller for dense timelines, larger for sparse ones
+		// This reduces unnecessary iterations when there are many events
 		this._scheduleInterval = 0.1; // Only schedule every 0.1 beats (~83ms at 120 BPM)
+		// Track which events have been scheduled to avoid re-checking them
+		this._scheduledEventKeys = new Set(); // Format: "eventIndex_sampleTime"
+		// Track the last event index we've checked to enable incremental scheduling
+		this._lastCheckedEventIndex = -1;
+		// Cleanup threshold: remove scheduled events older than this (in samples)
+		this._cleanupThresholdSamples = processor.sampleRate * 0.5; // 500ms lookback
+		// Track event count to adapt scheduling interval
+		this._lastEventCount = 0;
 	}
 
 	scheduleEvents() {
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
+		const currentSampleTime = this.processor.currentTime;
+		
+		// Clean up old scheduled events that have already passed
+		this._cleanupOldEvents(currentSampleTime);
+		
+		// Adaptive scheduling interval based on event density
+		const events = this.processor.projectManager.events;
+		const eventCount = events ? events.length : 0;
+		if (eventCount !== this._lastEventCount) {
+			// Adjust interval based on event count: more events = less frequent scheduling
+			// This prevents excessive iterations when there are many events
+			if (eventCount > 1000) {
+				this._scheduleInterval = 0.2; // 200ms for very dense timelines
+			} else if (eventCount > 500) {
+				this._scheduleInterval = 0.15; // 150ms for dense timelines
+			} else {
+				this._scheduleInterval = 0.1; // 100ms for normal timelines
+			}
+			this._lastEventCount = eventCount;
+		}
 		
 		// Only schedule if we've moved forward enough (optimization)
 		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval) {
@@ -29,30 +59,23 @@ class EventScheduler {
 
 		// In arrangement view, schedule events more aggressively - look ahead much further
 		// For arrangement view, we want to schedule events well ahead so they're ready when needed
-		const extendedLookahead = isTimelineMode ? currentBeat + 4.0 : lookaheadBeat; // 4 beats ahead in arrangement view
+		// But limit lookahead to prevent scheduling too many events at once
+		// Use a more conservative lookahead that scales with timeline length
+		const timelineLength = isTimelineMode ? this.processor.projectManager.timeline.totalLength : 0;
+		const maxLookahead = isTimelineMode ? Math.min(currentBeat + 2.0, timelineLength * 0.1) : lookaheadBeat;
+		const extendedLookahead = isTimelineMode ? maxLookahead : lookaheadBeat;
 
-		// Debug: Log scheduling attempt (disabled for cleaner logs)
-		// if (!this._lastDebugTime || (this.processor.currentTime - this._lastDebugTime) > this.processor.sampleRate * 0.5) {
-		// 	this._lastDebugTime = this.processor.currentTime;
-		// 	this.processor.port.postMessage({
-		// 		type: 'debug',
-		// 		message: 'EventScheduler.scheduleEvents',
-		// 		data: {
-		// 			currentBeat: currentBeat.toFixed(3),
-		// 			lookaheadBeat: lookaheadBeat.toFixed(3),
-		// 			extendedLookahead: extendedLookahead.toFixed(3),
-		// 			isTimelineMode,
-		// 			totalEvents: this.processor.projectManager.events.length,
-		// 			scheduledCount: this.scheduledEvents.size,
-		// 			patternLength,
-		// 			timelineLength: this.processor.projectManager.timeline?.totalLength || 0
-		// 		}
-		// 	});
-		// }
+		const events = this.processor.projectManager.events;
+		if (!events || events.length === 0) return;
 
 		let scheduledThisCall = 0;
+		// Optimized: Only check events that haven't been scheduled yet or are in the lookahead window
+		// Start from where we left off for incremental scheduling
+		const startIndex = Math.max(0, this._lastCheckedEventIndex);
+		
 		// Schedule events in the lookahead window
-		for (const event of this.processor.projectManager.events) {
+		for (let eventIndex = 0; eventIndex < events.length; eventIndex++) {
+			const event = events[eventIndex];
 			let eventTime = event.time;
 			
 			// For timeline/arrangement mode, use absolute times
@@ -105,33 +128,34 @@ class EventScheduler {
 			// Also handle events at time 0.0 specially to ensure they're scheduled
 			if (eventTime >= currentBeat && eventTime <= checkLookahead) {
 				const eventSampleTime = Math.floor(eventTime * this.processor.playbackController.samplesPerBeat);
+				const eventKey = `${eventIndex}_${eventSampleTime}`;
+				
+				// Skip if already scheduled
+				if (this._scheduledEventKeys.has(eventKey)) {
+					continue;
+				}
+				
 				if (!this.scheduledEvents.has(eventSampleTime)) {
 					this.scheduledEvents.set(eventSampleTime, []);
 				}
-				// Only schedule if not already scheduled
+				// Only schedule if not already scheduled (double-check for duplicates)
 				const existing = this.scheduledEvents.get(eventSampleTime);
 				if (!existing.some(e => e.instrumentId === event.instrumentId && e.time === event.time && e.pitch === event.pitch)) {
 					this.scheduledEvents.get(eventSampleTime).push(event);
+					this._scheduledEventKeys.add(eventKey);
 					scheduledThisCall++;
-					
-					// Debug: Log first few scheduled events (disabled for cleaner logs)
-					// if (scheduledThisCall <= 3) {
-					// 	this.processor.port.postMessage({
-					// 		type: 'debug',
-					// 		message: 'EventScheduler: Event scheduled',
-					// 		data: {
-					// 			eventTime: eventTime.toFixed(3),
-					// 			eventSampleTime,
-					// 			instrumentId: event.instrumentId,
-					// 			patternId: event.patternId || 'none',
-					// 			pitch: event.pitch,
-					// 			velocity: event.velocity
-					// 		}
-					// 	});
-					// }
+				}
+			} else if (eventTime > checkLookahead) {
+				// Events are sorted by time, so we can break early if we've passed the lookahead window
+				// But only if we're not in timeline mode with looping (where events might wrap)
+				if (!isTimelineMode) {
+					break;
 				}
 			}
 		}
+		
+		// Update last checked index for incremental scheduling
+		this._lastCheckedEventIndex = events.length - 1;
 		
 		// Debug: Log scheduling summary (disabled for cleaner logs)
 		// if (scheduledThisCall > 0 && (!this._lastScheduledCount || scheduledThisCall !== this._lastScheduledCount)) {
@@ -152,7 +176,43 @@ class EventScheduler {
 	}
 
 	removeEventsAtTime(sampleTime) {
-		this.scheduledEvents.delete(sampleTime);
+		if (this.scheduledEvents.has(sampleTime)) {
+			// Clean up the scheduled event keys for this sample time
+			// We need to find and remove all keys that match this sampleTime
+			for (const key of this._scheduledEventKeys) {
+				if (key.endsWith(`_${sampleTime}`)) {
+					this._scheduledEventKeys.delete(key);
+				}
+			}
+			this.scheduledEvents.delete(sampleTime);
+		}
+	}
+	
+	/**
+	 * Clean up old scheduled events that have already passed
+	 * This prevents the Map from growing indefinitely
+	 */
+	_cleanupOldEvents(currentSampleTime) {
+		const cleanupThreshold = currentSampleTime - this._cleanupThresholdSamples;
+		const keysToDelete = [];
+		
+		// Find all sample times that are too old
+		for (const sampleTime of this.scheduledEvents.keys()) {
+			if (sampleTime < cleanupThreshold) {
+				keysToDelete.push(sampleTime);
+			}
+		}
+		
+		// Remove old events
+		for (const sampleTime of keysToDelete) {
+			// Clean up scheduled event keys
+			for (const key of this._scheduledEventKeys) {
+				if (key.endsWith(`_${sampleTime}`)) {
+					this._scheduledEventKeys.delete(key);
+				}
+			}
+			this.scheduledEvents.delete(sampleTime);
+		}
 	}
 
 	getPatternLength() {
@@ -224,6 +284,8 @@ class EventScheduler {
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
 				}
 				this.scheduledEvents.clear();
+				this._scheduledEventKeys.clear();
+				this._lastCheckedEventIndex = -1;
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			} else {
@@ -233,15 +295,20 @@ class EventScheduler {
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
 				}
 				this.scheduledEvents.clear();
+				this._scheduledEventKeys.clear();
+				this._lastCheckedEventIndex = -1;
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			}
 		}
 	}
 
-	clear() {
+		clear() {
 		this.scheduledEvents.clear();
+		this._scheduledEventKeys.clear();
 		this._lastScheduledBeat = -1; // Reset scheduling state
+		this._lastCheckedEventIndex = -1; // Reset event index tracking
+		this._lastEventCount = 0; // Reset event count
 	}
 }
 
