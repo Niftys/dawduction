@@ -1,13 +1,12 @@
 <script lang="ts">
 	import type { TimelineEffect } from '$lib/types/effects';
-	import type { Effect, Pattern } from '$lib/types/effects';
+	import type { Effect } from '$lib/types/effects';
 	import { TIMELINE_CONSTANTS } from '$lib/utils/timelineUtils';
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { generateAutomationCurvePath } from '$lib/utils/automationCurve';
 
 	export let timelineEffect: TimelineEffect;
 	export let effect: Effect;
-	export let assignedPattern: Pattern | null;
 	export let pixelsPerBeat: number;
 	export let isSelected: boolean;
 	export let isDragging: boolean;
@@ -58,8 +57,8 @@
 	<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
 	<span class="clip-label">
 		{effect.name}
-		{#if assignedPattern}
-			<span class="pattern-badge">→ {assignedPattern.name}</span>
+		{#if timelineEffect.targetTrackId}
+			<span class="pattern-badge">→ Track</span>
 		{:else}
 			<span class="pattern-badge global">Global</span>
 		{/if}

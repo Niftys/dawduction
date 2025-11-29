@@ -8,21 +8,24 @@ class EnvelopesProcessor {
 		this.envelopes = []; // Global envelope definitions
 		this.timelineEnvelopes = []; // Timeline envelope instances
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
+		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track IDs to audio track IDs
 		this.timelineTracks = []; // Timeline tracks (for validation)
 		this.processor = null; // Reference to processor for debug logging
 		
 		// Performance optimization caches
-		this._activeEnvelopeValuesCache = new Map(); // trackId_patternId_beat -> envelopeValues
+		this._activeEnvelopeValuesCache = new Map(); // trackId_beat -> envelopeValues
+		this._trackToTimelineTrackId = new Map(); // trackId -> timelineTrackId
 		this._lastCacheUpdateBeat = -1;
 		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
-	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null) {
+	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null, timelineTrackToAudioTracks = null) {
 		this.envelopes = envelopes || [];
 		this.timelineEnvelopes = timelineEnvelopes || [];
 		this.patternToTrackId = patternToTrackId || new Map();
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
+		this.timelineTrackToAudioTracks = timelineTrackToAudioTracks || new Map();
 		
 		// Clear caches when reinitializing
 		this.clearCaches();
@@ -47,6 +50,7 @@ class EnvelopesProcessor {
 	 */
 	clearCaches() {
 		this._activeEnvelopeValuesCache.clear();
+		this._trackToTimelineTrackId.clear();
 		this._lastCacheUpdateBeat = -1;
 	}
 
@@ -68,10 +72,9 @@ class EnvelopesProcessor {
 	 * @param {string} trackId - The track ID to get envelopes for
 	 * @param {number} currentBeat - Current playback position in beats
 	 * @param {boolean} isArrangementView - Whether we're in arrangement view
-	 * @param {string} patternId - Optional pattern ID for pattern-specific envelopes
 	 * @returns {Object} Object with envelope values for each envelope type
 	 */
-	getActiveEnvelopeValues(trackId, currentBeat, isArrangementView, patternId = null) {
+	getActiveEnvelopeValues(trackId, currentBeat, isArrangementView) {
 		if (!isArrangementView) {
 			// In pattern view, return default values
 			// Pattern view envelopes can be added later if needed
@@ -91,14 +94,14 @@ class EnvelopesProcessor {
 		}
 
 		// Check cache first
-		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cacheKey = `${trackId}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
 		const cached = this._activeEnvelopeValuesCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 			return cached.values;
 		}
 
 		// Cache miss - calculate envelope values
-		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat, patternId);
+		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat);
 
 		// Store in cache
 		this._activeEnvelopeValuesCache.set(cacheKey, {
@@ -112,7 +115,7 @@ class EnvelopesProcessor {
 	/**
 	 * Calculate envelope values (uncached version)
 	 */
-	_calculateEnvelopeValues(trackId, currentBeat, patternId = null) {
+	_calculateEnvelopeValues(trackId, currentBeat) {
 		const envelopeValues = {
 			volume: 1.0,
 			filter: 1.0,
@@ -120,30 +123,41 @@ class EnvelopesProcessor {
 			pan: 0.0
 		};
 
+		// Resolve audio track's timeline track id for per-track matching
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				if (audioTrackIds.includes(trackId)) {
+					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
+					break;
+				}
+			}
+		}
+
 		// Find timeline envelopes that are active at this position
-		// Envelopes can ONLY be on envelope tracks and apply globally
+		// Envelopes can be global (on envelope tracks) or targeted to a specific pattern row via targetTrackId
 		for (const timelineEnvelope of this.timelineEnvelopes) {
 			const startBeat = timelineEnvelope.startBeat || 0;
 			const endBeat = startBeat + (timelineEnvelope.duration || 0);
 
 			// Check if envelope is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
-				// CRITICAL: Envelopes can ONLY be on 'envelope' type tracks
-				// Find the timeline track this envelope belongs to
+				let shouldApply = false;
+
+				// Global if on an envelope track
 				const envelopeTrack = this.timelineTracks.find(t => t.id === timelineEnvelope.trackId);
-				if (!envelopeTrack || envelopeTrack.type !== 'envelope') {
-					// Envelope is not on an envelope track - skip it
-					continue;
+				if (envelopeTrack && envelopeTrack.type === 'envelope' && !timelineEnvelope.targetTrackId) {
+					shouldApply = true;
 				}
-				
-				// Envelopes on envelope tracks apply globally to all tracks
-				// Check pattern assignment if specified
-				let shouldApply = true;
-				if (timelineEnvelope.patternId) {
-					// Envelope is assigned to a specific pattern
-					shouldApply = patternId && timelineEnvelope.patternId === patternId;
+
+				// Per-track insert if targetTrackId matches this audio track's timeline track id
+				if (!shouldApply && timelineEnvelope.targetTrackId && timelineTrackId) {
+					shouldApply = (timelineEnvelope.targetTrackId === timelineTrackId);
 				}
-				// If no patternId, apply globally
 				
 				if (shouldApply) {
 					const envelopeDef = this.envelopes.find(e => e.id === timelineEnvelope.envelopeId);
@@ -172,7 +186,7 @@ class EnvelopesProcessor {
 										envelopeId: timelineEnvelope.envelopeId, 
 										availableIds: this.envelopes.map(e => e.id),
 										timelineEnvelopeTrackId: timelineEnvelope.trackId,
-										timelineEnvelopePatternId: timelineEnvelope.patternId
+									targetTrackId: timelineEnvelope.targetTrackId
 									}
 								});
 							}
@@ -181,6 +195,18 @@ class EnvelopesProcessor {
 				}
 			}
 		}
+
+		// Safety: ensure all values are finite and within reasonable ranges
+		if (!Number.isFinite(envelopeValues.volume)) envelopeValues.volume = 1.0;
+		if (!Number.isFinite(envelopeValues.filter)) envelopeValues.filter = 1.0;
+		if (!Number.isFinite(envelopeValues.pitch)) envelopeValues.pitch = 1.0;
+		if (!Number.isFinite(envelopeValues.pan)) envelopeValues.pan = 0.0;
+
+		// Clamp to avoid extreme modulation
+		envelopeValues.volume = Math.max(0, Math.min(4, envelopeValues.volume));
+		envelopeValues.filter = Math.max(0, Math.min(4, envelopeValues.filter));
+		envelopeValues.pitch = Math.max(0.25, Math.min(4, envelopeValues.pitch));
+		envelopeValues.pan = Math.max(-1, Math.min(1, envelopeValues.pan));
 
 		return envelopeValues;
 	}
@@ -287,6 +313,21 @@ class EnvelopesProcessor {
 	 * Called periodically (every ~0.1 beats) instead of every sample
 	 */
 	_updateCaches(currentBeat) {
+		// Build trackId -> timelineTrackId map (only if not already built)
+		if (this._trackToTimelineTrackId.size === 0 && this.timelineTrackToAudioTracks) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const timelineTrackId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				for (let i = 0; i < audioTrackIds.length; i++) {
+					const audioTrackId = audioTrackIds[i];
+					if (!this._trackToTimelineTrackId.has(audioTrackId)) {
+						this._trackToTimelineTrackId.set(audioTrackId, timelineTrackId);
+					}
+				}
+			}
+		}
+
 		// Clear old cache entries (keep only recent ones)
 		const cacheKeysToDelete = [];
 		for (const [key, cached] of this._activeEnvelopeValuesCache.entries()) {

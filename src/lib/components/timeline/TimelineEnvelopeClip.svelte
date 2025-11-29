@@ -1,13 +1,12 @@
 <script lang="ts">
 	import type { TimelineEnvelope } from '$lib/types/effects';
-	import type { Envelope, Pattern } from '$lib/types/effects';
+	import type { Envelope } from '$lib/types/effects';
 	import { TIMELINE_CONSTANTS } from '$lib/utils/timelineUtils';
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
 
 	export let timelineEnvelope: TimelineEnvelope;
 	export let envelope: Envelope;
-	export let assignedPattern: Pattern | null;
 	export let pixelsPerBeat: number;
 	export let isSelected: boolean;
 	export let isDragging: boolean;
@@ -55,8 +54,8 @@
 	<div class="clip-resize-handle-left" title="Drag to resize left edge"></div>
 	<span class="clip-label">
 		{envelope.name}
-		{#if assignedPattern}
-			<span class="pattern-badge">→ {assignedPattern.name}</span>
+		{#if timelineEnvelope.targetTrackId}
+			<span class="pattern-badge">→ Track</span>
 		{:else}
 			<span class="pattern-badge global">Global</span>
 		{/if}

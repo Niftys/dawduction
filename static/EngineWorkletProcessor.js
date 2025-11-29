@@ -434,7 +434,7 @@ class EventScheduler {
 				if (this.processor.audioProcessor) {
 					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
-					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === "number") {
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === 'number') {
 						this.processor.audioProcessor._lastBatchedSampleTime = 0;
 					}
 				}
@@ -450,7 +450,7 @@ class EventScheduler {
 				if (this.processor.audioProcessor) {
 					// Reset playback update timers so visual updates keep firing after loop
 					this.processor.audioProcessor.lastPlaybackUpdateTime = 0;
-					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === "number") {
+					if (typeof this.processor.audioProcessor._lastBatchedSampleTime === 'number') {
 						this.processor.audioProcessor._lastBatchedSampleTime = 0;
 					}
 				}
@@ -501,6 +501,15 @@ class EffectsProcessor {
 		this._automationByEffectInstance = new Map(); // timelineEffectId -> automation[]
 		this._sortedPointsCache = new Map(); // automationId -> sortedPoints[]
 		this._automationSettingsCache = new Map(); // timelineEffectId_beat -> settings
+	}
+
+	/**
+	 * Flush extremely small float values to zero to avoid denormals/subnormals
+	 * Denormals can severely impact CPU performance in deep tails/low frequencies.
+	 */
+	_flushDenormals(x) {
+		// Threshold tuned to be inaudible and effective for JS engines
+		return (x > -1e-20 && x < 1e-20) ? 0 : x;
 	}
 
 	initialize(effects, timelineEffects, patternToTrackId, timelineTrackToAudioTracks, processor, timelineTracks, automation) {
@@ -595,18 +604,15 @@ class EffectsProcessor {
 	}
 
 	/**
-	 * Get active effects for a track at a specific timeline position
-	 * @param {string} trackId - The track ID to get effects for
+	 * Get active effects for a track at a specific timeline position (track-based only)
+	 * @param {string} trackId - The audio track ID to get effects for
 	 * @param {number} currentBeat - Current playback position in beats
 	 * @param {boolean} isArrangementView - Whether we're in arrangement view
-	 * @param {string} patternId - Optional pattern ID for pattern-specific effects
 	 * @returns {Array} Array of active effect definitions with their settings
 	 */
-	getActiveEffects(trackId, currentBeat, isArrangementView, patternId) {
-		if (patternId === undefined) patternId = null;
+	getActiveEffects(trackId, currentBeat, isArrangementView) {
 		if (!isArrangementView) {
-			// In pattern view, return global effects or pattern-specific effects
-			// For now, return empty array - pattern view effects can be added later
+			// No per-track timeline effects outside arrangement view (for now)
 			return [];
 		}
 
@@ -618,7 +624,7 @@ class EffectsProcessor {
 		}
 
 		// Check cache first (track-specific)
-		const cacheKey = trackId + '_' + (patternId || 'null') + '_' + Math.floor(currentBeat / this._cacheUpdateInterval);
+		const cacheKey = trackId + '_' + Math.floor(currentBeat / this._cacheUpdateInterval);
 		const cached = this._activeEffectsCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 			return cached.effects;
@@ -645,8 +651,8 @@ class EffectsProcessor {
 			globalEffects = this._globalEffectsCache.effects;
 		}
 
-		// Calculate track-specific effects (pattern-specific or track-specific)
-		const trackSpecificEffects = this._calculateTrackSpecificEffects(trackId, currentBeat, patternId);
+		// Calculate track-specific effects (track-targeted only)
+		const trackSpecificEffects = this._calculateTrackSpecificEffects(trackId, currentBeat);
 
 		// Combine global and track-specific effects
 		const activeEffects = globalEffects.concat(trackSpecificEffects);
@@ -699,7 +705,8 @@ class EffectsProcessor {
 						
 						globalEffects.push(Object.assign({}, effectDef, {
 							settings: automatedSettings,
-							progress: (currentBeat - startBeat) / (endBeat - startBeat)
+							progress: (currentBeat - startBeat) / (endBeat - startBeat),
+							timelineEffectId: timelineEffect.id // Include timeline effect ID for buffer isolation
 						}));
 					}
 				}
@@ -710,10 +717,9 @@ class EffectsProcessor {
 	}
 	
 	/**
-	 * Calculate track-specific effects (pattern-specific or track-specific)
+	 * Calculate track-specific effects (track-targeted only)
 	 */
-	_calculateTrackSpecificEffects(trackId, currentBeat, patternId) {
-		if (patternId === undefined) patternId = null;
+	_calculateTrackSpecificEffects(trackId, currentBeat) {
 		const trackSpecificEffects = [];
 		
 		// Use cached timeline track ID lookup
@@ -732,7 +738,7 @@ class EffectsProcessor {
 			}
 		}
 		
-		// Find timeline effects that are active at this position and track-specific
+		// Find timeline effects that are active at this position and targeted to a track
 		for (const timelineEffect of this.timelineEffects) {
 			const startBeat = timelineEffect.startBeat || 0;
 			const endBeat = startBeat + (timelineEffect.duration || 0);
@@ -740,21 +746,19 @@ class EffectsProcessor {
 			// Check if effect is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
 				// Skip global effects (already handled)
-				if (timelineEffect.trackId || timelineEffect.patternId) {
+				if (timelineEffect.trackId || timelineEffect.targetTrackId) {
 					let shouldApply = false;
 					
-					// Check pattern or track assignment
-					if (timelineEffect.patternId) {
-						if (patternId && timelineEffect.patternId === patternId) {
+					// Check track assignment (per-track insert)
+					if (timelineEffect.targetTrackId && timelineTrackId) {
+						if (timelineEffect.targetTrackId === timelineTrackId) {
 							shouldApply = true;
 						}
-					} else if (timelineEffect.trackId && timelineTrackId) {
-						if (timelineEffect.trackId === timelineTrackId) {
-							shouldApply = true;
-						}
+					} else if (timelineEffect.trackId) {
+						// Effects on effect tracks are handled as global in _calculateGlobalEffects
+						shouldApply = false;
 					}
-					// Note: Effects on effect tracks are now handled in _calculateGlobalEffects
-					// This method only handles pattern- or audio-track-specific effects
+					// Note: Effects on effect tracks are handled in _calculateGlobalEffects
 					
 					if (shouldApply) {
 						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
@@ -770,7 +774,8 @@ class EffectsProcessor {
 							
 							trackSpecificEffects.push(Object.assign({}, effectDef, {
 								settings: automatedSettings,
-								progress: (currentBeat - startBeat) / (endBeat - startBeat)
+								progress: (currentBeat - startBeat) / (endBeat - startBeat),
+								timelineEffectId: timelineEffect.id // Include timeline effect ID for buffer isolation
 							}));
 						}
 					}
@@ -782,10 +787,9 @@ class EffectsProcessor {
 	}
 	
 	/**
-	 * Calculate active effects (uncached version) - DEPRECATED, use _calculateGlobalEffects + _calculateTrackSpecificEffects
+	 * Calculate active effects (uncached version) - DEPRECATED
 	 */
-	_calculateActiveEffects(trackId, currentBeat, patternId) {
-		if (patternId === undefined) patternId = null;
+	_calculateActiveEffects(trackId, currentBeat) {
 		const activeEffects = [];
 
 		// Use cached timeline track ID lookup
@@ -813,10 +817,10 @@ class EffectsProcessor {
 				const isActive = currentBeat >= startBeat && currentBeat < endBeat;
 				let matchStatus = 'not active';
 				if (isActive) {
-					if (te.patternId) {
-						matchStatus = te.patternId === patternId ? 'MATCH (patternId)' : 'NO MATCH: patternId mismatch (effect=' + te.patternId + ', track=' + patternId + ')';
+					if (te.targetTrackId) {
+						matchStatus = te.targetTrackId === timelineTrackId ? 'MATCH (targetTrackId)' : 'NO MATCH: targetTrackId mismatch (effect=' + te.targetTrackId + ', audioTrack=' + timelineTrackId + ')';
 					} else if (te.trackId) {
-						matchStatus = te.trackId === timelineTrackId ? 'MATCH (trackId)' : 'NO MATCH: trackId mismatch (effect=' + te.trackId + ', audioTrack=' + timelineTrackId + ')';
+						matchStatus = 'GLOBAL (effect track)';
 					} else {
 						matchStatus = 'MATCH (global effect)';
 					}
@@ -824,7 +828,7 @@ class EffectsProcessor {
 				return {
 					effectId: te.effectId,
 					trackId: te.trackId,
-					patternId: te.patternId,
+					targetTrackId: te.targetTrackId,
 					startBeat,
 					duration: te.duration,
 					endBeat,
@@ -837,7 +841,6 @@ class EffectsProcessor {
 				message: 'Effect matching debug',
 				data: {
 					trackId,
-					patternId,
 					timelineTrackId,
 					currentBeat: currentBeat.toFixed(2),
 					timelineEffectsCount: this.timelineEffects.length,
@@ -870,16 +873,7 @@ class EffectsProcessor {
 				let shouldApply = false;
 				let matchReason = '';
 
-				// Check pattern assignment first
-				if (timelineEffect.patternId) {
-					// Effect is assigned to a specific pattern
-					if (patternId && timelineEffect.patternId === patternId) {
-						shouldApply = true;
-						matchReason = 'patternId match';
-					} else {
-						matchReason = 'patternId mismatch: effect=' + timelineEffect.patternId + ', track=' + patternId;
-					}
-				} else if (timelineEffect.trackId) {
+				if (timelineEffect.trackId) {
 					// Effect is assigned to a specific timeline track
 					// Effects can ONLY be on effect tracks (not pattern or envelope tracks)
 					const effectTimelineTrack = this.timelineTracks.find(t => t.id === timelineEffect.trackId);
@@ -907,6 +901,14 @@ class EffectsProcessor {
 							});
 						}
 						matchReason = 'trackId mismatch: effect=' + timelineEffect.trackId + ' (track not found), audioTrack=' + timelineTrackId;
+					}
+				} else if (timelineEffect.targetTrackId) {
+					// Per-track insert
+					if (timelineEffect.targetTrackId === timelineTrackId) {
+						shouldApply = true;
+						matchReason = 'targetTrackId match';
+					} else {
+						matchReason = 'targetTrackId mismatch: effect=' + timelineEffect.targetTrackId + ', audioTrack=' + timelineTrackId;
 					}
 				} else {
 					// Global effect (no trackId or patternId) - applies to all tracks
@@ -965,9 +967,8 @@ class EffectsProcessor {
 								effectId: timelineEffect.effectId,
 								matchReason,
 								effectTrackId: timelineEffect.trackId,
-								effectPatternId: timelineEffect.patternId,
+								targetTrackId: timelineEffect.targetTrackId,
 								audioTrackId: trackId,
-								audioPatternId: patternId,
 								audioTimelineTrackId: timelineTrackId,
 								currentBeat: currentBeat.toFixed(2),
 								effectTimeRange: startBeat.toFixed(2) + '-' + endBeat.toFixed(2)
@@ -1023,13 +1024,42 @@ class EffectsProcessor {
 	 * @returns {number} Processed audio sample
 	 */
 	processSample(sample, activeEffects) {
-		let processed = sample;
+		let processed = Number.isFinite(sample) ? sample : 0;
+		processed = this._flushDenormals(processed);
 
 		if (activeEffects && activeEffects.length > 0) {
 			for (const effect of activeEffects) {
-				processed = this.applyEffect(processed, effect);
+				// Smooth fade-in for effects (prevent clicks when effect starts)
+				// Use progress (0-1) to fade in over first ~10ms (0.01 beats at 120 BPM)
+				let effectMix = 1.0;
+				if (effect.progress !== undefined && effect.progress < 0.01) {
+					// Fade in over first 0.01 beats (~10ms at 120 BPM)
+					effectMix = Math.min(1.0, effect.progress / 0.01);
+				}
+				
+				const effectOutput = this._flushDenormals(this.applyEffect(processed, effect));
+				// Crossfade between dry and wet to prevent clicks
+				processed = processed * (1 - effectMix) + effectOutput * effectMix;
+				processed = this._flushDenormals(processed);
+				
+				// Safety: prevent NaN/Infinity from propagating and killing audio
+				if (!Number.isFinite(processed)) {
+					processed = 0;
+				}
 			}
 		}
+
+		// Final safety clamp
+		if (!Number.isFinite(processed)) {
+			return 0;
+		}
+
+		// Flush denormals before clamp (keeps state clean)
+		processed = this._flushDenormals(processed);
+
+		// Hard clamp to [-2, 2] to avoid runaway values
+		if (processed > 2) processed = 2;
+		if (processed < -2) processed = -2;
 
 		return processed;
 	}
@@ -1197,7 +1227,8 @@ class EffectsProcessor {
 			if (!this._reverbBuffers) {
 				this._reverbBuffers = new Map();
 			}
-			const reverbKey = 'global';
+			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
+			const reverbKey = effect.timelineEffectId || 'global';
 			
 			if (!this._reverbBuffers.has(reverbKey)) {
 				// Create multiple comb filters and allpass filters for realistic reverb
@@ -1309,7 +1340,8 @@ class EffectsProcessor {
 			if (!this._delayBuffers) {
 				this._delayBuffers = new Map();
 			}
-			const delayKey = 'global';
+			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
+			const delayKey = effect.timelineEffectId || 'global';
 			const maxDelayTime = 2.0; // Maximum delay time in seconds
 			const delayBufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
 			
@@ -1350,10 +1382,18 @@ class EffectsProcessor {
 			if (!this._filterStates) {
 				this._filterStates = new Map();
 			}
-			const filterKey = 'global';
+			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
+			const filterKey = effect.timelineEffectId || 'global';
 			
 			if (!this._filterStates.has(filterKey)) {
-				this._filterStates.set(filterKey, { x1: 0, x2: 0, y1: 0, y2: 0 });
+				this._filterStates.set(filterKey, { 
+					x1: 0, x2: 0, y1: 0, y2: 0,
+					cachedCutoff: -1,
+					cachedQ: -1,
+					cachedType: '',
+					cachedSampleRate: 0,
+					coeffs: null
+				});
 			}
 			const filterState = this._filterStates.get(filterKey);
 			if (!filterState) {
@@ -1369,14 +1409,24 @@ class EffectsProcessor {
 			// Map resonance (0-1) to Q factor (0.5 to 10 for extreme resonance)
 			const q = 0.5 + (filterResonance * 9.5);
 			
-			// Apply proper biquad filter based on type
+			// Cache filter coefficients - only recalculate when settings change
+			if (filterState.cachedCutoff !== cutoff || filterState.cachedQ !== q || 
+			    filterState.cachedType !== filterType || filterState.cachedSampleRate !== sampleRate) {
+				filterState.cachedCutoff = cutoff;
+				filterState.cachedQ = q;
+				filterState.cachedType = filterType;
+				filterState.cachedSampleRate = sampleRate;
+				filterState.coeffs = this._calculateFilterCoeffs(cutoff, q, filterType, sampleRate);
+			}
+			
+			// Apply proper biquad filter based on type (using cached coefficients)
 			let filtered = sample;
 			if (filterType === 'lowpass') {
-				filtered = this.applyLowpassFilter(sample, cutoff, q, filterState);
+				filtered = this.applyLowpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
 			} else if (filterType === 'highpass') {
-				filtered = this.applyHighpassFilter(sample, cutoff, q, filterState);
+				filtered = this.applyHighpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
 			} else if (filterType === 'bandpass') {
-				filtered = this.applyBandpassFilter(sample, cutoff, q, filterState);
+				filtered = this.applyBandpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
 			}
 			
 			return filtered;
@@ -1412,12 +1462,29 @@ class EffectsProcessor {
 			if (!this._compressorStates) {
 				this._compressorStates = new Map();
 			}
-			const compKey = 'global';
+			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
+			const compKey = effect.timelineEffectId || 'global';
 			
 			if (!this._compressorStates.has(compKey)) {
-				this._compressorStates.set(compKey, { envelope: 0 });
+				this._compressorStates.set(compKey, { 
+					envelope: 0,
+					attackCoeff: 0,
+					releaseCoeff: 0,
+					cachedAttack: -1,
+					cachedRelease: -1,
+					cachedSampleRate: 0
+				});
 			}
 			const compState = this._compressorStates.get(compKey);
+			
+			// Cache attack/release coefficients - only recalculate when settings or sample rate change
+			if (compState.cachedAttack !== compAttack || compState.cachedRelease !== compRelease || compState.cachedSampleRate !== sampleRate) {
+				compState.attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
+				compState.releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
+				compState.cachedAttack = compAttack;
+				compState.cachedRelease = compRelease;
+				compState.cachedSampleRate = sampleRate;
+			}
 			
 			const absSample = Math.abs(sample);
 			
@@ -1429,16 +1496,13 @@ class EffectsProcessor {
 				targetGain = compressed / absSample; // Gain reduction factor
 			}
 			
-			// Apply attack and release envelope
-			const attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
-			const releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
-			
+			// Apply attack and release envelope (using cached coefficients)
 			if (targetGain < compState.envelope) {
 				// Attack phase
-				compState.envelope = targetGain + (compState.envelope - targetGain) * attackCoeff;
+				compState.envelope = targetGain + (compState.envelope - targetGain) * compState.attackCoeff;
 			} else {
 				// Release phase
-				compState.envelope = targetGain + (compState.envelope - targetGain) * releaseCoeff;
+				compState.envelope = targetGain + (compState.envelope - targetGain) * compState.releaseCoeff;
 			}
 			
 			// Apply gain reduction
@@ -1457,8 +1521,10 @@ class EffectsProcessor {
 			if (!this._chorusBuffers) {
 				this._chorusBuffers = new Map();
 				this._chorusPhases = new Map();
+				this._chorusCache = new Map();
 			}
-			const chorusKey = 'global';
+			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
+			const chorusKey = effect.timelineEffectId || 'global';
 			const maxDelay = 0.1; // Maximum delay time
 			const chorusBufferSize = Math.floor(sampleRate * maxDelay * 1.5);
 			
@@ -1468,18 +1534,37 @@ class EffectsProcessor {
 					writeIndex: 0
 				});
 				this._chorusPhases.set(chorusKey, 0);
+				this._chorusCache.set(chorusKey, {
+					lfoFreq: 0,
+					delaySamples: 0,
+					cachedRate: -1,
+					cachedDelay: -1,
+					cachedDepth: -1,
+					cachedSampleRate: 0
+				});
 			}
 			const chorusState = this._chorusBuffers.get(chorusKey);
 			const chorusPhase = this._chorusPhases.get(chorusKey);
+			const chorusCache = this._chorusCache.get(chorusKey);
+			
+			// Cache LFO frequency and delay calculations - only recalculate when settings change
+			if (chorusCache.cachedRate !== chorusRate || chorusCache.cachedDelay !== chorusDelay || 
+			    chorusCache.cachedDepth !== chorusDepth || chorusCache.cachedSampleRate !== sampleRate) {
+				// Map rate from 0-1 to 0.1-10 Hz for wide range
+				chorusCache.lfoFreq = 0.1 + (chorusRate * 9.9);
+				chorusCache.delaySamples = chorusDelay * sampleRate;
+				chorusCache.cachedRate = chorusRate;
+				chorusCache.cachedDelay = chorusDelay;
+				chorusCache.cachedDepth = chorusDepth;
+				chorusCache.cachedSampleRate = sampleRate;
+			}
 			
 			// Write current sample
 			chorusState.buffer[chorusState.writeIndex] = sample;
 			chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
 			
-			// Calculate modulated delay (LFO)
-			// Map rate from 0-1 to 0.1-10 Hz for wide range
-			const lfoFreq = 0.1 + (chorusRate * 9.9);
-			const lfo = Math.sin(chorusPhase * 2 * Math.PI * lfoFreq);
+			// Calculate modulated delay (LFO) - Math.sin is necessary for smooth LFO
+			const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusCache.lfoFreq);
 			// Depth controls how much the delay modulates (0 to 100% of delay time)
 			const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
 			
@@ -1489,16 +1574,18 @@ class EffectsProcessor {
 			const readIndex2 = readIndex1 + 1;
 			const frac = readPos - readIndex1;
 			
-			// Wrap indices
-			const idx1 = ((readIndex1 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
-			const idx2 = ((readIndex2 % chorusBufferSize) + chorusBufferSize) % chorusBufferSize;
+			// Wrap indices (optimized: avoid double modulo)
+			let idx1 = readIndex1 % chorusBufferSize;
+			if (idx1 < 0) idx1 += chorusBufferSize;
+			let idx2 = readIndex2 % chorusBufferSize;
+			if (idx2 < 0) idx2 += chorusBufferSize;
 			
 			const sample1 = chorusState.buffer[idx1];
 			const sample2 = chorusState.buffer[idx2];
 			const chorusedSample = sample1 * (1 - frac) + sample2 * frac;
 			
 			// Update phase
-			this._chorusPhases.set(chorusKey, (chorusPhase + lfoFreq / sampleRate) % 1.0);
+			this._chorusPhases.set(chorusKey, (chorusPhase + chorusCache.lfoFreq / sampleRate) % 1.0);
 			
 			// Mix dry and wet - at max wet, completely chorused
 			return sample * (1 - chorusWet) + chorusedSample * chorusWet;
@@ -1520,12 +1607,14 @@ class EffectsProcessor {
 		const b1 = 2.0 * (1.0 - c * c) * a1;
 		const b2 = (1.0 - q * c + c * c) * a1;
 
-		const output = a1 * input + a2 * state.x1 + a3 * state.x2
-			- b1 * state.y1 - b2 * state.y2;
+		const output = this._flushDenormals(
+			a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2
+		);
 
-		state.x2 = state.x1;
-		state.x1 = input;
-		state.y2 = state.y1;
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
 		state.y1 = output;
 
 		return output;
@@ -1543,12 +1632,14 @@ class EffectsProcessor {
 		const b1 = 2.0 * (c * c - 1.0) * a1;
 		const b2 = (1.0 - q * c + c * c) * a1;
 
-		const output = a1 * input + a2 * state.x1 + a3 * state.x2
-			- b1 * state.y1 - b2 * state.y2;
+		const output = this._flushDenormals(
+			a1 * input + a2 * state.x1 + a3 * state.x2
+			- b1 * state.y1 - b2 * state.y2
+		);
 
-		state.x2 = state.x1;
-		state.x1 = input;
-		state.y2 = state.y1;
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
 		state.y1 = output;
 
 		return output;
@@ -1571,12 +1662,114 @@ class EffectsProcessor {
 		const a1 = -2 * cosw;
 		const a2 = 1 - alpha;
 
-		const output = (b0 / a0) * input + (b1 / a0) * state.x1 + (b2 / a0) * state.x2
-			- (a1 / a0) * state.y1 - (a2 / a0) * state.y2;
+		const output = this._flushDenormals(
+			(b0 / a0) * input + (b1 / a0) * state.x1 + (b2 / a0) * state.x2
+			- (a1 / a0) * state.y1 - (a2 / a0) * state.y2
+		);
 
-		state.x2 = state.x1;
-		state.x1 = input;
-		state.y2 = state.y1;
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Calculate filter coefficients (cached to avoid recalculating every sample)
+	 * @param {number} cutoff - Cutoff frequency
+	 * @param {number} q - Q factor
+	 * @param {string} type - Filter type ('lowpass', 'highpass', 'bandpass')
+	 * @param {number} sampleRate - Sample rate
+	 * @returns {Object} Filter coefficients
+	 */
+	_calculateFilterCoeffs(cutoff, q, type, sampleRate) {
+		const clampedCutoff = Math.max(20, Math.min(20000, cutoff));
+		
+		if (type === 'lowpass' || type === 'highpass') {
+			const c = 1.0 / Math.tan(Math.PI * clampedCutoff / sampleRate);
+			const a1 = 1.0 / (1.0 + q * c + c * c);
+			
+			if (type === 'lowpass') {
+				return {
+					a1: a1,
+					a2: 2 * a1,
+					a3: a1,
+					b1: 2.0 * (1.0 - c * c) * a1,
+					b2: (1.0 - q * c + c * c) * a1
+				};
+			} else { // highpass
+				return {
+					a1: a1,
+					a2: -2 * a1,
+					a3: a1,
+					b1: 2.0 * (c * c - 1.0) * a1,
+					b2: (1.0 - q * c + c * c) * a1
+				};
+			}
+		} else { // bandpass
+			const w = 2.0 * Math.PI * clampedCutoff / sampleRate;
+			const cosw = Math.cos(w);
+			const sinw = Math.sin(w);
+			const alpha = sinw / (2.0 * q);
+			
+			return {
+				b0: alpha,
+				b1: 0,
+				b2: -alpha,
+				a0: 1 + alpha,
+				a1: -2 * cosw,
+				a2: 1 - alpha
+			};
+		}
+	}
+	
+	/**
+	 * Apply lowpass filter with pre-calculated coefficients
+	 */
+	applyLowpassFilterWithCoeffs(input, state, coeffs) {
+		const output = this._flushDenormals(
+			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
+		);
+
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply highpass filter with pre-calculated coefficients
+	 */
+	applyHighpassFilterWithCoeffs(input, state, coeffs) {
+		const output = this._flushDenormals(
+			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
+		);
+
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+	
+	/**
+	 * Apply bandpass filter with pre-calculated coefficients
+	 */
+	applyBandpassFilterWithCoeffs(input, state, coeffs) {
+		const output = this._flushDenormals(
+			(coeffs.b0 / coeffs.a0) * input + (coeffs.b1 / coeffs.a0) * state.x1 + (coeffs.b2 / coeffs.a0) * state.x2
+			- (coeffs.a1 / coeffs.a0) * state.y1 - (coeffs.a2 / coeffs.a0) * state.y2
+		);
+
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
 		state.y1 = output;
 
 		return output;
@@ -1595,21 +1788,24 @@ class EnvelopesProcessor {
 		this.envelopes = []; // Global envelope definitions
 		this.timelineEnvelopes = []; // Timeline envelope instances
 		this.patternToTrackId = new Map(); // Maps pattern IDs to track IDs
+		this.timelineTrackToAudioTracks = new Map(); // Maps timeline track IDs to audio track IDs
 		this.timelineTracks = []; // Timeline tracks (for validation)
 		this.processor = null; // Reference to processor for debug logging
 		
 		// Performance optimization caches
-		this._activeEnvelopeValuesCache = new Map(); // trackId_patternId_beat -> envelopeValues
+		this._activeEnvelopeValuesCache = new Map(); // trackId_beat -> envelopeValues
+		this._trackToTimelineTrackId = new Map(); // trackId -> timelineTrackId
 		this._lastCacheUpdateBeat = -1;
 		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
 	}
 
-	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null) {
+	initialize(envelopes, timelineEnvelopes, patternToTrackId, timelineTracks, processor = null, timelineTrackToAudioTracks = null) {
 		this.envelopes = envelopes || [];
 		this.timelineEnvelopes = timelineEnvelopes || [];
 		this.patternToTrackId = patternToTrackId || new Map();
 		this.timelineTracks = timelineTracks || [];
 		this.processor = processor || null;
+		this.timelineTrackToAudioTracks = timelineTrackToAudioTracks || new Map();
 		
 		// Clear caches when reinitializing
 		this.clearCaches();
@@ -1634,6 +1830,7 @@ class EnvelopesProcessor {
 	 */
 	clearCaches() {
 		this._activeEnvelopeValuesCache.clear();
+		this._trackToTimelineTrackId.clear();
 		this._lastCacheUpdateBeat = -1;
 	}
 
@@ -1655,10 +1852,9 @@ class EnvelopesProcessor {
 	 * @param {string} trackId - The track ID to get envelopes for
 	 * @param {number} currentBeat - Current playback position in beats
 	 * @param {boolean} isArrangementView - Whether we're in arrangement view
-	 * @param {string} patternId - Optional pattern ID for pattern-specific envelopes
 	 * @returns {Object} Object with envelope values for each envelope type
 	 */
-	getActiveEnvelopeValues(trackId, currentBeat, isArrangementView, patternId = null) {
+	getActiveEnvelopeValues(trackId, currentBeat, isArrangementView) {
 		if (!isArrangementView) {
 			// In pattern view, return default values
 			// Pattern view envelopes can be added later if needed
@@ -1678,14 +1874,14 @@ class EnvelopesProcessor {
 		}
 
 		// Check cache first
-		const cacheKey = `${trackId}_${patternId || 'null'}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
+		const cacheKey = `${trackId}_${Math.floor(currentBeat / this._cacheUpdateInterval)}`;
 		const cached = this._activeEnvelopeValuesCache.get(cacheKey);
 		if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 			return cached.values;
 		}
 
 		// Cache miss - calculate envelope values
-		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat, patternId);
+		const envelopeValues = this._calculateEnvelopeValues(trackId, currentBeat);
 
 		// Store in cache
 		this._activeEnvelopeValuesCache.set(cacheKey, {
@@ -1699,7 +1895,7 @@ class EnvelopesProcessor {
 	/**
 	 * Calculate envelope values (uncached version)
 	 */
-	_calculateEnvelopeValues(trackId, currentBeat, patternId = null) {
+	_calculateEnvelopeValues(trackId, currentBeat) {
 		const envelopeValues = {
 			volume: 1.0,
 			filter: 1.0,
@@ -1707,30 +1903,41 @@ class EnvelopesProcessor {
 			pan: 0.0
 		};
 
+		// Resolve audio track's timeline track id for per-track matching
+		let timelineTrackId = this._trackToTimelineTrackId.get(trackId);
+		if (timelineTrackId === undefined && this.timelineTrackToAudioTracks) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const tId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				if (audioTrackIds.includes(trackId)) {
+					timelineTrackId = tId;
+					this._trackToTimelineTrackId.set(trackId, tId);
+					break;
+				}
+			}
+		}
+
 		// Find timeline envelopes that are active at this position
-		// Envelopes can ONLY be on envelope tracks and apply globally
+		// Envelopes can be global (on envelope tracks) or targeted to a specific pattern row via targetTrackId
 		for (const timelineEnvelope of this.timelineEnvelopes) {
 			const startBeat = timelineEnvelope.startBeat || 0;
 			const endBeat = startBeat + (timelineEnvelope.duration || 0);
 
 			// Check if envelope is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
-				// CRITICAL: Envelopes can ONLY be on 'envelope' type tracks
-				// Find the timeline track this envelope belongs to
+				let shouldApply = false;
+
+				// Global if on an envelope track
 				const envelopeTrack = this.timelineTracks.find(t => t.id === timelineEnvelope.trackId);
-				if (!envelopeTrack || envelopeTrack.type !== 'envelope') {
-					// Envelope is not on an envelope track - skip it
-					continue;
+				if (envelopeTrack && envelopeTrack.type === 'envelope' && !timelineEnvelope.targetTrackId) {
+					shouldApply = true;
 				}
-				
-				// Envelopes on envelope tracks apply globally to all tracks
-				// Check pattern assignment if specified
-				let shouldApply = true;
-				if (timelineEnvelope.patternId) {
-					// Envelope is assigned to a specific pattern
-					shouldApply = patternId && timelineEnvelope.patternId === patternId;
+
+				// Per-track insert if targetTrackId matches this audio track's timeline track id
+				if (!shouldApply && timelineEnvelope.targetTrackId && timelineTrackId) {
+					shouldApply = (timelineEnvelope.targetTrackId === timelineTrackId);
 				}
-				// If no patternId, apply globally
 				
 				if (shouldApply) {
 					const envelopeDef = this.envelopes.find(e => e.id === timelineEnvelope.envelopeId);
@@ -1759,7 +1966,7 @@ class EnvelopesProcessor {
 										envelopeId: timelineEnvelope.envelopeId, 
 										availableIds: this.envelopes.map(e => e.id),
 										timelineEnvelopeTrackId: timelineEnvelope.trackId,
-										timelineEnvelopePatternId: timelineEnvelope.patternId
+									targetTrackId: timelineEnvelope.targetTrackId
 									}
 								});
 							}
@@ -1768,6 +1975,18 @@ class EnvelopesProcessor {
 				}
 			}
 		}
+
+		// Safety: ensure all values are finite and within reasonable ranges
+		if (!Number.isFinite(envelopeValues.volume)) envelopeValues.volume = 1.0;
+		if (!Number.isFinite(envelopeValues.filter)) envelopeValues.filter = 1.0;
+		if (!Number.isFinite(envelopeValues.pitch)) envelopeValues.pitch = 1.0;
+		if (!Number.isFinite(envelopeValues.pan)) envelopeValues.pan = 0.0;
+
+		// Clamp to avoid extreme modulation
+		envelopeValues.volume = Math.max(0, Math.min(4, envelopeValues.volume));
+		envelopeValues.filter = Math.max(0, Math.min(4, envelopeValues.filter));
+		envelopeValues.pitch = Math.max(0.25, Math.min(4, envelopeValues.pitch));
+		envelopeValues.pan = Math.max(-1, Math.min(1, envelopeValues.pan));
 
 		return envelopeValues;
 	}
@@ -1874,6 +2093,21 @@ class EnvelopesProcessor {
 	 * Called periodically (every ~0.1 beats) instead of every sample
 	 */
 	_updateCaches(currentBeat) {
+		// Build trackId -> timelineTrackId map (only if not already built)
+		if (this._trackToTimelineTrackId.size === 0 && this.timelineTrackToAudioTracks) {
+			const entries = this.timelineTrackToAudioTracks.entries();
+			for (let entry = entries.next(); !entry.done; entry = entries.next()) {
+				const timelineTrackId = entry.value[0];
+				const audioTrackIds = entry.value[1];
+				for (let i = 0; i < audioTrackIds.length; i++) {
+					const audioTrackId = audioTrackIds[i];
+					if (!this._trackToTimelineTrackId.has(audioTrackId)) {
+						this._trackToTimelineTrackId.set(audioTrackId, timelineTrackId);
+					}
+				}
+			}
+		}
+
 		// Clear old cache entries (keep only recent ones)
 		const cacheKeysToDelete = [];
 		for (const [key, cached] of this._activeEnvelopeValuesCache.entries()) {
@@ -1985,7 +2219,7 @@ class ProjectManager {
 		const timelineTracks = (timelineData && timelineData.tracks) ? timelineData.tracks : [];
 		// Pass automation data to effects processor
 		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
-		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
+		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor, this.timelineTrackToAudioTracks);
 	}
 
 	getTrack(trackId) {
@@ -2410,7 +2644,21 @@ class SynthManager {
  * Applies constant power panning for smooth stereo imaging
  */
 
+/**
+ * @typedef {Object} BiquadState
+ * @property {number} x1
+ * @property {number} x2
+ * @property {number} y1
+ * @property {number} y2
+ */
+
 class AudioMixer {
+	/**
+	 * @param {*} trackStateManager
+	 * @param {*} effectsProcessor
+	 * @param {*} envelopesProcessor
+	 * @param {*} processor
+	 */
 	constructor(trackStateManager, effectsProcessor, envelopesProcessor, processor) {
 		this.trackStateManager = trackStateManager;
 		this.effectsProcessor = effectsProcessor;
@@ -2432,8 +2680,18 @@ class AudioMixer {
 		this._activeClipsCache = new Map(); // patternId -> {beat: number, clips: clip[]}
 		this._lastCacheUpdateBeat = -1;
 		this._cacheUpdateInterval = 0.1; // Update cache every 0.1 beats (~100ms at 120 BPM)
+		this._panGainsCache = new Map(); // trackId -> {pan: number, leftGain: number, rightGain: number}
+
+		// Cache biquad coefficients per track to avoid recompute every sample
+		this._filterCoeffCache = new Map(); // trackId -> {cutoff, q, sampleRate, coeffs}
 	}
 
+	/**
+	 * @param {Map<string, any>} synths
+	 * @param {number} masterGain
+	 * @param {number} currentBeat
+	 * @param {boolean} isArrangementView
+	 */
 	mixSynths(synths, masterGain = 0.3, currentBeat = 0, isArrangementView = false) {
 		let leftSample = 0;
 		let rightSample = 0;
@@ -2473,27 +2731,30 @@ class AudioMixer {
 					// Use cached pattern ID
 					const patternId = this._trackToPatternId.get(trackId);
 					
+					// Cache timeline reference to avoid repeated property access
+					const timeline = this.processor?.projectManager?.timeline;
+					const timelineTracksArray = timeline?.tracks;
+					
 					// Use cached active clips (updated periodically)
 					let activeClips = [];
 					if (patternId) {
 						const cached = this._activeClipsCache.get(patternId);
 						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
 							activeClips = cached.clips;
-						} else if (this.processor && this.processor.projectManager && this.processor.projectManager.timeline && this.processor.projectManager.timeline.clips) {
+						} else if (timeline?.clips) {
 							// Fallback: calculate if cache is stale
-							activeClips = this.processor.projectManager.timeline.clips.filter((clip) => {
+							activeClips = timeline.clips.filter((clip) => {
 								return clip.patternId === patternId &&
 								       currentBeat >= clip.startBeat &&
 								       currentBeat < clip.startBeat + clip.duration;
 							});
 						}
 						
-						if (activeClips.length > 0) {
+						if (activeClips.length > 0 && timelineTracksArray) {
 							// Check if all active clips are on muted timeline tracks
 							const allClipsMuted = activeClips.every((clip) => {
-								const timeline = this.processor.projectManager.timeline;
-								const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
-								return clipTrack && clipTrack.mute === true;
+								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+								return clipTrack?.mute === true;
 							});
 							
 							// If any timeline track is soloed, play if ANY active clip is on a soloed track
@@ -2501,17 +2762,15 @@ class AudioMixer {
 							if (hasSoloedTimelineTrack) {
 								// Solo mode: play if ANY active clip is on a soloed track
 								const hasSoloedClip = activeClips.some((clip) => {
-									const timeline = this.processor.projectManager.timeline;
-									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
-									return clipTrack && clipTrack.solo === true;
+									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+									return clipTrack?.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
 							} else {
 								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
 								const hasSoloedClip = activeClips.some((clip) => {
-									const timeline = this.processor.projectManager.timeline;
-									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
-									return clipTrack && clipTrack.solo === true;
+									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+									return clipTrack?.solo === true;
 								});
 								isTimelineSoloed = hasSoloedClip;
 							}
@@ -2537,14 +2796,13 @@ class AudioMixer {
 								});
 								
 								const clipInfo = activeClips.map((clip) => {
-									const timeline = this.processor.projectManager.timeline;
-									const clipTrack = (timeline && timeline.tracks) ? timeline.tracks.find((t) => t.id === clip.trackId) : null;
+									const clipTrack = timelineTracksArray?.find((t) => t.id === clip.trackId);
 									return {
 										clipId: clip.id,
 										trackId: clip.trackId,
-										trackName: (clipTrack && clipTrack.name) ? clipTrack.name : 'unknown',
-										mute: (clipTrack && clipTrack.mute) ? clipTrack.mute : false,
-										solo: (clipTrack && clipTrack.solo) ? clipTrack.solo : false,
+										trackName: clipTrack?.name || 'unknown',
+										mute: clipTrack?.mute || false,
+										solo: clipTrack?.solo || false,
 										startBeat: clip.startBeat,
 										duration: clip.duration,
 										clipEndBeat: clip.startBeat + clip.duration
@@ -2628,10 +2886,9 @@ class AudioMixer {
 					envelopeValues = this.envelopesProcessor.getActiveEnvelopeValues(
 						trackId,
 						currentBeat,
-						isArrangementView,
-						patternId
+						isArrangementView
 					);
-					
+
 					// Apply envelope values
 					trackVolume *= envelopeValues.volume;
 					trackPan += envelopeValues.pan;
@@ -2656,7 +2913,7 @@ class AudioMixer {
 					const filterState = this.filterStates.get(trackId);
 					
 					// Apply simple lowpass filter
-					synthSample = this.applyLowpassFilter(synthSample, cutoff, 0.5, filterState);
+					synthSample = this.applyLowpassFilter(synthSample, cutoff, 0.5, filterState, trackId);
 					
 					// Debug: Log filter envelope application (occasionally)
 					if (this.processor && this.processor.port && (!this._lastFilterLog || (currentBeat - this._lastFilterLog) > 4)) {
@@ -2718,8 +2975,7 @@ class AudioMixer {
 					const activeEffects = this.effectsProcessor.getActiveEffects(
 						trackId,
 						currentBeat,
-						isArrangementView,
-						patternId
+						isArrangementView
 					);
 					
 					// Debug: Log when effects are found (occasionally to avoid spam)
@@ -2732,7 +2988,6 @@ class AudioMixer {
 								message: 'Effects being applied',
 								data: {
 									trackId,
-									patternId,
 									currentBeat: currentBeat.toFixed(2),
 									activeEffectsCount: activeEffects.length,
 									effectTypes: activeEffects.map(e => e.type)
@@ -2750,12 +3005,23 @@ class AudioMixer {
 				// Pan calculation using constant power panning
 				// -1 = full left, 0 = center, 1 = full right
 				// This maintains constant perceived volume across the pan range
-				const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
-				const leftGain = Math.cos(panRadians);
-				const rightGain = Math.sin(panRadians);
+				// Cache pan calculations per track to avoid recalculating every sample
+				let panGains = this._panGainsCache?.get(trackId);
+				if (!this._panGainsCache) {
+					this._panGainsCache = new Map();
+				}
+				if (!panGains || panGains.pan !== trackPan) {
+					const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
+					panGains = {
+						pan: trackPan,
+						leftGain: Math.cos(panRadians),
+						rightGain: Math.sin(panRadians)
+					};
+					this._panGainsCache.set(trackId, panGains);
+				}
 				
-				leftSample += synthSample * leftGain;
-				rightSample += synthSample * rightGain;
+				leftSample += synthSample * panGains.leftGain;
+				rightSample += synthSample * panGains.rightGain;
 			}
 		}
 
@@ -2775,11 +3041,17 @@ class AudioMixer {
 		this._trackToTimelineVolume.clear();
 		this._activeClipsCache.clear();
 		this._lastCacheUpdateBeat = -1;
+		if (this._panGainsCache) {
+			this._panGainsCache.clear();
+		}
 	}
 
 	/**
 	 * Update performance caches to avoid expensive lookups per-sample
 	 * Called periodically (every ~0.1 beats) instead of every sample
+	 */
+	/**
+	 * @param {boolean} isArrangementView
 	 */
 	_updateCaches(isArrangementView) {
 		// Clear old caches
@@ -2876,27 +3148,55 @@ class AudioMixer {
 	 * @param {number} input - Input sample
 	 * @param {number} cutoff - Cutoff frequency in Hz
 	 * @param {number} resonance - Resonance (0-1)
-	 * @param {Object} state - Filter state {x1, x2, y1, y2}
+	 * @param {BiquadState} state - Filter state {x1, x2, y1, y2}
+	 * @param {string} trackId - Track ID for coeff caching
 	 * @returns {number} Filtered sample
 	 */
-	applyLowpassFilter(input, cutoff, resonance, state) {
+	applyLowpassFilter(input, cutoff, resonance, state, trackId) {
 		const sampleRate = this.processor ? this.processor.sampleRate : 44100;
-		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
-		const a1 = 1.0 / (1.0 + resonance * c + c * c);
-		const a2 = 2 * a1;
-		const a3 = a1;
-		const b1 = 2.0 * (1.0 - c * c) * a1;
-		const b2 = (1.0 - resonance * c + c * c) * a1;
 
-		const output = a1 * input + a2 * state.x1 + a3 * state.x2
-			- b1 * state.y1 - b2 * state.y2;
+		// Clamp cutoff to safe audible range to avoid extreme sub-lows
+		const clampedCutoff = Math.max(20, Math.min(20000, cutoff));
 
-		state.x2 = state.x1;
-		state.x1 = input;
-		state.y2 = state.y1;
+		// Retrieve cached coeffs
+		let cache = this._filterCoeffCache.get(trackId);
+		if (!cache || cache.cutoff !== clampedCutoff || cache.q !== resonance || cache.sampleRate !== sampleRate) {
+			const c = 1.0 / Math.tan(Math.PI * clampedCutoff / sampleRate);
+			const a1 = 1.0 / (1.0 + resonance * c + c * c);
+			cache = {
+				cutoff: clampedCutoff,
+				q: resonance,
+				sampleRate,
+				coeffs: {
+					a1: a1,
+					a2: 2 * a1,
+					a3: a1,
+					b1: 2.0 * (1.0 - c * c) * a1,
+					b2: (1.0 - resonance * c + c * c) * a1
+				}
+			};
+			this._filterCoeffCache.set(trackId, cache);
+		}
+
+		const coeffs = cache.coeffs;
+		let output = coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2;
+
+		// Flush denormals to zero
+		output = this._flushDenormals(output);
+		state.x2 = this._flushDenormals(state.x1);
+		state.x1 = this._flushDenormals(input);
+		state.y2 = this._flushDenormals(state.y1);
 		state.y1 = output;
 
 		return output;
+	}
+
+	/**
+	 * Flush extremely small float values to zero to avoid denormals/subnormals
+	 */
+	_flushDenormals(x) {
+		return (x > -1e-20 && x < 1e-20) ? 0 : x;
 	}
 
 	/**

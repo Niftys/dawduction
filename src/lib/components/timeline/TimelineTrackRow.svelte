@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { tick } from 'svelte';
 	import type { TimelineTrack, TimelineClip } from '$lib/stores/projectStore';
 	import type { TimelineEffect, TimelineEnvelope } from '$lib/types/effects';
 	import type { Pattern, Effect, Envelope } from '$lib/types/effects';
@@ -7,7 +8,7 @@
 	import TimelineClip from './TimelineClip.svelte';
 	import TimelineEffectClip from './TimelineEffectClip.svelte';
 	import TimelineEnvelopeClip from './TimelineEnvelopeClip.svelte';
-
+	
 	export let track: TimelineTrack;
 	export let trackClips: TimelineClip[];
 	export let trackEffects: TimelineEffect[];
@@ -50,6 +51,15 @@
 	export let onAddEffectToTimeline: (effectId: string, beat: number, trackId?: string) => void = () => {};
 	export let onAddEnvelopeToTimeline: (envelopeId: string, beat: number, trackId?: string) => void = () => {};
 	export let findPatternById: (patternId: string | undefined) => Pattern | null;
+export let onUpdateTrackName: (trackId: string, name: string) => void = () => {};
+
+	let isEditingName = false;
+	let editingName = '';
+	let nameInput: HTMLInputElement | null = null;
+
+	$: if (!isEditingName) {
+		editingName = track.name;
+	}
 
 	$: gridLines = generateGridLines(totalLength, pixelsPerBeat);
 	$: defaultColors = {
@@ -189,7 +199,60 @@
 				</div>
 			</div>
 		{/if}
-		<span class="track-name">{track.name}</span>
+		<span class="track-name">
+			{#if track.type === 'pattern'}
+				{#if isEditingName}
+					<input
+						type="text"
+						bind:value={editingName}
+						bind:this={nameInput}
+						on:click|stopPropagation
+						on:blur={() => {
+							onUpdateTrackName(track.id, editingName);
+							isEditingName = false;
+						}}
+						on:keydown={(e) => {
+							if (e.key === 'Enter') {
+								onUpdateTrackName(track.id, editingName);
+								isEditingName = false;
+							} else if (e.key === 'Escape') {
+								editingName = track.name;
+								isEditingName = false;
+							}
+						}}
+						title="Rename pattern track"
+					/>
+				{:else}
+					<span
+						role="button"
+						tabindex="0"
+						on:dblclick|stopPropagation={async () => {
+							isEditingName = true;
+							editingName = track.name;
+							await tick();
+							nameInput?.focus();
+							nameInput?.select();
+						}}
+						on:keydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								isEditingName = true;
+								editingName = track.name;
+								tick().then(() => {
+									nameInput?.focus();
+									nameInput?.select();
+								});
+							}
+						}}
+						title="Double-click to rename track"
+					>
+						{track.name}
+					</span>
+				{/if}
+			{:else}
+				{track.name}
+			{/if}
+		</span>
 	</div>
 	<div class="row-clips" style="width: {beatToPixel(totalLength, pixelsPerBeat)}px;">
 		<!-- Grid lines -->
@@ -232,13 +295,11 @@
 			{#key pixelsPerBeat}
 				{#each trackEffects as timelineEffect}
 					{@const effect = effects.find((e) => e.id === timelineEffect.effectId)}
-					{@const assignedPattern = findPatternById(timelineEffect.patternId)}
 					{#if effect}
 						{@const automationCurves = getAutomationCurvesForEffect(effect.id, timelineEffect.id)}
 						<TimelineEffectClip
 							timelineEffect={timelineEffect}
 							{effect}
-							assignedPattern={assignedPattern}
 							{pixelsPerBeat}
 							isSelected={selectedEffectId === timelineEffect.id}
 							isDragging={isDraggingClip?.id === timelineEffect.id && isDraggingClip?.type === 'effect'}
@@ -269,12 +330,10 @@
 			{#key pixelsPerBeat}
 				{#each trackEnvelopes as timelineEnvelope}
 					{@const envelope = envelopes.find((e) => e.id === timelineEnvelope.envelopeId)}
-					{@const assignedPattern = findPatternById(timelineEnvelope.patternId)}
 					{#if envelope}
 						<TimelineEnvelopeClip
 							timelineEnvelope={timelineEnvelope}
 							{envelope}
-							assignedPattern={assignedPattern}
 							{pixelsPerBeat}
 							isSelected={selectedEnvelopeId === timelineEnvelope.id}
 							isDragging={isDraggingClip?.id === timelineEnvelope.id && isDraggingClip?.type === 'envelope'}

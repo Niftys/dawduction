@@ -107,6 +107,8 @@
 		try {
 			let durationInBeats: number;
 			let timelineToUse: any = null;
+			// Default to full project automation; can be sliced for custom exports
+			let automationToUse: any = project?.automation || null;
 			
 			if (exportRange === 'full') {
 				durationInBeats = timelineLength;
@@ -116,67 +118,125 @@
 				if (timeline) {
 					// Create a modified timeline that only includes clips in the custom range
 					// Shift all clips, effects, and envelopes to start from beat 0
+					const includedTimelineEffectIds: Set<string> = new Set();
+					const includedTimelineEnvelopeIds: Set<string> = new Set();
+
 					const customTimeline = {
 						...timeline,
-					tracks: timeline?.tracks || [],
-					clips: (timeline?.clips || []).filter((clip: any) => {
-						const clipEnd = clip.startBeat + clip.duration;
-						// Include clips that overlap with the custom range
-						return clipEnd > customStartBeat && clip.startBeat < customEndBeat;
-					}).map((clip: any) => {
-						// Shift clip to start from 0
-						const newStartBeat = Math.max(0, clip.startBeat - customStartBeat);
-						// Adjust duration to fit within custom range
-						const clipStartInRange = Math.max(customStartBeat, clip.startBeat);
-						const clipEndInRange = Math.min(customEndBeat, clip.startBeat + clip.duration);
-						const newDuration = clipEndInRange - clipStartInRange;
-						
-						return {
-							...clip,
-							startBeat: newStartBeat,
-							duration: Math.max(0, newDuration)
-						};
-					}),
-					effects: (timeline?.effects || []).filter((effect: any) => {
-						const effectEnd = effect.startBeat + effect.duration;
-						// Include effects that overlap with the custom range
-						return effectEnd > customStartBeat && effect.startBeat < customEndBeat;
-					}).map((effect: any) => {
-						// Shift effect to start from 0
-						const newStartBeat = Math.max(0, effect.startBeat - customStartBeat);
-						// Adjust duration to fit within custom range
-						const effectStartInRange = Math.max(customStartBeat, effect.startBeat);
-						const effectEndInRange = Math.min(customEndBeat, effect.startBeat + effect.duration);
-						const newDuration = effectEndInRange - effectStartInRange;
-						
-						return {
-							...effect,
-							startBeat: newStartBeat,
-							duration: Math.max(0, newDuration)
-						};
-					}),
-					envelopes: (timeline?.envelopes || []).filter((envelope: any) => {
-						const envelopeEnd = envelope.startBeat + envelope.duration;
-						// Include envelopes that overlap with the custom range
-						return envelopeEnd > customStartBeat && envelope.startBeat < customEndBeat;
-					}).map((envelope: any) => {
-						// Shift envelope to start from 0
-						const newStartBeat = Math.max(0, envelope.startBeat - customStartBeat);
-						// Adjust duration to fit within custom range
-						const envelopeStartInRange = Math.max(customStartBeat, envelope.startBeat);
-						const envelopeEndInRange = Math.min(customEndBeat, envelope.startBeat + envelope.duration);
-						const newDuration = envelopeEndInRange - envelopeStartInRange;
-						
-						return {
-							...envelope,
-							startBeat: newStartBeat,
-							duration: Math.max(0, newDuration)
-						};
-					}),
+						tracks: timeline?.tracks || [],
+						clips: (timeline?.clips || [])
+							.filter((clip: any) => {
+								const clipEnd = clip.startBeat + clip.duration;
+								// Include clips that overlap with the custom range
+								return clipEnd > customStartBeat && clip.startBeat < customEndBeat;
+							})
+							.map((clip: any) => {
+								// Shift clip to start from 0
+								const newStartBeat = Math.max(0, clip.startBeat - customStartBeat);
+								// Adjust duration to fit within custom range
+								const clipStartInRange = Math.max(customStartBeat, clip.startBeat);
+								const clipEndInRange = Math.min(customEndBeat, clip.startBeat + clip.duration);
+								const newDuration = clipEndInRange - clipStartInRange;
+								
+								return {
+									...clip,
+									startBeat: newStartBeat,
+									duration: Math.max(0, newDuration)
+								};
+							}),
+						effects: (timeline?.effects || [])
+							.filter((effect: any) => {
+								const effectEnd = effect.startBeat + effect.duration;
+								// Include effects that overlap with the custom range
+								return effectEnd > customStartBeat && effect.startBeat < customEndBeat;
+							})
+							.map((effect: any) => {
+								// Track which timeline effect instances are included so we can slice automation
+								if (effect?.id) {
+									includedTimelineEffectIds.add(effect.id);
+								}
+
+								// Shift effect to start from 0
+								const newStartBeat = Math.max(0, effect.startBeat - customStartBeat);
+								// Adjust duration to fit within custom range
+								const effectStartInRange = Math.max(customStartBeat, effect.startBeat);
+								const effectEndInRange = Math.min(customEndBeat, effect.startBeat + effect.duration);
+								const newDuration = effectEndInRange - effectStartInRange;
+								
+								return {
+									...effect,
+									startBeat: newStartBeat,
+									duration: Math.max(0, newDuration)
+								};
+							}),
+						envelopes: (timeline?.envelopes || [])
+							.filter((envelope: any) => {
+								const envelopeEnd = envelope.startBeat + envelope.duration;
+								// Include envelopes that overlap with the custom range
+								return envelopeEnd > customStartBeat && envelope.startBeat < customEndBeat;
+							})
+							.map((envelope: any) => {
+								// Track which timeline envelope instances are included so we can slice automation
+								if (envelope?.id) {
+									includedTimelineEnvelopeIds.add(envelope.id);
+								}
+
+								// Shift envelope to start from 0
+								const newStartBeat = Math.max(0, envelope.startBeat - customStartBeat);
+								// Adjust duration to fit within custom range
+								const envelopeStartInRange = Math.max(customStartBeat, envelope.startBeat);
+								const envelopeEndInRange = Math.min(customEndBeat, envelope.startBeat + envelope.duration);
+								const newDuration = envelopeEndInRange - envelopeStartInRange;
+								
+								return {
+									...envelope,
+									startBeat: newStartBeat,
+									duration: Math.max(0, newDuration)
+								};
+							}),
 						totalLength: customEndBeat - customStartBeat
 					};
+
 					durationInBeats = customEndBeat - customStartBeat;
 					timelineToUse = customTimeline;
+
+					// Slice automation data to match the custom range and included timeline instances
+					if (project?.automation) {
+						const originalAutomation = project.automation as Record<string, any>;
+						const slicedAutomation: Record<string, any> = {};
+
+						for (const [automationId, automation] of Object.entries(originalAutomation)) {
+							if (!automation || typeof automation !== 'object') continue;
+
+							const targetType = automation.targetType as 'effect' | 'envelope' | undefined;
+							const instanceId = automation.timelineInstanceId as string | undefined;
+
+							// Only keep automation curves that are attached to timeline instances
+							// which are actually included in the custom timeline
+							if (!instanceId) continue;
+
+							const isEffectAutomation =
+								targetType === 'effect' && includedTimelineEffectIds.has(instanceId);
+							const isEnvelopeAutomation =
+								targetType === 'envelope' && includedTimelineEnvelopeIds.has(instanceId);
+
+							if (!isEffectAutomation && !isEnvelopeAutomation) continue;
+
+							// Shift automation points so the custom range starts at beat 0
+							const points = Array.isArray(automation.points) ? automation.points : [];
+							const shiftedPoints = points.map((point: any) => ({
+								...point,
+								beat: (point.beat ?? 0) - customStartBeat
+							}));
+
+							slicedAutomation[automationId] = {
+								...automation,
+								points: shiftedPoints
+							};
+						}
+
+						automationToUse = slicedAutomation;
+					}
 				} else {
 					// No timeline - just export the custom range from standalone instruments
 					durationInBeats = customEndBeat - customStartBeat;
@@ -203,7 +263,7 @@
 				project.patterns,
 				project.effects,
 				project.envelopes,
-				project.automation
+				automationToUse
 			);
 			
 			// Export based on selected format

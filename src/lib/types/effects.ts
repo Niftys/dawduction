@@ -23,19 +23,23 @@ export interface Envelope {
 export interface TimelineEffect {
 	id: string;
 	effectId: string;
-	trackId: string; // Which timeline track this effect belongs to
+	trackId: string; // Which timeline track this effect clip lives on (effect track or envelope track row)
 	startBeat: number;
 	duration: number;
-	patternId?: string; // If specified, applies to this specific pattern (via its trackId)
+	// If specified, apply only to this specific timeline track's audio (per-track insert).
+	// When omitted, the effect is global (applies to all tracks) if placed on an effect track or with no target.
+	targetTrackId?: string;
 }
 
 export interface TimelineEnvelope {
 	id: string;
 	envelopeId: string;
-	trackId: string; // Which timeline track this envelope belongs to
+	trackId: string; // Which timeline track this envelope clip lives on (envelope track row)
 	startBeat: number;
 	duration: number;
-	patternId?: string; // If specified, applies to this specific pattern (via its trackId)
+	// If specified, apply only to this specific timeline track's audio (per-track insert).
+	// When omitted, the envelope is global if placed on an envelope track or with no target.
+	targetTrackId?: string;
 }
 
 /**

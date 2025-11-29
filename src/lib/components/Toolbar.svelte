@@ -573,6 +573,15 @@
 		}
 	}
 
+	async function handleManualSave() {
+		const currentProject = $projectStore;
+		if (!currentProject || !currentProject.id) {
+			alert('Nothing to save yet.');
+			return;
+		}
+		await performSave(currentProject, true);
+	}
+
 	async function handleLeaveWithoutSaving() {
 		showLeaveConfirm = false;
 		await goto('/');
@@ -693,6 +702,17 @@
 					<path d="M2 8L8 2L14 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					<path d="M4 8V13C4 13.5523 4.44772 14 5 14H11C11.5523 14 12 13.5523 12 13V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
 					<path d="M6 14V10C6 9.44772 6.44772 9 7 9H9C9.55228 9 10 9.44772 10 10V14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+				</svg>
+			</button>
+			<button
+				class="save-button"
+				on:click={handleManualSave}
+				title="Save project"
+			>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<path d="M3 2.5C3 2.22386 3.22386 2 3.5 2H10.5L13 4.5V12.5C13 12.7761 12.7761 13 12.5 13H3.5C3.22386 13 3 12.7761 3 12.5V2.5Z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M5 2H9.5V5.5H5V2Z" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+					<path d="M5 13V9H11V13" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
 				</svg>
 			</button>
 		{/if}
@@ -1098,10 +1118,25 @@
 		justify-content: center;
 	}
 
-	.home-button:hover {
+	.home-button:hover,
+	.save-button:hover {
 		background: rgba(255, 255, 255, 0.1);
 		border-color: rgba(255, 255, 255, 0.2);
 		color: #ffffff;
+	}
+
+	.save-button {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		color: rgba(255, 255, 255, 0.7);
+		padding: 0.5rem;
+		border-radius: 4px;
+		cursor: pointer;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-left: 2px;
 	}
 
 	.leave-dialog-overlay {

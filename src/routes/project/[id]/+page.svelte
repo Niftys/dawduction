@@ -691,17 +691,17 @@
 			if (dragData) {
 				const data = JSON.parse(dragData);
 				const isPatternRow = rowType === 'pattern';
-				// If dropped on a pattern row, assign to that pattern
-				const targetPatternId = isPatternRow && patternId ? patternId : undefined;
+				// If dropped on a pattern row, attach to that row's timeline track (per-track insert)
+				const targetTimelineTrackId = isPatternRow && patternId ? patternId : undefined;
 				
 				if (data.type === 'effect' && data.id && rowType === 'effect') {
 					// trackId will be determined in addEffectToTimeline if not provided
-					addEffectToTimeline(data.id, beat, 4, targetPatternId);
+					addEffectToTimeline(data.id, beat, 4, targetTimelineTrackId);
 					draggedEffectId = null;
 					return;
 				} else if (data.type === 'envelope' && data.id && rowType === 'envelope') {
 					// trackId will be determined in addEnvelopeToTimeline if not provided
-					addEnvelopeToTimeline(data.id, beat, 4, targetPatternId);
+					addEnvelopeToTimeline(data.id, beat, 4, targetTimelineTrackId);
 					draggedEnvelopeId = null;
 					return;
 				}
@@ -951,30 +951,31 @@
 		}
 	}
 
-	function addEffectToTimeline(effectId: string, startBeat: number, duration: number, patternId?: string, trackId?: string) {
+	function addEffectToTimeline(effectId: string, startBeat: number, duration: number, targetTimelineTrackId?: string, effectTrackRowId?: string) {
 		if (!project) return;
 		
 		// If no trackId provided, find or create an effect track
-		let targetTrackId = trackId;
-		if (!targetTrackId) {
+		let effectRowId = effectTrackRowId;
+		if (!effectRowId) {
 			const existingTrack = timeline.tracks?.find((t) => t.type === 'effect');
 			if (existingTrack) {
-				targetTrackId = existingTrack.id;
+				effectRowId = existingTrack.id;
 			} else {
 				// Create a new effect track
 				const newTrack = projectStore.createTimelineTrack('effect');
 				projectStore.addTimelineTrack(newTrack);
-				targetTrackId = newTrack.id;
+				effectRowId = newTrack.id;
 			}
 		}
 		
 		const newEffect: TimelineEffect = {
 			id: crypto.randomUUID(),
 			effectId,
-			trackId: targetTrackId,
+			trackId: effectRowId,
 			startBeat: snapToBeat(startBeat),
 			duration,
-			patternId: patternId || undefined // Assign to specific pattern if provided
+			// Per-track insert if provided
+			targetTrackId: targetTimelineTrackId || undefined
 		};
 		projectStore.addTimelineEffect(newEffect);
 		
@@ -984,30 +985,31 @@
 		}
 	}
 
-	function addEnvelopeToTimeline(envelopeId: string, startBeat: number, duration: number, patternId?: string, trackId?: string) {
+	function addEnvelopeToTimeline(envelopeId: string, startBeat: number, duration: number, targetTimelineTrackId?: string, envelopeTrackRowId?: string) {
 		if (!project) return;
 		
 		// If no trackId provided, find or create an envelope track
-		let targetTrackId = trackId;
-		if (!targetTrackId) {
+		let envelopeRowId = envelopeTrackRowId;
+		if (!envelopeRowId) {
 			const existingTrack = timeline.tracks?.find((t) => t.type === 'envelope');
 			if (existingTrack) {
-				targetTrackId = existingTrack.id;
+				envelopeRowId = existingTrack.id;
 			} else {
 				// Create a new envelope track
 				const newTrack = projectStore.createTimelineTrack('envelope');
 				projectStore.addTimelineTrack(newTrack);
-				targetTrackId = newTrack.id;
+				envelopeRowId = newTrack.id;
 			}
 		}
 		
 		const newEnvelope: TimelineEnvelope = {
 			id: crypto.randomUUID(),
 			envelopeId,
-			trackId: targetTrackId,
+			trackId: envelopeRowId,
 			startBeat: snapToBeat(startBeat),
 			duration,
-			patternId: patternId || undefined // Assign to specific pattern if provided
+			// Per-track insert if provided
+			targetTrackId: targetTimelineTrackId || undefined
 		};
 		projectStore.addTimelineEnvelope(newEnvelope);
 		
@@ -1069,6 +1071,10 @@
 		} catch (error) {
 			console.error('[createTimelineTrack] Error creating track:', error);
 		}
+	}
+
+	function updateTimelineTrackName(trackId: string, name: string) {
+		projectStore.updateTimelineTrack(trackId, { name: name.trim() || 'Track' });
 	}
 	
 	function toggleAddTrackMenu() {
@@ -1662,6 +1668,7 @@
 								onAddEffectToTimeline={(effectId, beat, trackId) => addEffectToTimeline(effectId, beat, 4, undefined, trackId)}
 								onAddEnvelopeToTimeline={(envelopeId, beat, trackId) => addEnvelopeToTimeline(envelopeId, beat, 4, undefined, trackId)}
 								{findPatternById}
+								onUpdateTrackName={updateTimelineTrackName}
 							/>
 						{/each}
 					</div>

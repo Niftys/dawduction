@@ -252,6 +252,23 @@
 	white-space: nowrap;
 }
 
+.track-name input {
+	width: 100%;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 4px;
+	background: rgba(0, 0, 0, 0.4);
+	color: #e8e8e8;
+	font-size: 12px;
+	padding: 4px 6px;
+	outline: none;
+	text-align: center;
+}
+
+.track-name input:focus {
+	border-color: #7ab8ff;
+	box-shadow: 0 0 0 1px rgba(122, 184, 255, 0.4);
+}
+
 .track-volume-control {
 	width: 30px !important;
 	height: 50px !important;

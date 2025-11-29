@@ -23,13 +23,13 @@
 
 	$: effects = project?.effects || [];
 	$: envelopes = project?.envelopes || [];
-	$: patterns = project?.patterns || [];
 	$: timeline = project?.timeline;
+	$: patternTracks = timeline?.tracks?.filter((t: any) => t.type === 'pattern') || [];
 	
 	$: selectedEffect = selectedEffectId ? effects.find((e: Effect) => e.id === selectedEffectId) : null;
 	$: selectedEnvelope = selectedEnvelopeId ? envelopes.find((e: Envelope) => e.id === selectedEnvelopeId) : null;
 	
-	// Get the timeline effect/envelope instance to see pattern assignment
+	// Get the timeline effect/envelope instance
 	$: selectedTimelineEffect = selectedTimelineEffectId && timeline?.effects 
 		? timeline.effects.find((te: any) => te.id === selectedTimelineEffectId) 
 		: null;
@@ -110,21 +110,19 @@
 		}
 	}
 
-	function updateTimelineEffectPattern(patternId: string | null) {
+	function updateTimelineEffectTargetTrack(trackId: string | null) {
 		if (!selectedTimelineEffect) return;
 		projectStore.updateTimelineEffect(selectedTimelineEffect.id, {
-			patternId: patternId || undefined
+			targetTrackId: trackId || undefined
 		});
-		// Reload project if playing
 		window.dispatchEvent(new CustomEvent('reloadProject'));
 	}
 
-	function updateTimelineEnvelopePattern(patternId: string | null) {
+	function updateTimelineEnvelopeTargetTrack(trackId: string | null) {
 		if (!selectedTimelineEnvelope) return;
 		projectStore.updateTimelineEnvelope(selectedTimelineEnvelope.id, {
-			patternId: patternId || undefined
+			targetTrackId: trackId || undefined
 		});
-		// Reload project if playing
 		window.dispatchEvent(new CustomEvent('reloadProject'));
 	}
 
@@ -155,39 +153,37 @@
 		</div>
 		<div class="properties-content">
 			{#if selectedTimelineEffect}
-				<!-- Pattern Assignment for Timeline Effect -->
 				<div class="pattern-assignment">
 					<label>
-						Apply to Pattern:
+						Apply to Track:
 						<select
-							value={selectedTimelineEffect.patternId || ''}
-							on:change={(e) => updateTimelineEffectPattern(e.currentTarget.value || null)}
+							value={selectedTimelineEffect.targetTrackId || ''}
+							on:change={(e) => updateTimelineEffectTargetTrack(e.currentTarget.value || null)}
 						>
-							<option value="">All Patterns (Global)</option>
-							{#each patterns as pattern}
-								<option value={pattern.id}>{pattern.name}</option>
+							<option value="">All Tracks (Global)</option>
+							{#each patternTracks as track}
+								<option value={track.id}>{track.name}</option>
 							{/each}
 						</select>
 					</label>
-					<p class="help-text">Select which pattern this effect applies to, or leave as "All Patterns" for global effect.</p>
+					<p class="help-text">Choose a pattern track for this effect, or leave as \"All Tracks\" for a global effect.</p>
 				</div>
 			{/if}
 			{#if selectedTimelineEnvelope}
-				<!-- Pattern Assignment for Timeline Envelope -->
 				<div class="pattern-assignment">
 					<label>
-						Apply to Pattern:
+						Apply to Track:
 						<select
-							value={selectedTimelineEnvelope.patternId || ''}
-							on:change={(e) => updateTimelineEnvelopePattern(e.currentTarget.value || null)}
+							value={selectedTimelineEnvelope.targetTrackId || ''}
+							on:change={(e) => updateTimelineEnvelopeTargetTrack(e.currentTarget.value || null)}
 						>
-							<option value="">All Patterns (Global)</option>
-							{#each patterns as pattern}
-								<option value={pattern.id}>{pattern.name}</option>
+							<option value="">All Tracks (Global)</option>
+							{#each patternTracks as track}
+								<option value={track.id}>{track.name}</option>
 							{/each}
 						</select>
 					</label>
-					<p class="help-text">Select which pattern this envelope applies to, or leave as "All Patterns" for global envelope.</p>
+					<p class="help-text">Choose a pattern track for this envelope, or leave as \"All Tracks\" for a global envelope.</p>
 				</div>
 			{/if}
 			{#if selectedEffect}

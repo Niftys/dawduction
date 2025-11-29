@@ -94,7 +94,7 @@ class ProjectManager {
 		const timelineTracks = (timelineData && timelineData.tracks) ? timelineData.tracks : [];
 		// Pass automation data to effects processor
 		this.processor.effectsProcessor.initialize(effects || [], timelineEffects, this.patternToTrackId, this.timelineTrackToAudioTracks, this.processor, timelineTracks, automation || null);
-		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor);
+		this.processor.envelopesProcessor.initialize(envelopes || [], timelineEnvelopes, this.patternToTrackId, timelineTracks, this.processor, this.timelineTrackToAudioTracks);
 	}
 
 	getTrack(trackId) {
