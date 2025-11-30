@@ -204,6 +204,7 @@
 	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
 	position: relative;
 	cursor: crosshair;
+	transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
 .pattern-row.drag-over {
@@ -420,7 +421,7 @@
 	align-items: center;
 	justify-content: space-between;
 	padding: 0 8px;
-	transition: all 0.1s ease;
+	transition: opacity 0.15s ease, transform 0.15s ease, left 0.1s ease, width 0.1s ease;
 	overflow: hidden;
 	user-select: none;
 }

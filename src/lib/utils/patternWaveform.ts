@@ -267,26 +267,38 @@ export function generatePatternWaveform(
 		}
 		
 		// Second pass: generate audio for all active notes, respecting note-off events
+		// Pre-calculate envelope parameters once (they're the same for all notes of this instrument)
+		const envelopeParams = getEnvelopeParams(settings);
+		const totalDuration = envelopeParams.attack + envelopeParams.decay + envelopeParams.release;
+		const fadeOutSamples = Math.max(0.1 * VISUALIZATION_SAMPLE_RATE, envelopeParams.release * 0.5);
+		
 		for (const [noteId, note] of activeNotes.entries()) {
 			const { startSample, endSample, pitch, velocity, filterState } = note;
 			
 			// Apply instrument volume, event velocity, and track volume
 			const baseVolume = (instrument.volume ?? 1.0) * velocity * trackVolume;
 			
-			// Calculate ADSR envelope parameters
-			const envelopeParams = getEnvelopeParams(settings);
-			const totalDuration = envelopeParams.attack + envelopeParams.decay + envelopeParams.release;
-			const fadeOutSamples = Math.max(0.1 * VISUALIZATION_SAMPLE_RATE, envelopeParams.release * 0.5);
-			
 			// Check if this note was cut off
 			const cutOffAt = note.cutOffAt;
+			const cutOffOffset = cutOffAt !== undefined ? cutOffAt - startSample : undefined;
+			
+			// Pre-calculate frequency and phase increment for this note (performance optimization)
+			const frequency = 440 * Math.pow(2, (pitch - 69) / 12);
+			const phaseIncrement = 2 * Math.PI * frequency / VISUALIZATION_SAMPLE_RATE;
+			
+			// Initialize phase accumulator (start at 0, increment each sample)
+			let phase = 0;
+			
+			// Early exit optimization: calculate envelope range where note is audible
+			// Skip samples where envelope is definitely zero
+			const maxEnvelopeSamples = Math.ceil(totalDuration + fadeOutSamples);
+			const effectiveEndSample = Math.min(endSample, startSample + maxEnvelopeSamples);
 			
 			// Generate audio samples for this note
-			for (let sample = startSample; sample < endSample && sample < patternCycleSamples; sample++) {
+			for (let sample = startSample; sample < effectiveEndSample && sample < patternCycleSamples; sample++) {
 				const sampleOffset = sample - startSample;
 				
 				// Calculate ADSR envelope using shared utility
-				const cutOffOffset = cutOffAt !== undefined ? cutOffAt - startSample : undefined;
 				const envelope = calculateEnvelope(
 					sampleOffset, 
 					envelopeParams, 
@@ -298,13 +310,16 @@ export function generatePatternWaveform(
 				
 				// Skip if envelope is effectively zero (prevents generating audio during silence)
 				if (envelope < 0.0001) {
+					// Still increment phase to maintain accuracy for next sample, but skip audio generation
+					phase += phaseIncrement;
+					// Normalize phase periodically to prevent overflow (keep in reasonable range)
+					if (phase > 2 * Math.PI * 1000) {
+						phase = phase % (2 * Math.PI);
+					}
 					continue;
 				}
 				
-				// Generate oscillator waveform
-				const frequency = 440 * Math.pow(2, (pitch - 69) / 12);
-				const phase = sampleOffset * 2 * Math.PI * frequency / VISUALIZATION_SAMPLE_RATE;
-				
+				// Generate oscillator waveform using accumulated phase
 				let oscillatorValue = generateOscillator(phase, instrumentType, settings);
 				
 				// Apply low-pass filter if filter settings exist
@@ -320,6 +335,14 @@ export function generatePatternWaveform(
 				// Only add if value is finite and non-zero
 				if (isFinite(sampleValue) && Math.abs(sampleValue) > 0.0001) {
 					instrumentBuffer[sample] += sampleValue;
+				}
+				
+				// Increment phase for next sample (performance optimization - use increment instead of recalculating)
+				phase += phaseIncrement;
+				// Normalize phase periodically to prevent overflow (keep in reasonable range)
+				// Only normalize when phase gets very large to avoid unnecessary modulo operations
+				if (phase > 2 * Math.PI * 1000) {
+					phase = phase % (2 * Math.PI);
 				}
 			}
 		}

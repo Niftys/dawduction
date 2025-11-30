@@ -8,6 +8,11 @@ import type { UpdateFn, GetCurrent } from './types';
  * Handles timeline tracks, clips, effects, and envelopes
  */
 
+// Performance limits to prevent excessive data
+const MAX_TIMELINE_LENGTH = 10000; // Maximum timeline length in beats
+const MAX_CLIPS_PER_TRACK = 500; // Maximum clips per track
+const MAX_TOTAL_CLIPS = 2000; // Maximum total clips across all tracks
+
 export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent) {
 	return {
 		// Timeline clip management
@@ -15,10 +20,32 @@ export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 			updateFn((project) => {
 				if (!project) return project;
 				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
+				
+				// Performance check: Limit total clips
+				const currentClips = timeline.clips || [];
+				if (currentClips.length >= MAX_TOTAL_CLIPS) {
+					console.warn(`[Timeline] Maximum total clips limit reached (${MAX_TOTAL_CLIPS}). Cannot add more clips.`);
+					return project;
+				}
+				
+				// Performance check: Limit clips per track
+				const clipsOnTrack = currentClips.filter((c: TimelineClip) => c.trackId === clip.trackId);
+				if (clipsOnTrack.length >= MAX_CLIPS_PER_TRACK) {
+					console.warn(`[Timeline] Maximum clips per track limit reached (${MAX_CLIPS_PER_TRACK}) for track ${clip.trackId}. Cannot add more clips.`);
+					return project;
+				}
+				
+				// Performance check: Limit timeline length
+				const newEndBeat = clip.startBeat + clip.duration;
+				if (newEndBeat > MAX_TIMELINE_LENGTH) {
+					console.warn(`[Timeline] Maximum timeline length reached (${MAX_TIMELINE_LENGTH} beats). Cannot add clip beyond this limit.`);
+					return project;
+				}
+				
 				const updatedTimeline = {
 					...timeline,
-					clips: [...(timeline.clips || []), clip],
-					totalLength: Math.max(timeline.totalLength, clip.startBeat + clip.duration)
+					clips: [...currentClips, clip],
+					totalLength: Math.min(Math.max(timeline.totalLength, newEndBeat), MAX_TIMELINE_LENGTH)
 				};
 				return {
 					...project,
@@ -29,20 +56,39 @@ export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 		updateTimelineClip: (clipId: string, updates: Partial<TimelineClip>) => {
 			updateFn((project) => {
 				if (!project || !project.timeline) return project;
+				
+				// Find the clip being updated
+				const clip = project.timeline.clips.find((c: TimelineClip) => c.id === clipId);
+				if (!clip) return project;
+				
+				// Apply updates to create new clip state
+				const updatedClip = { ...clip, ...updates };
+				
+				// Performance check: Limit timeline length
+				const newEndBeat = updatedClip.startBeat + updatedClip.duration;
+				if (newEndBeat > MAX_TIMELINE_LENGTH) {
+					console.warn(`[Timeline] Cannot move/resize clip beyond maximum timeline length (${MAX_TIMELINE_LENGTH} beats).`);
+					// Clamp the clip to the maximum length
+					if (updatedClip.startBeat >= MAX_TIMELINE_LENGTH) {
+						updatedClip.startBeat = Math.max(0, MAX_TIMELINE_LENGTH - updatedClip.duration);
+					}
+					updatedClip.duration = Math.min(updatedClip.duration, MAX_TIMELINE_LENGTH - updatedClip.startBeat);
+				}
+				
 				const updatedTimeline = {
 					...project.timeline,
-					clips: project.timeline.clips.map((clip: TimelineClip) =>
-						clip.id === clipId ? { ...clip, ...updates } : clip
+					clips: project.timeline.clips.map((c: TimelineClip) =>
+						c.id === clipId ? updatedClip : c
 					),
 					totalLength: project.timeline.totalLength
 				};
-				// Recalculate total length
+				// Recalculate total length (clamped to max)
 				if (updates.startBeat !== undefined || updates.duration !== undefined) {
 					const maxEnd = Math.max(
 						...updatedTimeline.clips.map((c: TimelineClip) => c.startBeat + c.duration),
 						updatedTimeline.totalLength
 					);
-					updatedTimeline.totalLength = maxEnd;
+					updatedTimeline.totalLength = Math.min(maxEnd, MAX_TIMELINE_LENGTH);
 				}
 				return {
 					...project,
@@ -67,11 +113,18 @@ export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 			updateFn((project) => {
 				if (!project) return project;
 				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
+				
+				// Performance check: Limit timeline length
+				const clampedLength = Math.min(length, MAX_TIMELINE_LENGTH);
+				if (length > MAX_TIMELINE_LENGTH) {
+					console.warn(`[Timeline] Timeline length limited to ${MAX_TIMELINE_LENGTH} beats for performance.`);
+				}
+				
 				return {
 					...project,
 					timeline: {
 						...timeline,
-						totalLength: Math.max(length, timeline.totalLength)
+						totalLength: Math.min(Math.max(clampedLength, timeline.totalLength), MAX_TIMELINE_LENGTH)
 					}
 				};
 			});
@@ -81,10 +134,18 @@ export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 			updateFn((project) => {
 				if (!project) return project;
 				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
+				
+				// Performance check: Limit timeline length
+				const newEndBeat = effect.startBeat + effect.duration;
+				if (newEndBeat > MAX_TIMELINE_LENGTH) {
+					console.warn(`[Timeline] Maximum timeline length reached (${MAX_TIMELINE_LENGTH} beats). Cannot add effect beyond this limit.`);
+					return project;
+				}
+				
 				const updatedTimeline = {
 					...timeline,
 					effects: [...(timeline.effects || []), effect],
-					totalLength: Math.max(timeline.totalLength, effect.startBeat + effect.duration)
+					totalLength: Math.min(Math.max(timeline.totalLength, newEndBeat), MAX_TIMELINE_LENGTH)
 				};
 				return {
 					...project,
@@ -134,10 +195,18 @@ export function createTimelineModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 			updateFn((project) => {
 				if (!project) return project;
 				const timeline = project.timeline || { tracks: [], clips: [], effects: [], envelopes: [], totalLength: 64 };
+				
+				// Performance check: Limit timeline length
+				const newEndBeat = envelope.startBeat + envelope.duration;
+				if (newEndBeat > MAX_TIMELINE_LENGTH) {
+					console.warn(`[Timeline] Maximum timeline length reached (${MAX_TIMELINE_LENGTH} beats). Cannot add envelope beyond this limit.`);
+					return project;
+				}
+				
 				const updatedTimeline = {
 					...timeline,
 					envelopes: [...(timeline.envelopes || []), envelope],
-					totalLength: Math.max(timeline.totalLength, envelope.startBeat + envelope.duration)
+					totalLength: Math.min(Math.max(timeline.totalLength, newEndBeat), MAX_TIMELINE_LENGTH)
 				};
 				return {
 					...project,

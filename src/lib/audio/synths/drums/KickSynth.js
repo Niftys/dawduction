@@ -13,6 +13,7 @@ class KickSynth {
 		this.settings = settings || {};
 		this.phase = 0; // Continuous phase accumulator (0-2π)
 		this.phase2 = 0; // Second oscillator phase accumulator (0-2π)
+		this.phase3 = 0; // Third oscillator for impact transient
 		this.envelopePhase = 0;
 		this.isActive = false;
 		
@@ -38,6 +39,7 @@ class KickSynth {
 		// Reset to 0 to start from beginning of waveform
 		this.phase = 0;
 		this.phase2 = 0;
+		this.phase3 = 0;
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
@@ -69,7 +71,7 @@ class KickSynth {
 		// Realistic kick drum frequencies
 		// Real kick drums have fundamental around 40-60Hz, with quick pitch drop
 		// Higher initial frequency for more punch and impact
-		const startFreq = 75 * pitchMultiplier; // Initial frequency (higher for more attack punch)
+		const startFreq = 90 * pitchMultiplier; // Initial frequency (higher for more attack punch)
 		const fundamentalFreq = 50 * pitchMultiplier; // Main body frequency (typical kick fundamental)
 		const endFreq = 40 * pitchMultiplier; // End frequency (slight drop)
 		
@@ -127,6 +129,29 @@ class KickSynth {
 		
 		// Combine oscillators with slight phase offset for more character
 		const tonalBody = (sine1 * 0.6 + sine2 * 0.4);
+		
+		// Add impact transient - high-frequency tonal component for realistic kick attack
+		// This gives the kick that initial "thump" and "click" like real drums
+		// Use a tonal component instead of noise to avoid clicks
+		const impactFreq = 400 * pitchMultiplier * Math.exp(-this.envelopePhase / (decay * 0.15));
+		const phaseIncrement3 = 2 * Math.PI * impactFreq / this.sampleRate;
+		const impactTone = Math.sin(this.phase3) * 0.3;
+		
+		// Accumulate impact phase
+		this.phase3 += phaseIncrement3;
+		if (this.phase3 > wrapRange) {
+			this.phase3 = this.phase3 % twoPi;
+		}
+		
+		// Impact transient envelope - very short, only during attack phase
+		// This creates the initial "click" and "thump" of a real kick
+		let impactEnvelope = 0;
+		const impactDuration = Math.min(attack * 0.4, 0.015 * this.sampleRate); // Very short, max 15ms
+		if (this.envelopePhase < impactDuration) {
+			const impactPhase = this.envelopePhase / impactDuration;
+			// Quick attack, fast decay for sharp transient
+			impactEnvelope = Math.exp(-impactPhase * 10);
+		}
 
 		// Extended total duration with long fade-out to prevent clicks
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.3); // 100ms minimum fade-out
@@ -141,7 +166,7 @@ class KickSynth {
 			// More aggressive attack for punch and impact
 			const attackPhase = this.envelopePhase / attack;
 			// Faster exponential curve for more immediate punch
-			envelope = 1 - Math.exp(-attackPhase * 8);
+			envelope = 1 - Math.exp(-attackPhase * 10);
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			
@@ -170,8 +195,13 @@ class KickSynth {
 		this.envelopePhase++;
 		
 		// Apply envelope to clean tonal body
-		// Increased gain from 0.7 to 1.0 for more impact and presence
-		let output = tonalBody * envelope * this.velocity * 1.0;
+		// Increased gain to match other drums' volume levels
+		let output = tonalBody * envelope * this.velocity * 2;
+		
+		// Add impact transient - mix the high-frequency tonal component with the body
+		// This gives the kick that realistic initial attack and impact without clicks
+		const impactComponent = impactTone * impactEnvelope * this.velocity * 1;
+		output += impactComponent;
 		
 		// DC blocking filter to remove any DC offset that could cause clicks
 		// Simple one-pole high-pass filter
@@ -206,18 +236,23 @@ class KickSynth {
 			this.wasActive = false;
 		}
 		
-		// Additional smoothing: apply a very gentle low-pass to prevent any remaining clicks
-		// This helps smooth out any remaining discontinuities
-		if (this.envelopePhase < 10) {
-			// Very gentle fade-in at the very start (first 10 samples)
-			const startFade = this.envelopePhase / 10;
-			output *= startFade;
+		// Smooth fade-out at the end to prevent clicks
+		// Add an extra fade-out phase before stopping
+		const finalFadeOutSamples = Math.max(20, 0.001 * this.sampleRate); // At least 20 samples or 1ms
+		if (this.envelopePhase >= extendedDuration - finalFadeOutSamples) {
+			const fadeOutPhase = (this.envelopePhase - (extendedDuration - finalFadeOutSamples)) / finalFadeOutSamples;
+			// Smooth exponential fade-out
+			const fadeOutGain = Math.exp(-fadeOutPhase * 5);
+			output *= fadeOutGain;
 		}
 		
 		// Only stop when envelope is done and we're very close to zero
 		if (this.envelopePhase >= extendedDuration) {
 			if (Math.abs(output) < 0.0001) {
 				this.isActive = false;
+				// Reset filter states when stopping to prevent clicks on next trigger
+				this.dcFilterState.x1 = 0;
+				this.dcFilterState.y1 = 0;
 				return 0;
 			}
 		}

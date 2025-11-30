@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { fade } from 'svelte/transition';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { playbackStore } from '$lib/stores/playbackStore';
 	import { selectionStore } from '$lib/stores/selectionStore';
@@ -1896,6 +1897,7 @@
 						totalLength={timeline.totalLength}
 						pixelsPerBeat={PIXELS_PER_BEAT}
 						{zoomLevel}
+						viewportElement={timelineAreaElement}
 						bind:showAddTrackMenu
 						onZoomWheel={handleTimelineWheel}
 						onCreateTrack={createTimelineTrack}
@@ -1914,13 +1916,14 @@
 
 					<div class="pattern-rows">
 						<!-- Render timeline tracks sorted by order -->
-						{#each timelineTracks.sort((a, b) => a.order - b.order) as track}
+						{#each timelineTracks.sort((a, b) => a.order - b.order) as track (track.id)}
 							{@const trackClips = getClipsForTrack(track.id)}
 							{@const trackEffects = getEffectsForTrack(track.id)}
 							{@const trackEnvelopes = getEnvelopesForTrack(track.id)}
 							{@const trackPattern = track.type === 'pattern' && track.patternId ? findPatternById(track.patternId) : null}
 							
-							<TimelineTrackRow
+							<div transition:fade={{ duration: 200 }}>
+								<TimelineTrackRow
 								{track}
 								{trackClips}
 								{trackEffects}
@@ -1932,6 +1935,7 @@
 								{timeline}
 								pixelsPerBeat={PIXELS_PER_BEAT}
 								totalLength={timeline.totalLength}
+								viewportElement={timelineAreaElement}
 								{dragOverRow}
 								{dragOverTrackId}
 								{draggedTrackId}
@@ -2053,6 +2057,7 @@
 								{findPatternById}
 								onUpdateTrackName={updateTimelineTrackName}
 							/>
+							</div>
 						{/each}
 					</div>
 				</div>

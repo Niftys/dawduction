@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { generateRulerMarks, type RulerMark } from '$lib/utils/timelineRuler';
+	import { generateRulerMarks, calculateVisibleBeatRange, type RulerMark } from '$lib/utils/timelineRuler';
 	import { TIMELINE_CONSTANTS, formatZoomDisplay } from '$lib/utils/timelineUtils';
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { tick } from 'svelte';
@@ -9,6 +9,7 @@
 		pixelsPerBeat,
 		zoomLevel,
 		showAddTrackMenu,
+		viewportElement,
 		onZoomWheel = () => {},
 		onCreateTrack,
 		onToggleAddTrackMenu,
@@ -18,14 +19,77 @@
 		pixelsPerBeat: number;
 		zoomLevel: number;
 		showAddTrackMenu: boolean;
+		viewportElement?: HTMLElement | null;
 		onZoomWheel?: (e: WheelEvent) => void;
 		onCreateTrack: (type: 'pattern' | 'effect' | 'envelope') => void;
 		onToggleAddTrackMenu: () => void;
 		onRulerClick?: ((e: MouseEvent) => void) | undefined;
 	} = $props();
 
-	const rulerMarks = $derived(generateRulerMarks(totalLength, pixelsPerBeat));
+	// Track viewport scroll position for performance optimization
+	let scrollLeft = $state(0);
+	let viewportWidth = $state(0);
+
+	// Calculate visible beat range based on viewport
+	const viewportRange = $derived.by(() => {
+		if (!viewportElement || viewportWidth === 0) {
+			// If no viewport element, generate all marks (for short timelines)
+			return totalLength <= 2000 ? undefined : { startBeat: 0, endBeat: Math.min(2000, totalLength) };
+		}
+		return calculateVisibleBeatRange(scrollLeft, viewportWidth, pixelsPerBeat, totalLength);
+	});
+
+	// Only generate marks for visible range
+	const rulerMarks = $derived(generateRulerMarks(totalLength, pixelsPerBeat, viewportRange));
 	const zoomDisplay = $derived(formatZoomDisplay(zoomLevel, TIMELINE_CONSTANTS.BASE_ZOOM));
+
+	// Debounce viewport updates to prevent excessive recalculations
+	let viewportUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
+	
+	// Update viewport tracking on scroll
+	function updateViewport() {
+		if (viewportElement) {
+			scrollLeft = viewportElement.scrollLeft;
+			viewportWidth = viewportElement.clientWidth;
+		}
+	}
+	
+	// Debounced viewport update
+	function debouncedUpdateViewport() {
+		if (viewportUpdateTimeout) {
+			clearTimeout(viewportUpdateTimeout);
+		}
+		viewportUpdateTimeout = setTimeout(() => {
+			updateViewport();
+			viewportUpdateTimeout = null;
+		}, 16); // ~60fps update rate
+	}
+
+	// Set up scroll listener with debouncing
+	$effect(() => {
+		if (!viewportElement) return;
+		
+		updateViewport();
+		
+		const handleScroll = () => debouncedUpdateViewport();
+		const handleResize = () => debouncedUpdateViewport();
+		
+		viewportElement.addEventListener('scroll', handleScroll, { passive: true });
+		window.addEventListener('resize', handleResize, { passive: true });
+		
+		// Use ResizeObserver for more accurate viewport tracking
+		const resizeObserver = new ResizeObserver(() => debouncedUpdateViewport());
+		resizeObserver.observe(viewportElement);
+		
+		return () => {
+			if (viewportUpdateTimeout) {
+				clearTimeout(viewportUpdateTimeout);
+			}
+			viewportElement.removeEventListener('scroll', handleScroll);
+			window.removeEventListener('resize', handleResize);
+			resizeObserver.disconnect();
+		};
+	});
 
 	let triggerElement: HTMLElement;
 	let menuElement: HTMLDivElement;

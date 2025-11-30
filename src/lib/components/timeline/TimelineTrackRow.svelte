@@ -4,7 +4,7 @@
 	import type { TimelineEffect, TimelineEnvelope } from '$lib/types/effects';
 	import type { Pattern, Effect, Envelope } from '$lib/types/effects';
 	import { TIMELINE_CONSTANTS, beatToPixel, pixelToBeat, snapToBeat } from '$lib/utils/timelineUtils';
-	import { generateGridLines, type GridLine } from '$lib/utils/timelineRuler';
+	import { generateGridLines, calculateVisibleBeatRange, type GridLine } from '$lib/utils/timelineRuler';
 	import TimelineClipComponent from './TimelineClip.svelte';
 	import TimelineEffectClip from './TimelineEffectClip.svelte';
 	import TimelineEnvelopeClip from './TimelineEnvelopeClip.svelte';
@@ -21,6 +21,7 @@
 		timeline,
 		pixelsPerBeat,
 		totalLength,
+		viewportElement,
 		dragOverRow,
 		dragOverTrackId,
 		draggedTrackId,
@@ -67,6 +68,7 @@
 		timeline: any;
 		pixelsPerBeat: number;
 		totalLength: number;
+		viewportElement?: HTMLElement | null;
 		dragOverRow: string | null;
 		dragOverTrackId: string | null;
 		draggedTrackId: string | null;
@@ -113,7 +115,132 @@
 		}
 	});
 
-	const gridLines = $derived(generateGridLines(totalLength, pixelsPerBeat));
+	// Track viewport scroll position for performance optimization
+	let scrollLeft = $state(0);
+	let viewportWidth = $state(0);
+
+	// Calculate visible beat range based on viewport
+	const viewportRange = $derived.by(() => {
+		if (!viewportElement || viewportWidth === 0) {
+			// If no viewport element, generate all lines (for short timelines)
+			return totalLength <= 2000 ? undefined : { startBeat: 0, endBeat: Math.min(2000, totalLength) };
+		}
+		return calculateVisibleBeatRange(scrollLeft, viewportWidth, pixelsPerBeat, totalLength);
+	});
+
+	// Only generate grid lines for visible range
+	const gridLines = $derived(generateGridLines(totalLength, pixelsPerBeat, viewportRange));
+
+	// Filter clips/effects/envelopes to only render visible ones
+	// Use a more generous range to prevent flickering
+	const visibleClips = $derived.by(() => {
+		if (!viewportRange || trackClips.length === 0) return trackClips;
+		
+		// Performance limit: Don't render more than 100 clips per track
+		if (trackClips.length > 100) {
+			console.warn(`[TimelineTrackRow] Track ${track.id} has ${trackClips.length} clips, limiting to 100 for performance`);
+			return trackClips.slice(0, 100);
+		}
+		
+		// Filter clips that intersect with visible range (with generous padding to prevent flickering)
+		// Add extra padding to prevent clips from disappearing too early
+		const padding = 8; // Extra beats of padding
+		const expandedStart = viewportRange.startBeat - padding;
+		const expandedEnd = viewportRange.endBeat + padding;
+		
+		return trackClips.filter(clip => {
+			const clipEnd = clip.startBeat + clip.duration;
+			return clipEnd >= expandedStart && clip.startBeat <= expandedEnd;
+		});
+	});
+
+	const visibleEffects = $derived.by(() => {
+		if (!viewportRange || trackEffects.length === 0) return trackEffects;
+		
+		// Performance limit: Don't render more than 100 effects per track
+		if (trackEffects.length > 100) {
+			console.warn(`[TimelineTrackRow] Track ${track.id} has ${trackEffects.length} effects, limiting to 100 for performance`);
+			return trackEffects.slice(0, 100);
+		}
+		
+		// Filter effects that intersect with visible range (with generous padding)
+		const padding = 8;
+		const expandedStart = viewportRange.startBeat - padding;
+		const expandedEnd = viewportRange.endBeat + padding;
+		
+		return trackEffects.filter(effect => {
+			const effectEnd = effect.startBeat + effect.duration;
+			return effectEnd >= expandedStart && effect.startBeat <= expandedEnd;
+		});
+	});
+
+	const visibleEnvelopes = $derived.by(() => {
+		if (!viewportRange || trackEnvelopes.length === 0) return trackEnvelopes;
+		
+		// Performance limit: Don't render more than 100 envelopes per track
+		if (trackEnvelopes.length > 100) {
+			console.warn(`[TimelineTrackRow] Track ${track.id} has ${trackEnvelopes.length} envelopes, limiting to 100 for performance`);
+			return trackEnvelopes.slice(0, 100);
+		}
+		
+		// Filter envelopes that intersect with visible range (with generous padding)
+		const padding = 8;
+		const expandedStart = viewportRange.startBeat - padding;
+		const expandedEnd = viewportRange.endBeat + padding;
+		
+		return trackEnvelopes.filter(envelope => {
+			const envelopeEnd = envelope.startBeat + envelope.duration;
+			return envelopeEnd >= expandedStart && envelope.startBeat <= expandedEnd;
+		});
+	});
+
+	// Debounce viewport updates to prevent excessive recalculations
+	let viewportUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
+	
+	// Update viewport tracking on scroll
+	function updateViewport() {
+		if (viewportElement) {
+			scrollLeft = viewportElement.scrollLeft;
+			viewportWidth = viewportElement.clientWidth;
+		}
+	}
+	
+	// Debounced viewport update
+	function debouncedUpdateViewport() {
+		if (viewportUpdateTimeout) {
+			clearTimeout(viewportUpdateTimeout);
+		}
+		viewportUpdateTimeout = setTimeout(() => {
+			updateViewport();
+			viewportUpdateTimeout = null;
+		}, 16); // ~60fps update rate
+	}
+
+	// Set up scroll listener with debouncing
+	$effect(() => {
+		if (!viewportElement) return;
+		
+		updateViewport();
+		
+		const handleScroll = () => debouncedUpdateViewport();
+		const handleResize = () => debouncedUpdateViewport();
+		
+		viewportElement.addEventListener('scroll', handleScroll, { passive: true });
+		window.addEventListener('resize', handleResize, { passive: true });
+		
+		// Use ResizeObserver for more accurate viewport tracking
+		const resizeObserver = new ResizeObserver(() => debouncedUpdateViewport());
+		resizeObserver.observe(viewportElement);
+		
+		return () => {
+			if (viewportUpdateTimeout) {
+				clearTimeout(viewportUpdateTimeout);
+			}
+			viewportElement.removeEventListener('scroll', handleScroll);
+			window.removeEventListener('resize', handleResize);
+			resizeObserver.disconnect();
+		};
+	});
 	const defaultColors = $derived({
 		pattern: '#7ab8ff',
 		effect: '#9b59b6',
@@ -320,7 +447,7 @@
 		{#if track.type === 'pattern'}
 			<!-- Pattern clips -->
 			{#key pixelsPerBeat}
-				{#each trackClips as clip}
+				{#each visibleClips as clip (clip.id)}
 					{@const clipPattern = findPatternById(clip.patternId)}
 					{#if clipPattern}
 						<TimelineClipComponent
@@ -352,7 +479,7 @@
 		{:else if track.type === 'effect'}
 			<!-- Effect clips -->
 			{#key pixelsPerBeat}
-				{#each trackEffects as timelineEffect}
+				{#each visibleEffects as timelineEffect (timelineEffect.id)}
 					{@const effect = effects.find((e) => e.id === timelineEffect.effectId)}
 					{#if effect}
 						{@const automationCurves = getAutomationCurvesForEffect(effect.id, timelineEffect.id)}
@@ -388,7 +515,7 @@
 		{:else if track.type === 'envelope'}
 			<!-- Envelope clips -->
 			{#key pixelsPerBeat}
-				{#each trackEnvelopes as timelineEnvelope}
+				{#each visibleEnvelopes as timelineEnvelope (timelineEnvelope.id)}
 					{@const envelope = envelopes.find((e) => e.id === timelineEnvelope.envelopeId)}
 					{#if envelope}
 						<TimelineEnvelopeClip
