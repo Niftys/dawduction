@@ -18,13 +18,20 @@
 	let selection: any;
 	selectionStore.subscribe((s) => (selection = s));
 
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
-	export let selectedInstrument: any = undefined;
-	export let trackSettings: Record<string, any>;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedInstrument = undefined,
+		trackSettings
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedInstrument?: any;
+		trackSettings: Record<string, any>;
+	} = $props();
 	
 	// Get the active item (selected instrument from pattern, or standalone instrument)
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));

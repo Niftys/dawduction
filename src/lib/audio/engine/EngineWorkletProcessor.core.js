@@ -69,7 +69,31 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	}
 
 	setTempo(bpm) {
+		// If playing, preserve the current beat position when BPM changes
+		const wasPlaying = this.playbackController.isTransportPlaying();
+		let currentBeat = 0;
+		
+		if (wasPlaying && this.currentTime > 0) {
+			// Calculate current beat position before changing BPM
+			currentBeat = this.currentTime / this.playbackController.samplesPerBeat;
+		}
+		
+		// Update BPM
 		this.playbackController.setTempo(bpm);
+		
+		// If playing, adjust currentTime to maintain the same beat position
+		if (wasPlaying && currentBeat > 0) {
+			this.currentTime = currentBeat * this.playbackController.samplesPerBeat;
+		}
+		
+		// Clear scheduled events and reset scheduler state
+		// This ensures events are re-scheduled with the new BPM
+		if (this.eventScheduler) {
+			this.eventScheduler.clear();
+			// Force immediate re-scheduling on next process call
+			this.eventScheduler._lastScheduledBeat = -1;
+			this.eventScheduler._lastCheckedEventIndex = -1;
+		}
 	}
 
 	setTransport(state, position = 0) {

@@ -2,41 +2,48 @@
 	import { projectStore } from '$lib/stores/projectStore';
 	import { recordProject, exportBuffer, type ExportFormat } from '$lib/audio/utils/audioExport';
 	
-	export let isOpen = false;
-	export let onClose: () => void;
+	const {
+		isOpen = false,
+		onClose
+	}: {
+		isOpen?: boolean;
+		onClose: () => void;
+	} = $props();
 	
-	let project: any;
+	let project: any = $state(null);
 	projectStore.subscribe((p) => (project = p));
 	
-	$: bpm = project?.bpm ?? 120;
-	$: timeline = project?.timeline;
-	$: hasTimeline = timeline && timeline.clips && timeline.clips.length > 0;
+	const bpm = $derived(project?.bpm ?? 120);
+	const timeline = $derived(project?.timeline);
+	const hasTimeline = $derived(timeline && timeline.clips && timeline.clips.length > 0);
 	
 	// Export options
 	type ExportRange = 'full' | 'custom';
-	let exportRange: ExportRange = hasTimeline ? 'full' : 'custom';
-	let exportFormat: ExportFormat = 'wav';
-	let customStartBeat = 0;
-	let customEndBeat = 64; // Default to 16 measures at 4/4 time
-	let filename = '';
+	let exportRange: ExportRange = $state(hasTimeline ? 'full' : 'custom');
+	let exportFormat: ExportFormat = $state('wav');
+	let customStartBeat = $state(0);
+	let customEndBeat = $state(64); // Default to 16 measures at 4/4 time
+	let filename = $state('');
 	
 	// Track if user has manually set values (to prevent reactive overrides)
 	let hasCustomStart = false;
 	let hasCustomEnd = false;
 	
 	// Calculate available ranges
-	$: timelineLength = timeline?.totalLength || 64; // 16 measures at 4/4 time
+	const timelineLength = $derived(timeline?.totalLength || 64); // 16 measures at 4/4 time
 	
 	// Track if user is actively editing to prevent reactive overrides
 	let isEditingStart = false;
 	let isEditingEnd = false;
 	
 	// Initialize custom range when timeline changes (only if user hasn't set custom values)
-	$: if (timeline && timelineLength > 0 && !isEditingEnd && !hasCustomEnd) {
-		if (customEndBeat > timelineLength || customEndBeat === 64) {
-			customEndBeat = timelineLength;
+	$effect(() => {
+		if (timeline && timelineLength > 0 && !isEditingEnd && !hasCustomEnd) {
+			if (customEndBeat > timelineLength || customEndBeat === 64) {
+				customEndBeat = timelineLength;
+			}
 		}
-	}
+	});
 	
 	// Validation functions for input handlers
 	function validateStartBeat(value: number) {
@@ -50,37 +57,41 @@
 	}
 	
 	// Calculate duration based on selected range
-	$: durationInBeats = (() => {
+	const durationInBeats = $derived.by(() => {
 		if (exportRange === 'full') {
 			return timelineLength;
 		} else {
 			return customEndBeat - customStartBeat;
 		}
-	})();
+	});
 	
-	$: durationInSeconds = (durationInBeats * 60) / bpm;
-	$: durationMinutes = Math.floor(durationInSeconds / 60);
-	$: durationSeconds = Math.floor(durationInSeconds % 60);
-	$: durationDisplay = durationInSeconds < 60 
+	const durationInSeconds = $derived((durationInBeats * 60) / bpm);
+	const durationMinutes = $derived(Math.floor(durationInSeconds / 60));
+	const durationSeconds = $derived(Math.floor(durationInSeconds % 60));
+	const durationDisplay = $derived(durationInSeconds < 60 
 		? `${durationInSeconds.toFixed(1)}s`
-		: `${durationMinutes}:${durationSeconds.toString().padStart(2, '0')}`;
+		: `${durationMinutes}:${durationSeconds.toString().padStart(2, '0')}`);
 	
 	// Generate default filename
-	$: if (!filename && project) {
-		const projectName = project.name || 'untitled';
-		const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-		const extension = exportFormat === 'wav' ? 'wav' : exportFormat === 'mp3' ? 'mp3' : exportFormat === 'ogg' ? 'ogg' : 'wav';
-		filename = `${projectName}-${timestamp}.${extension}`;
-	}
+	$effect(() => {
+		if (!filename && project) {
+			const projectName = project.name || 'untitled';
+			const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+			const extension = exportFormat === 'wav' ? 'wav' : exportFormat === 'mp3' ? 'mp3' : exportFormat === 'ogg' ? 'ogg' : 'wav';
+			filename = `${projectName}-${timestamp}.${extension}`;
+		}
+	});
 	
 	// Update filename extension when format changes
-	$: if (filename && project) {
-		const baseName = filename.replace(/\.(wav|ogg|mp3)$/i, '');
-		const extension = exportFormat === 'wav' ? 'wav' : exportFormat === 'mp3' ? 'mp3' : exportFormat === 'ogg' ? 'ogg' : 'wav';
-		if (!filename.endsWith(`.${extension}`)) {
-			filename = `${baseName}.${extension}`;
+	$effect(() => {
+		if (filename && project) {
+			const baseName = filename.replace(/\.(wav|ogg|mp3)$/i, '');
+			const extension = exportFormat === 'wav' ? 'wav' : exportFormat === 'mp3' ? 'mp3' : exportFormat === 'ogg' ? 'ogg' : 'wav';
+			if (!filename.endsWith(`.${extension}`)) {
+				filename = `${baseName}.${extension}`;
+			}
 		}
-	}
+	});
 	
 	// Export state
 	let isExporting = false;
@@ -292,13 +303,15 @@
 	}
 	
 	// Update custom range when timeline changes (only if user hasn't set custom values)
-	$: if (exportRange === 'custom' && timeline && !isEditingEnd && !isEditingStart && !hasCustomEnd) {
-		// Only update if current value is less than timeline length AND it's still the default
-		if (customEndBeat < timelineLength && customEndBeat === 64) {
-			// Only auto-update if it's still the default value
-			customEndBeat = timelineLength;
+	$effect(() => {
+		if (exportRange === 'custom' && timeline && !isEditingEnd && !isEditingStart && !hasCustomEnd) {
+			// Only update if current value is less than timeline length AND it's still the default
+			if (customEndBeat < timelineLength && customEndBeat === 64) {
+				// Only auto-update if it's still the default value
+				customEndBeat = timelineLength;
+			}
 		}
-	}
+	});
 </script>
 
 {#if isOpen}

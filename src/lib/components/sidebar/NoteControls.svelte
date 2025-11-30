@@ -11,37 +11,50 @@ import NumericInput from './NumericInput.svelte';
 	let engine: any = null;
 	engineStore.subscribe((e) => (engine = e));
 
-	export const selectedTrack: StandaloneInstrument | undefined = undefined;
-	export const selectedPattern: Pattern | undefined = undefined;
-	export let selectedNodes: Array<{ node: any; pattern?: Pattern; track?: StandaloneInstrument; instrument?: any; instrumentId?: string | null }>;
-	export const isMelodicInstrument: boolean = false;
-	export let isMultiSelect: boolean;
-	export let getCommonValue: <T>(getter: (node: any) => T | undefined, defaultValue: T) => T;
-	export let hasMixedValues: (getter: (node: any) => any, defaultValue: any) => boolean;
-	export let activeItem: any = undefined; // The active instrument/track for determining instrument type
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedNodes,
+		isMelodicInstrument = false,
+		isMultiSelect,
+		getCommonValue,
+		hasMixedValues,
+		activeItem = undefined
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedNodes: Array<{ node: any; pattern?: Pattern; track?: StandaloneInstrument; instrument?: any; instrumentId?: string | null }>;
+		isMelodicInstrument?: boolean;
+		isMultiSelect: boolean;
+		getCommonValue: <T>(getter: (node: any) => T | undefined, defaultValue: T) => T;
+		hasMixedValues: (getter: (node: any) => any, defaultValue: any) => boolean;
+		activeItem?: any;
+	} = $props();
 
-	let pitchNoteInput: HTMLInputElement;
-	let isTypingNote = false;
+	let pitchNoteInput: HTMLInputElement = $state(null as any);
+	let isTypingNote = $state(false);
 	
 	// Editor mode: 'pitch' or 'velocity' (for instruments with multi-select)
 	// Use shared store to sync with MidiEditor
-	$: editorMode = $editorModeStore;
+	const editorMode = $derived($editorModeStore);
 
 	// Determine default pitch based on instrument type
-	$: defaultPitch = (() => {
+	const defaultPitch = $derived((() => {
 		if (!activeItem) return 60;
 		// Tom defaults to 50, all others default to 60
 		return activeItem.instrumentType === 'tom' ? 50 : 60;
-	})();
+	})());
 
-	$: currentPitch = selectedNodes.length > 0 ? getCommonValue((n) => n.pitch, defaultPitch) : defaultPitch;
-	$: currentVelocity = selectedNodes.length > 0 ? getCommonValue((n) => n.velocity, 1.0) : 1.0;
-	$: currentDivision = selectedNodes.length > 0 ? getCommonValue((n) => n.division, 1) : 1;
+	const currentPitch = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.pitch, defaultPitch) : defaultPitch);
+	const currentVelocity = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.velocity, 1.0) : 1.0);
+	const currentDivision = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.division, 1) : 1);
 
 	// Update note input when pitch changes (if not currently typing)
-	$: if (pitchNoteInput && !isTypingNote && selectedNodes.length > 0) {
-		pitchNoteInput.value = midiToNoteName(currentPitch);
-	}
+	$effect(() => {
+		if (pitchNoteInput && !isTypingNote && selectedNodes.length > 0) {
+			pitchNoteInput.value = midiToNoteName(currentPitch);
+		}
+	});
 
 	function updateEnginePatternTreeFromSelection() {
 		for (const { pattern, track, instrumentId } of selectedNodes) {

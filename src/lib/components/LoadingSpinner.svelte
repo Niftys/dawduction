@@ -1,8 +1,13 @@
 <script lang="ts">
-	export let size: 'small' | 'medium' | 'large' = 'medium';
-	export let message: string | null = null;
+	const {
+		size = 'medium',
+		message = null
+	}: {
+		size?: 'small' | 'medium' | 'large';
+		message?: string | null;
+	} = $props();
 	
-	$: sizeClass = `spinner-${size}`;
+	const sizeClass = $derived(`spinner-${size}`);
 </script>
 
 <div class="loading-spinner-container">

@@ -6,18 +6,25 @@
 	import { getInputValue } from '../sidebarUtils';
 	import ParamControl from '../ParamControl.svelte';
 
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
-	export let selectedInstrument: any = undefined;
-	export let trackSettings: Record<string, any>;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedInstrument = undefined,
+		trackSettings
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedInstrument?: any;
+		trackSettings: Record<string, any>;
+	} = $props();
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
 
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	// Get default values for this instrument type
-	$: instrumentDefaults = {
+	const instrumentDefaults = $derived({
 		kick: { attack: 0.005, decay: 0.4, release: 0.15 },
 		snare: { attack: 0.005, decay: 0.2, release: 0.1 },
 		hihat: { attack: 0.001, decay: 0.05, release: 0.01 },
@@ -26,9 +33,9 @@
 		cymbal: { attack: 0.01, decay: 0.5, release: 0.2 },
 		shaker: { attack: 0.01, decay: 0.3, release: 0.1 },
 		rimshot: { attack: 0.001, decay: 0.08, release: 0.05 }
-	};
+	});
 	
-	$: defaults = activeItem?.instrumentType ? instrumentDefaults[activeItem.instrumentType as keyof typeof instrumentDefaults] : null;
+	const defaults = $derived(activeItem?.instrumentType ? instrumentDefaults[activeItem.instrumentType as keyof typeof instrumentDefaults] : null);
 
 	function updateSetting(key: string, value: any) {
 		if (!activeItem) return;

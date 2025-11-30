@@ -45,7 +45,7 @@
 	import '$lib/styles/components/Canvas.css';
 
 	// Props: if patternId is provided, also render that pattern's instrument alongside all tracks
-	export let patternId: string | null = null;
+	const { patternId = null }: { patternId?: string | null } = $props();
 
 	let canvas: HTMLCanvasElement;
 	let ctx: CanvasRenderingContext2D | null = null;
@@ -64,9 +64,9 @@
 	engineStore.subscribe((e) => (engine = e));
 	
 	// Get the pattern if patternId is provided
-	$: pattern = patternId && project 
+	const pattern = $derived(patternId && project 
 		? project.patterns?.find((p: Pattern) => p.id === patternId) || null
-		: null;
+		: null);
 	canvasStore.subscribe((state) => {
 		canvasState = state;
 		viewport.x = state.x;
@@ -77,18 +77,23 @@
 	playbackStore.subscribe((s) => (playbackState = s));
 
 	// State
-	let isDragging = false;
+	let isDragging = $state(false);
 	let dragStart = { x: 0, y: 0 };
 	let lastMousePos = { x: 0, y: 0 };
-	let isDraggingNode = false;
+	let isDraggingNode = $state(false);
 	let draggedNode: any = null;
 	let positionUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
 	let pendingPositionUpdate: PendingPositionUpdate | null = null;
-	let isSelecting = false;
+	let isSelecting = $state(false);
 	let selectionBox: SelectionBox | null = null;
-	let contextMenu: ContextMenu | null = null;
-	let editingNode: { node: PatternNode; patternId: string | null; trackId: string | null; instrumentId?: string | null } | null = null;
-	let editValue = '';
+	let contextMenu: ContextMenu | null = $state(null);
+	let editingNode: { node: PatternNode; patternId: string | null; trackId: string | null; instrumentId?: string | null } | null = $state(null);
+	let editValue = $state('');
+	
+	// Helper to get context menu element
+	function getContextMenuElement(): HTMLElement | null {
+		return document.querySelector('.context-menu') as HTMLElement | null;
+	}
 
 	// Helper to get keyboard context
 	function getKeyboardContext(): KeyboardHandlerContext {
@@ -197,6 +202,7 @@
 	let longPressFired = false;
 	let longPressTimeout: ReturnType<typeof setTimeout> | null = null;
 	let touchStartNode: { node: PatternNode; patternId: string | null; trackId: string | null; instrumentId?: string | null; isRoot: boolean } | null = null;
+	let isTouchInteraction = false; // Track if we're currently in a touch interaction
 
 	onMount(() => {
 		if (!canvas) return;
@@ -234,30 +240,63 @@
 
 		// Close context menu and editing dialog when clicking outside
 		const handleMouseDownOutside = (e: MouseEvent) => {
+			const target = e.target as Node;
+			// Don't close if clicking on the canvas itself (let canvas handle it)
+			if (canvas && canvas.contains(target)) {
+				return;
+			}
+			// Don't close if clicking on the context menu itself
+			const menuElement = getContextMenuElement();
+			if (menuElement && menuElement.contains(target)) {
+				return;
+			}
 			if (contextMenu) {
 				contextMenu = null;
 			}
 		};
 		const handleClickOutside = (e: MouseEvent) => {
-			if (contextMenu) {
-			contextMenu = null;
+			const target = e.target as Node;
+			// Don't close if clicking on the canvas itself
+			if (canvas && canvas.contains(target)) {
+				return;
 			}
+			// Don't close if clicking on the context menu itself
+			const menuElement = getContextMenuElement();
+			if (menuElement && menuElement.contains(target)) {
+				return;
+			}
+			// Use a small delay to allow button clicks to fire first
+			setTimeout(() => {
+				if (contextMenu) {
+					contextMenu = null;
+				}
+			}, 0);
 		};
 		const handleTouchStartOutside = (e: TouchEvent) => {
+			const target = e.target as Node;
+			// Don't close if touching the canvas itself
+			if (canvas && target && canvas.contains(target)) {
+				return;
+			}
+			// Don't close if touching the context menu itself
+			const menuElement = getContextMenuElement();
+			if (menuElement && target && menuElement.contains(target)) {
+				return;
+			}
 			// Close context menu on any touch outside as well (mobile)
 			if (contextMenu) {
 				contextMenu = null;
 			}
 		};
 		window.addEventListener('mousedown', handleMouseDownOutside);
-		window.addEventListener('contextmenu', handleClickOutside);
+		window.addEventListener('click', handleClickOutside);
 		window.addEventListener('touchstart', handleTouchStartOutside);
 
 		return () => {
 			window.removeEventListener('resize', resize);
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('mousedown', handleMouseDownOutside);
-			window.removeEventListener('contextmenu', handleClickOutside);
+			window.removeEventListener('click', handleClickOutside);
 			window.removeEventListener('touchstart', handleTouchStartOutside);
 			cancelAnimationFrame(animationFrame);
 		};
@@ -285,6 +324,26 @@
 	// Mouse handlers
 	function onMouseDown(e: MouseEvent) {
 		if (!canvas) return;
+		
+		// Check if clicking on the context menu itself - if so, don't handle it
+		const target = e.target as Node;
+		const menuElement = getContextMenuElement();
+		if (menuElement && menuElement.contains(target)) {
+			return; // Let the context menu handle it
+		}
+		
+		// Don't handle mouse events when context menu is open (close it instead)
+		if (contextMenu) {
+			// Clicking outside the menu - close it
+			contextMenu = null;
+			return;
+		}
+		
+		// Ignore mouse events that occur during touch interactions (to prevent interference)
+		// Some browsers fire mouse events after touch events, which can cause conflicts
+		if (isTouchInteraction) {
+			return;
+		}
 			
 		// Don't handle right-click in mouse down - let context menu handle it
 		if (e.button === 2) return;
@@ -413,6 +472,9 @@
 		if (!canvas) return;
 		if (e.touches.length !== 1) return;
 
+		// Mark that we're in a touch interaction to prevent mouse events from interfering
+		isTouchInteraction = true;
+		
 		const touch = e.touches[0];
 		lastTouchPos = { x: touch.clientX, y: touch.clientY };
 		touchStartPos = { x: touch.clientX, y: touch.clientY };
@@ -435,11 +497,8 @@
 		// Check if we touched a node
 		const touchedNode = findNodeAtTouchPosition(touch.clientX, touch.clientY);
 		if (touchedNode) {
-			// Cancel long-press since we might be starting node drag
-			if (longPressTimeout) {
-				clearTimeout(longPressTimeout);
-				longPressTimeout = null;
-			}
+			// Don't cancel long-press here - allow long-press on nodes for context menu
+			// The long-press will be cancelled if movement starts
 			touchStartNode = touchedNode;
 			// Don't set isTouchDraggingNode yet - wait for movement threshold
 			// Start node dragging setup (similar to mouse down on node)
@@ -514,26 +573,26 @@
 			}
 		}
 
-		// Long-press -> right click (context menu) - only if not touching a node
-		if (!touchedNode && longPressTimeout) clearTimeout(longPressTimeout);
-		if (!touchedNode) {
-			longPressTimeout = setTimeout(() => {
-				if (!touchMoved && !longPressFired && !isTouchDraggingNode) {
-					longPressFired = true;
-					// Synthesize a right-click at touch position
-					const rect = canvas.getBoundingClientRect();
-					const eventInit: MouseEventInit = {
-						clientX: touch.clientX,
-						clientY: touch.clientY,
-						button: 2
-					};
-					const fakeEvent = new MouseEvent('contextmenu', eventInit);
-					// Adjust coordinates relative to canvas as existing handler expects
-					(fakeEvent as any).preventDefault = () => {};
-					onContextMenu(fakeEvent);
-				}
-			}, 1000); // 1 second for right-click (long-press)
+		// Long-press -> right click (context menu) - works both on and off nodes
+		if (longPressTimeout) {
+			clearTimeout(longPressTimeout);
+			longPressTimeout = null;
 		}
+		longPressTimeout = setTimeout(() => {
+			if (!touchMoved && !longPressFired && !isTouchDraggingNode && canvas) {
+				longPressFired = true;
+				// Synthesize a right-click at touch position
+				const eventInit: MouseEventInit = {
+					clientX: touch.clientX,
+					clientY: touch.clientY,
+					button: 2,
+					bubbles: true,
+					cancelable: true
+				};
+				const fakeEvent = new MouseEvent('contextmenu', eventInit);
+				onContextMenu(fakeEvent);
+			}
+		}, 1000); // 1 second for right-click (long-press)
 
 		e.preventDefault();
 	}
@@ -551,6 +610,7 @@
 			dragState.isDraggingNode = true;
 			isDraggingNode = true;
 			touchMoved = true;
+			// Cancel long-press when dragging starts
 			if (longPressTimeout) {
 				clearTimeout(longPressTimeout);
 				longPressTimeout = null;
@@ -735,6 +795,11 @@
 			isTouchPanning = false;
 			touchMoved = false;
 		}
+		
+		// Reset touch interaction flag after a delay to allow any synthetic events to complete
+		setTimeout(() => {
+			isTouchInteraction = false;
+		}, 100);
 	}
 
 	function onNodeClick(e: MouseEvent) {
@@ -744,8 +809,11 @@
 
 	function onContextMenu(e: MouseEvent) {
 		e.preventDefault();
-				e.stopPropagation();
+		e.stopPropagation();
 		if (!canvas) return;
+		
+		// Handle both real mouse right-clicks and synthesized touch events
+		// Real mouse events will have button === 2, synthesized events from touch won't
 		const menu = handleContextMenu(e, getNodeClickContext());
 		if (menu) {
 			contextMenu = menu;
@@ -809,10 +877,10 @@
 		isRoot={contextMenu.isRoot}
 		patternId={contextMenu?.patternId ?? null}
 		trackId={contextMenu?.trackId ?? null}
-		on:addChild={onContextAction}
-		on:delete={onContextAction}
-		on:edit={onContextAction}
-		on:copy={onContextAction}
+		onAddChild={onContextAction}
+		onDelete={onContextAction}
+		onEdit={onContextAction}
+		onCopy={onContextAction}
 	/>
 {/if}
 

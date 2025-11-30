@@ -1,5 +1,5 @@
 <script lang="ts">
-	export let isOpen = false;
+	const { isOpen = false }: { isOpen?: boolean } = $props();
 
 	function handleUnderstand() {
 		// Reload the page when user clicks "I understand"

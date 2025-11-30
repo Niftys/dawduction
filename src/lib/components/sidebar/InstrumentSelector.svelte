@@ -20,11 +20,19 @@
 	import { engineStore } from '$lib/stores/engineStore';
 	import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
 
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
-	export let isRootNode: boolean = false;
-	export let selectedInstrumentId: string | null = null;
-	export let selectedInstrument: Instrument | undefined = undefined;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		isRootNode = false,
+		selectedInstrumentId = null,
+		selectedInstrument = undefined
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		isRootNode?: boolean;
+		selectedInstrumentId?: string | null;
+		selectedInstrument?: Instrument | undefined;
+	} = $props();
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
@@ -72,7 +80,7 @@
 
 	// Get the active item (selected instrument from pattern, or standalone instrument)
 	// When root node is selected, use the selected instrument, not the pattern
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	async function updateInstrumentType(type: string) {
 		if (!activeItem) return;

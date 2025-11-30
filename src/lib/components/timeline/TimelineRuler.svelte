@@ -4,22 +4,32 @@
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { tick } from 'svelte';
 
-	export let totalLength: number;
-	export let pixelsPerBeat: number;
-	export let zoomLevel: number;
-	export let showAddTrackMenu: boolean;
-	export let onZoomWheel: (e: WheelEvent) => void = () => {};
-	// Note: onZoomWheel is passed from parent for potential future use
-	export let onCreateTrack: (type: 'pattern' | 'effect' | 'envelope') => void;
-	export let onToggleAddTrackMenu: () => void;
-	export let onRulerClick: ((e: MouseEvent) => void) | undefined = undefined;
+	const {
+		totalLength,
+		pixelsPerBeat,
+		zoomLevel,
+		showAddTrackMenu,
+		onZoomWheel = () => {},
+		onCreateTrack,
+		onToggleAddTrackMenu,
+		onRulerClick = undefined
+	}: {
+		totalLength: number;
+		pixelsPerBeat: number;
+		zoomLevel: number;
+		showAddTrackMenu: boolean;
+		onZoomWheel?: (e: WheelEvent) => void;
+		onCreateTrack: (type: 'pattern' | 'effect' | 'envelope') => void;
+		onToggleAddTrackMenu: () => void;
+		onRulerClick?: ((e: MouseEvent) => void) | undefined;
+	} = $props();
 
-	$: rulerMarks = generateRulerMarks(totalLength, pixelsPerBeat);
-	$: zoomDisplay = formatZoomDisplay(zoomLevel, TIMELINE_CONSTANTS.BASE_ZOOM);
+	const rulerMarks = $derived(generateRulerMarks(totalLength, pixelsPerBeat));
+	const zoomDisplay = $derived(formatZoomDisplay(zoomLevel, TIMELINE_CONSTANTS.BASE_ZOOM));
 
 	let triggerElement: HTMLElement;
 	let menuElement: HTMLDivElement;
-	let menuPosition = { top: 0, left: 0 };
+	let menuPosition = $state({ top: 0, left: 0 });
 
 	async function updateMenuPosition() {
 		await tick();
@@ -35,11 +45,13 @@
 		}
 	}
 
-	$: if (showAddTrackMenu) {
-		console.log('[TimelineRuler] Menu should be visible, showAddTrackMenu =', showAddTrackMenu);
-		// Update position when menu opens
-		updateMenuPosition();
-	}
+	$effect(() => {
+		if (showAddTrackMenu) {
+			console.log('[TimelineRuler] Menu should be visible, showAddTrackMenu =', showAddTrackMenu);
+			// Update position when menu opens
+			updateMenuPosition();
+		}
+	});
 </script>
 
 <div class="timeline-ruler-container">

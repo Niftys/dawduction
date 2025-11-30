@@ -6,19 +6,26 @@
 	import ParamControl from '../sidebar/ParamControl.svelte';
 	import '$lib/styles/components/SynthPluginWindow.css';
 
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
-	export let selectedInstrument: any = undefined;
-	export let trackSettings: Record<string, any>;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedInstrument = undefined,
+		trackSettings
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedInstrument?: any;
+		trackSettings: Record<string, any>;
+	} = $props();
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
 
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	// Drawbar labels (16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1')
-	$: drawbarLabels = ['16\'', '5 1/3\'', '8\'', '4\'', '2 2/3\'', '2\'', '1 3/5\'', '1 1/3\'', '1\''];
-	$: drawbars = trackSettings.drawbars ?? [0.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.4, 0.0, 0.2];
+	const drawbarLabels = $derived(['16\'', '5 1/3\'', '8\'', '4\'', '2 2/3\'', '2\'', '1 3/5\'', '1 1/3\'', '1\'']);
+	const drawbars = $derived(trackSettings.drawbars ?? [0.8, 0.0, 1.0, 0.0, 0.6, 0.0, 0.4, 0.0, 0.2]);
 
 	function updateSetting(key: string, value: any) {
 		if (!activeItem) return;

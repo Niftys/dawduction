@@ -5,21 +5,34 @@
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
 
-	export let timelineEnvelope: TimelineEnvelope;
-	export let envelope: Envelope;
-	export let pixelsPerBeat: number;
-	export let isSelected: boolean;
-	export let isDragging: boolean;
-	export let onMouseDown: (e: MouseEvent) => void;
-	export let onClick: (e: MouseEvent) => void;
-	export let onKeyDown: (e: KeyboardEvent) => void;
-	export let onContextMenu: (e: MouseEvent) => void;
-	export let onDelete: (() => void) | undefined = undefined;
+	const {
+		timelineEnvelope,
+		envelope,
+		pixelsPerBeat,
+		isSelected,
+		isDragging,
+		onMouseDown,
+		onClick,
+		onKeyDown,
+		onContextMenu,
+		onDelete = undefined
+	}: {
+		timelineEnvelope: TimelineEnvelope;
+		envelope: Envelope;
+		pixelsPerBeat: number;
+		isSelected: boolean;
+		isDragging: boolean;
+		onMouseDown: (e: MouseEvent) => void;
+		onClick: (e: MouseEvent) => void;
+		onKeyDown: (e: KeyboardEvent) => void;
+		onContextMenu: (e: MouseEvent) => void;
+		onDelete?: (() => void) | undefined;
+	} = $props();
 
-	$: envelopeLeft = beatToPixel(timelineEnvelope.startBeat, pixelsPerBeat);
-	$: envelopeWidth = Math.max(20, beatToPixel(timelineEnvelope.duration, pixelsPerBeat));
-	$: clipHeight = TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT - 18;
-	$: curvePath = generateEnvelopeCurvePath(envelopeWidth, clipHeight, envelope, timelineEnvelope.duration);
+	const envelopeLeft = $derived(beatToPixel(timelineEnvelope.startBeat, pixelsPerBeat));
+	const envelopeWidth = $derived(Math.max(20, Math.min(beatToPixel(timelineEnvelope.duration, pixelsPerBeat), 10000))); // Clamp to prevent extreme values
+	const clipHeight = $derived(TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT - 18);
+	const curvePath = $derived(generateEnvelopeCurvePath(envelopeWidth, clipHeight, envelope, timelineEnvelope.duration));
 </script>
 
 <div

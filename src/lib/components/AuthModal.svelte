@@ -1,11 +1,16 @@
 <script lang="ts">
 	import { supabase } from '$lib/utils/supabase';
 	import { loadingStore } from '$lib/stores/loadingStore';
-	import { createEventDispatcher } from 'svelte';
 
-	export let isOpen = false;
-
-	const dispatch = createEventDispatcher();
+	let {
+		isOpen = $bindable(false),
+		onClose,
+		onSuccess
+	}: {
+		isOpen?: boolean;
+		onClose?: () => void;
+		onSuccess?: () => void;
+	} = $props();
 
 	let isSignIn = true; // Toggle between sign in and sign up
 	let email = '';
@@ -19,7 +24,7 @@
 
 	function closeModal() {
 		isOpen = false;
-		dispatch('close');
+		onClose?.();
 		// Reset form
 		email = '';
 		password = '';
@@ -60,7 +65,7 @@
 
 				if (data.user) {
 					closeModal();
-					dispatch('success');
+					onSuccess?.();
 				}
 			} else {
 				// Sign up
@@ -119,7 +124,7 @@
 					} else {
 						// No confirmation needed, sign in immediately
 						closeModal();
-						dispatch('success');
+						onSuccess?.();
 					}
 				}
 			}

@@ -1,13 +1,25 @@
 <script lang="ts">
-	export let id: string;
-	export let value: number = 0;
-	export let min: number | undefined = undefined;
-	export let max: number | undefined = undefined;
-	export let step: number | undefined = undefined;
-	export let placeholder: string | undefined = undefined;
-	export let title: string | undefined = undefined;
-	export let disabled = false;
-	export let onInput: ((value: number) => void) | undefined = undefined;
+	const {
+		id,
+		value = 0,
+		min = undefined,
+		max = undefined,
+		step = undefined,
+		placeholder = undefined,
+		title = undefined,
+		disabled = false,
+		onInput = undefined
+	}: {
+		id: string;
+		value?: number;
+		min?: number | undefined;
+		max?: number | undefined;
+		step?: number | undefined;
+		placeholder?: string | undefined;
+		title?: string | undefined;
+		disabled?: boolean;
+		onInput?: ((value: number) => void) | undefined;
+	} = $props();
 
 	const getIncrement = () => {
 		if (typeof step === 'number' && !isNaN(step) && step !== 0) {

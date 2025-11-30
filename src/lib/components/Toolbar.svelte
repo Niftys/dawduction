@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { projectStore } from '$lib/stores/projectStore';
@@ -16,65 +16,77 @@
 	import { loadingStore } from '$lib/stores/loadingStore';
 
 	let engine: EngineWorklet | null = null;
-	let isPlaying = false;
-	let transportState: 'play' | 'stop' | 'pause' = 'stop'; // Track actual transport state
-	let canUndo = false;
-	let canRedo = false;
-	let isMuted = false;
-	let isSoloed = false;
-	let isEditingTitle = false;
-	let editingTitle = '';
+	let isPlaying = $state(false);
+	let transportState = $state<'play' | 'stop' | 'pause'>('stop'); // Track actual transport state
+	let canUndo = $state(false);
+	let canRedo = $state(false);
+	let isMuted = $state(false);
+	let isSoloed = $state(false);
+	let isEditingTitle = $state(false);
+	let editingTitle = $state('');
 	let titleInputRef: HTMLInputElement | null = null;
-	let showLeaveConfirm = false;
+	let showLeaveConfirm = $state(false);
 	let lastSavedTime: number | null = null;
 	let autoSaveInterval: ReturnType<typeof setInterval> | null = null;
 	
-	// Reactive project for base meter selection
-	$: project = $projectStore;
-	$: selection = $selectionStore;
-	$: viewMode = $viewStore;
+	// Use $derived for computed values to avoid cyclical dependencies
+	const project = $derived($projectStore);
+	const selection = $derived($selectionStore);
+	const viewMode = $derived($viewStore);
 	// Check if this is a sandbox project
-	$: isSandbox = project?.id?.startsWith('sandbox-') || false;
+	const isSandbox = $derived(project?.id?.startsWith('sandbox-') || false);
 	// Initialize BPM from project store, default to 120 if not set
-	$: bpm = project?.bpm ?? 120;
-	$: selectedTrack = project?.standaloneInstruments?.find((i) => i.id === selection.selectedTrackId);
-	$: selectedPattern = selection.selectedPatternId ? project?.patterns?.find((p) => p.id === selection.selectedPatternId) : null;
+	const bpm = $derived(project?.bpm ?? 120);
+	// Mutable BPM value for input binding (can be string for empty input)
+	let bpmInput = $state<number | string>(120);
+	// Track if the input is focused to prevent syncing while user is typing
+	let bpmInputFocused = $state(false);
+	
+	// Sync bpmInput from store when project loads or BPM changes externally
+	// Only sync if values are different and input is not focused (to avoid overwriting user input)
+	$effect(() => {
+		// Don't sync if user is actively typing
+		if (bpmInputFocused) return;
+		
+		const storeBpm = project?.bpm ?? 120;
+		// Convert bpmInput to number for comparison (handle empty string case)
+		const currentBpm = typeof bpmInput === 'number' ? bpmInput : (bpmInput === '' ? null : parseFloat(String(bpmInput)));
+		// Use a small threshold to handle floating point comparisons
+		if (currentBpm === null || Math.abs(currentBpm - storeBpm) > 0.01) {
+			bpmInput = storeBpm;
+		}
+	});
+	const selectedTrack = $derived(project?.standaloneInstruments?.find((i) => i.id === selection.selectedTrackId));
+	const selectedPattern = $derived(selection.selectedPatternId ? project?.patterns?.find((p) => p.id === selection.selectedPatternId) : null);
 	// For pattern view, get the selected instrument if one is selected
 	// Explicitly depend on project and selectedPattern to ensure it updates when instruments change
 	// Force reactivity by explicitly accessing pattern.updatedAt and pattern.instruments
-	$: selectedInstrument = (() => {
+	const selectedInstrument = $derived((() => {
 		if (!project || !selectedPattern || !selection.selectedInstrumentId) return null;
 		// Force reactivity by accessing pattern properties
 		const _updatedAt = selectedPattern.updatedAt;
 		const _instruments = selectedPattern.instruments;
 		return projectStore.getPatternInstruments(selectedPattern).find((inst: any) => inst.id === selection.selectedInstrumentId);
-	})();
+	})());
 	
-	// Reactive statements for mute/solo state
+	// Reactive statements for mute/solo state using $effect
 	// Explicitly depend on project, selectedPattern, and selectedInstrument to ensure updates
-	// Force reactivity by explicitly accessing the mute/solo properties
-	$: {
-		// Force reactivity by accessing project
-		const _project = project;
-		const _selectedPattern = selectedPattern;
-		const _selectedInstrument = selectedInstrument;
-		const _selectedTrack = selectedTrack;
-		
-		if (_selectedTrack) {
-			isMuted = _selectedTrack.mute ?? false;
-			isSoloed = _selectedTrack.solo ?? false;
-		} else if (_selectedPattern && _selectedInstrument) {
+	$effect(() => {
+		if (selectedTrack) {
+			isMuted = selectedTrack.mute ?? false;
+			isSoloed = selectedTrack.solo ?? false;
+		} else if (selectedPattern && selectedInstrument) {
 			// Explicitly access the properties to ensure reactivity
-			isMuted = _selectedInstrument.mute ?? false;
-			isSoloed = _selectedInstrument.solo ?? false;
-		} else if (_selectedPattern) {
-			isMuted = _selectedPattern.mute ?? false;
-			isSoloed = _selectedPattern.solo ?? false;
+			isMuted = selectedInstrument.mute ?? false;
+			isSoloed = selectedInstrument.solo ?? false;
+		} else if (selectedPattern) {
+			isMuted = selectedPattern.mute ?? false;
+			isSoloed = selectedPattern.solo ?? false;
 		} else {
 			isMuted = false;
 			isSoloed = false;
 		}
-	}
+	});
 	
 	// Subscribe to history state changes for undo/redo button states
 	projectStore.subscribeHistory((state) => {
@@ -133,8 +145,10 @@
 						transportState = 'play';
 						isPlaying = true;
 					}
+					// Get current BPM from project to ensure we use the latest value
+					const currentBpm = project.bpm ?? 120;
 					if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
-						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
+						await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 						if (wasPlaying) {
 							// Resume playback at the same position without stopping
 							engine.setTransport('play', currentPosition);
@@ -169,14 +183,14 @@
 									solo: inst.solo ?? false
 								}));
 								
-								await engine.loadProject(tracksForEngine, bpm, tracksForEngine[0]?.id, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+								await engine.loadProject(tracksForEngine, currentBpm, tracksForEngine[0]?.id, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
 									// Resume playback at the same position
 									engine.setTransport('play', currentPosition);
 								}
 							} else {
 								// Pattern not found, fall back to standalone instruments
-								await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+								await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 								if (wasPlaying) {
 									// Resume playback at the same position
 									engine.setTransport('play', currentPosition);
@@ -184,7 +198,7 @@
 							}
 						} else {
 							// Regular pattern view - use standalone instruments
-						await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+						await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							if (wasPlaying) {
 								// Resume playback at the same position
 								engine.setTransport('play', currentPosition);
@@ -237,20 +251,27 @@
 	});
 
 	// Track last BPM to avoid infinite loops
-	let lastBpmUpdate = 0;
+	let lastBpmUpdate = $state(0);
 	
-	// Reactive statement to sync BPM from project store to engine
+	// Reactive statement to sync BPM from project store to engine using $effect
 	// This ensures the engine always uses the project's BPM
-	$: if (engine && project?.bpm && project.bpm !== lastBpmUpdate) {
-		lastBpmUpdate = project.bpm;
-		engine.setTempo(project.bpm);
-	}
+	$effect(() => {
+		// Explicitly access project.bpm to ensure reactivity
+		const currentBpm = project?.bpm ?? 120;
+		if (engine && currentBpm !== lastBpmUpdate) {
+			lastBpmUpdate = currentBpm;
+			engine.setTempo(currentBpm);
+			// Don't dispatch reloadProject - setTempo now handles BPM changes properly
+			// without needing to reload the entire project
+		}
+	});
 
 	// Reload project when view mode changes (always, not just when playing)
 	let lastViewMode: 'arrangement' | 'pattern' | null = null;
-	$: if (engine && $viewStore && lastViewMode !== $viewStore) {
-		(async () => {
-			lastViewMode = $viewStore;
+	$effect(() => {
+		if (engine && $viewStore && lastViewMode !== $viewStore) {
+			(async () => {
+				lastViewMode = $viewStore;
 			// Small delay to ensure any pending pattern syncs complete
 			await new Promise(resolve => setTimeout(resolve, 100));
 			
@@ -293,8 +314,11 @@
 					// Get fresh project data after ensuring standalone instruments exist
 					projectStore.subscribe((p) => (project = p))();
 					
+					// Get current BPM from project to ensure we use the latest value
+					const currentBpm = project.bpm ?? 120;
+					
 					// Load timeline in arrangement view
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
+					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 					// Reset transport position when switching to arrangement view (if playing)
 					if (isPlaying) {
 						transportState = 'stop';
@@ -303,8 +327,10 @@
 					engine.setTransport('play', 0);
 					}
 				} else {
+					// Get current BPM from project to ensure we use the latest value
+					const currentBpm = project.bpm ?? 120;
 					// Load pattern mode (use standalone instruments or patterns)
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 					// Resume playback if it was playing
 					if (isPlaying) {
 						transportState = 'play';
@@ -313,7 +339,8 @@
 				}
 			}
 		})();
-	}
+		}
+	});
 
 	async function togglePlayback() {
 		if (!engine) return;
@@ -335,11 +362,13 @@
 			let project: any;
 			projectStore.subscribe((p) => (project = p))();
 			if (project) {
+				// Get current BPM from project to ensure we use the latest value
+				const currentBpm = project.bpm ?? 120;
 				// Determine what to load based on view mode
 				const currentViewMode = $viewStore;
 				if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
 					// Load timeline in arrangement view
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
+					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
 					// Reset transport position when starting in arrangement view
 					transportState = 'stop';
 					isPlaying = false;
@@ -397,20 +426,20 @@
 							// Also include standalone instruments so they're visible on canvas
 							const allTracks = [...(project.standaloneInstruments || []), ...patternTracks];
 							
-							await engine.loadProject(allTracks, bpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+							await engine.loadProject(allTracks, currentBpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							transportState = 'play';
 							isPlaying = true;
 							engine.setTransport('play');
 						} else {
 							// Pattern not found, fall back to standalone instruments
-							await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+							await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
 							transportState = 'play';
 							isPlaying = true;
 							engine.setTransport('play');
 						}
 					} else {
 						// Regular pattern view - use standalone instruments
-					await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
 					engine.setTransport('play');
 					}
 				}
@@ -456,7 +485,8 @@
 			let project: any;
 			projectStore.subscribe((p) => (project = p))();
 			if (project) {
-				await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
+				const currentBpm = project.bpm ?? 120;
+				await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
 			}
 		}
 		window.dispatchEvent(new CustomEvent('reloadProject'));
@@ -470,7 +500,8 @@
 			let project: any;
 			projectStore.subscribe((p) => (project = p))();
 			if (project) {
-				await engine.loadProject(project.standaloneInstruments || [], bpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
+				const currentBpm = project.bpm ?? 120;
+				await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes);
 			}
 		}
 		window.dispatchEvent(new CustomEvent('reloadProject'));
@@ -724,20 +755,38 @@
 					<input
 						id="bpm-input"
 						type="number"
-						bind:value={bpm}
+						bind:value={bpmInput}
 						min="20"
 						max="500"
-						on:input={() => {
-							// Update project store immediately when BPM changes
+						on:focus={() => {
+							bpmInputFocused = true;
+						}}
+						on:keydown={(e) => {
+							// Apply value on Enter key
+							if (e.key === 'Enter') {
+								e.currentTarget.blur();
+							}
+						}}
+						on:blur={() => {
+							bpmInputFocused = false;
+							// Validate and clamp on blur
+							const numBpm = typeof bpmInput === 'number' ? bpmInput : parseFloat(String(bpmInput));
+							if (isNaN(numBpm) || !isFinite(numBpm)) {
+								bpmInput = 120;
+							} else {
+								const clampedBpm = Math.max(20, Math.min(500, numBpm));
+								bpmInput = clampedBpm;
+							}
+							// Update store and engine with final value
+							const finalBpm = typeof bpmInput === 'number' ? bpmInput : parseFloat(String(bpmInput)) || 120;
 							projectStore.update((p) => {
 								if (p) {
-									p.bpm = bpm;
+									p.bpm = finalBpm;
 								}
 								return p;
 							});
-							// Update engine tempo immediately
 							if (engine) {
-								engine.setTempo(bpm);
+								engine.setTempo(finalBpm);
 							}
 						}}
 					/>
@@ -746,14 +795,18 @@
 							type="button"
 							class="arrow-button arrow-up"
 							on:click={() => {
-								const newBpm = Math.min(500, bpm + 1);
-								bpm = newBpm;
+								// Ensure bpmInput is a number (handle empty string case)
+								const currentBpm = typeof bpmInput === 'number' ? bpmInput : (bpmInput === '' ? 120 : parseFloat(String(bpmInput)) || 120);
+								const newBpm = Math.min(500, currentBpm + 1);
+								bpmInput = newBpm;
+								// Update store - this will trigger the effect to update engine
 								projectStore.update((p) => {
 									if (p) {
 										p.bpm = newBpm;
 									}
 									return p;
 								});
+								// Also update engine directly for immediate effect
 								if (engine) {
 									engine.setTempo(newBpm);
 								}
@@ -768,14 +821,18 @@
 							type="button"
 							class="arrow-button arrow-down"
 							on:click={() => {
-								const newBpm = Math.max(20, bpm - 1);
-								bpm = newBpm;
+								// Ensure bpmInput is a number (handle empty string case)
+								const currentBpm = typeof bpmInput === 'number' ? bpmInput : (bpmInput === '' ? 120 : parseFloat(String(bpmInput)) || 120);
+								const newBpm = Math.max(20, currentBpm - 1);
+								bpmInput = newBpm;
+								// Update store - this will trigger the effect to update engine
 								projectStore.update((p) => {
 									if (p) {
 										p.bpm = newBpm;
 									}
 									return p;
 								});
+								// Also update engine directly for immediate effect
 								if (engine) {
 									engine.setTempo(newBpm);
 								}

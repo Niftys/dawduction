@@ -6,15 +6,22 @@
 	import { getSelectValue } from '../sidebarUtils';
 	import ParamControl from '../ParamControl.svelte';
 
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export let selectedPattern: Pattern | undefined = undefined;
-	export let selectedInstrument: any = undefined;
-	export let trackSettings: Record<string, any>;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedInstrument = undefined,
+		trackSettings
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedInstrument?: any;
+		trackSettings: Record<string, any>;
+	} = $props();
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
 
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 
 	function updateSetting(key: string, value: any) {
 		if (!activeItem) return;

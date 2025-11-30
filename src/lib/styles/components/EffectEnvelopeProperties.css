@@ -151,3 +151,43 @@
 	box-shadow: 0 0 0 2px rgba(122, 184, 255, 0.3);
 }
 
+.plugin-button-container {
+	padding: 12px;
+	background: rgba(122, 184, 255, 0.1);
+	border: 1px solid rgba(122, 184, 255, 0.2);
+	border-radius: 6px;
+	margin-bottom: 16px;
+}
+
+.open-plugin-button {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 12px 16px;
+	background: #7ab8ff;
+	color: #1a1a1a;
+	border: none;
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+
+.open-plugin-button:hover {
+	background: #6aa8ef;
+	transform: translateY(-1px);
+	box-shadow: 0 4px 8px rgba(122, 184, 255, 0.3);
+}
+
+.open-plugin-button:active {
+	transform: translateY(0);
+	box-shadow: 0 2px 4px rgba(122, 184, 255, 0.2);
+}
+
+.open-plugin-button svg {
+	flex-shrink: 0;
+}
+

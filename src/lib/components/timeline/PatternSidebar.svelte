@@ -4,25 +4,40 @@
 	import type { Pattern } from '$lib/types/pattern';
 	import EffectsEnvelopesPanel from '$lib/components/EffectsEnvelopesPanel.svelte';
 
-	export let patterns: Pattern[];
-	export let sidebarWidth: number;
-	export let editingPatternId: string | null = null;
-	export let viewMode: string;
-	
-	export let createPattern: () => void;
-	export let deletePattern: (id: string) => void;
-	export let selectPattern: (id: string) => void;
-	export let handleEffectEnvelopeDragStart: (e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void;
-	export let handlePatternDragStart: ((e: DragEvent, patternId: string) => void) | undefined = undefined;
-	export let onTouchDragStart: ((patternId: string) => void) | undefined = undefined;
-	export let onEffectEnvelopeTouchDragStart: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
+	let {
+		patterns,
+		sidebarWidth,
+		editingPatternId = $bindable<string | null>(null),
+		viewMode,
+		createPattern,
+		deletePattern,
+		selectPattern,
+		handleEffectEnvelopeDragStart,
+		handlePatternDragStart = undefined,
+		onTouchDragStart = undefined,
+		onEffectEnvelopeTouchDragStart = undefined
+	}: {
+		patterns: Pattern[];
+		sidebarWidth: number;
+		editingPatternId?: string | null;
+		viewMode: string;
+		createPattern: () => void;
+		deletePattern: (id: string) => void;
+		selectPattern: (id: string) => void;
+		handleEffectEnvelopeDragStart: (e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void;
+		handlePatternDragStart?: ((e: DragEvent, patternId: string) => void) | undefined;
+		onTouchDragStart?: ((patternId: string) => void) | undefined;
+		onEffectEnvelopeTouchDragStart?: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined;
+	} = $props();
 	
 	let editingPatternInput: HTMLInputElement | null = null;
 	
 	// Focus input when editing starts
-	$: if (editingPatternId && editingPatternInput) {
-		setTimeout(() => editingPatternInput?.focus(), 0);
-	}
+	$effect(() => {
+		if (editingPatternId && editingPatternInput) {
+			setTimeout(() => editingPatternInput?.focus(), 0);
+		}
+	});
 	
 	function handleDragStart(e: DragEvent, patternId: string) {
 		if (viewMode !== 'arrangement') {

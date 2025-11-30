@@ -5,77 +5,124 @@
 	import type { Pattern, Effect, Envelope } from '$lib/types/effects';
 	import { TIMELINE_CONSTANTS, beatToPixel, pixelToBeat, snapToBeat } from '$lib/utils/timelineUtils';
 	import { generateGridLines, type GridLine } from '$lib/utils/timelineRuler';
-	import TimelineClip from './TimelineClip.svelte';
+	import TimelineClipComponent from './TimelineClip.svelte';
 	import TimelineEffectClip from './TimelineEffectClip.svelte';
 	import TimelineEnvelopeClip from './TimelineEnvelopeClip.svelte';
 	
-	export let track: TimelineTrack;
-	export let trackClips: TimelineClip[];
-	export let trackEffects: TimelineEffect[];
-	export let trackEnvelopes: TimelineEnvelope[];
-	export let trackPattern: Pattern | null;
-	export let patterns: Pattern[] = [];
-	export let effects: Effect[];
-	export let envelopes: Envelope[];
-	export let timeline: any;
-	export let pixelsPerBeat: number;
-	export let totalLength: number;
-	export let dragOverRow: string | null;
-	export let dragOverTrackId: string | null;
-	export let draggedTrackId: string | null;
-	export let isResizing: any;
-	export let isDraggingClip: any;
-	export let selectedEffectId: string | null;
-	export let selectedEnvelopeId: string | null;
-	export let getAutomationCurvesForEffect: (effectId: string, timelineEffectId: string) => Array<{ automation: any; parameterKey: string }>;
-	
-	// Event handlers
-	export let onTrackDragStart: (e: DragEvent, trackId: string) => void;
-	export let onTrackDragOver: (e: DragEvent, trackId: string) => void;
-	export let onTrackDragLeave: (e: DragEvent) => void;
-	export let onTrackDrop: (e: DragEvent, trackId: string) => void;
-	export let onRowDragOver: (e: DragEvent) => void;
-	export let onRowDragLeave: (e: DragEvent) => void;
-	export let onRowDrop: (e: DragEvent) => void;
-	export let onRowClick: (e: MouseEvent) => void;
-	export let onRowTouchEnd: ((e: TouchEvent) => void) | undefined = undefined;
-	export let onTrackVolumeMouseDown: (e: MouseEvent, trackId: string) => void;
-	export let onToggleTrackMute: (trackId: string) => void;
-	export let onToggleTrackSolo: (trackId: string) => void;
-	export let onDeleteTrack: (trackId: string) => void;
-	export let onChangeTrackColor: (trackId: string, color: string) => void = () => {};
-	export let onClipMouseDown: (e: MouseEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void;
-	// Optional touch handlers so mobile can reuse clip drag/resize logic without changing desktop behavior
-	export let onClipTouchStart: ((e: TouchEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void) | undefined = undefined;
-	export let onClipTouchMove: ((e: TouchEvent) => void) | undefined = undefined;
-	export let onClipTouchEnd: (() => void) | undefined = undefined;
-	export let onClipClick: (clipId: string, type: 'effect' | 'envelope') => void;
-	export let onClipKeyDown: (clipId: string, type: 'effect' | 'envelope') => void;
-	export let onDeleteClip: (clipId: string, type: 'clip' | 'effect' | 'envelope') => void;
-	export let onAddClipToTimeline: (patternId: string, beat: number, trackId?: string) => void = () => {};
-	export let onAddEffectToTimeline: (effectId: string, beat: number, trackId?: string) => void = () => {};
-	export let onAddEnvelopeToTimeline: (envelopeId: string, beat: number, trackId?: string) => void = () => {};
-	export let findPatternById: (patternId: string | undefined) => Pattern | null;
-export let onUpdateTrackName: (trackId: string, name: string) => void = () => {};
+	const {
+		track,
+		trackClips,
+		trackEffects,
+		trackEnvelopes,
+		trackPattern,
+		patterns = [],
+		effects,
+		envelopes,
+		timeline,
+		pixelsPerBeat,
+		totalLength,
+		dragOverRow,
+		dragOverTrackId,
+		draggedTrackId,
+		isResizing,
+		isDraggingClip,
+		selectedEffectId,
+		selectedEnvelopeId,
+		getAutomationCurvesForEffect,
+		onTrackDragStart,
+		onTrackDragOver,
+		onTrackDragLeave,
+		onTrackDrop,
+		onRowDragOver,
+		onRowDragLeave,
+		onRowDrop,
+		onRowClick,
+		onRowTouchEnd = undefined,
+		onTrackVolumeMouseDown,
+		onToggleTrackMute,
+		onToggleTrackSolo,
+		onDeleteTrack,
+		onChangeTrackColor = () => {},
+		onClipMouseDown,
+		onClipTouchStart = undefined,
+		onClipTouchMove = undefined,
+		onClipTouchEnd = undefined,
+		onClipClick,
+		onClipKeyDown,
+		onDeleteClip,
+		onAddClipToTimeline = () => {},
+		onAddEffectToTimeline = () => {},
+		onAddEnvelopeToTimeline = () => {},
+		findPatternById,
+		onUpdateTrackName = () => {}
+	}: {
+		track: TimelineTrack;
+		trackClips: TimelineClip[];
+		trackEffects: TimelineEffect[];
+		trackEnvelopes: TimelineEnvelope[];
+		trackPattern: Pattern | null;
+		patterns?: Pattern[];
+		effects: Effect[];
+		envelopes: Envelope[];
+		timeline: any;
+		pixelsPerBeat: number;
+		totalLength: number;
+		dragOverRow: string | null;
+		dragOverTrackId: string | null;
+		draggedTrackId: string | null;
+		isResizing: any;
+		isDraggingClip: any;
+		selectedEffectId: string | null;
+		selectedEnvelopeId: string | null;
+		getAutomationCurvesForEffect: (effectId: string, timelineEffectId: string) => Array<{ automation: any; parameterKey: string }>;
+		onTrackDragStart: (e: DragEvent, trackId: string) => void;
+		onTrackDragOver: (e: DragEvent, trackId: string) => void;
+		onTrackDragLeave: (e: DragEvent) => void;
+		onTrackDrop: (e: DragEvent, trackId: string) => void;
+		onRowDragOver: (e: DragEvent) => void;
+		onRowDragLeave: (e: DragEvent) => void;
+		onRowDrop: (e: DragEvent) => void;
+		onRowClick: (e: MouseEvent) => void;
+		onRowTouchEnd?: ((e: TouchEvent) => void) | undefined;
+		onTrackVolumeMouseDown: (e: MouseEvent, trackId: string) => void;
+		onToggleTrackMute: (trackId: string) => void;
+		onToggleTrackSolo: (trackId: string) => void;
+		onDeleteTrack: (trackId: string) => void;
+		onChangeTrackColor?: (trackId: string, color: string) => void;
+		onClipMouseDown: (e: MouseEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void;
+		onClipTouchStart?: ((e: TouchEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void) | undefined;
+		onClipTouchMove?: ((e: TouchEvent) => void) | undefined;
+		onClipTouchEnd?: (() => void) | undefined;
+		onClipClick: (clipId: string, type: 'effect' | 'envelope') => void;
+		onClipKeyDown: (clipId: string, type: 'effect' | 'envelope') => void;
+		onDeleteClip: (clipId: string, type: 'clip' | 'effect' | 'envelope') => void;
+		onAddClipToTimeline?: (patternId: string, beat: number, trackId?: string) => void;
+		onAddEffectToTimeline?: (effectId: string, beat: number, trackId?: string) => void;
+		onAddEnvelopeToTimeline?: (envelopeId: string, beat: number, trackId?: string) => void;
+		findPatternById: (patternId: string | undefined) => Pattern | null;
+		onUpdateTrackName?: (trackId: string, name: string) => void;
+	} = $props();
 
-	let isEditingName = false;
-	let editingName = '';
-	let nameInput: HTMLInputElement | null = null;
+	let isEditingName = $state(false);
+	let editingName = $state('');
+	let nameInput: HTMLInputElement | null = $state(null);
 
-	$: if (!isEditingName) {
-		editingName = track.name;
-	}
+	$effect(() => {
+		if (!isEditingName) {
+			editingName = track.name;
+		}
+	});
 
-	$: gridLines = generateGridLines(totalLength, pixelsPerBeat);
-	$: defaultColors = {
+	const gridLines = $derived(generateGridLines(totalLength, pixelsPerBeat));
+	const defaultColors = $derived({
 		pattern: '#7ab8ff',
 		effect: '#9b59b6',
 		envelope: '#2ecc71'
-	};
-	$: trackColor = track.color || defaultColors[track.type];
-	$: rowLabelBackground = trackColor + '20';
-	$: hasSoloedTrack = timeline.tracks?.some((t: any) => t.type === 'pattern' && t.solo === true) || false;
-	$: isGreyedOut = track.mute || (hasSoloedTrack && !track.solo);
+	});
+	const trackColor = $derived(track.color || defaultColors[track.type]);
+	const rowLabelBackground = $derived(trackColor + '20');
+	const hasSoloedTrack = $derived(timeline.tracks?.some((t: any) => t.type === 'pattern' && t.solo === true) || false);
+	const isGreyedOut = $derived(track.mute || (hasSoloedTrack && !track.solo));
 	
 	// Available color swatches matching the theme
 	const colorSwatches = [
@@ -90,10 +137,10 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 	];
 	
 	// Context menu state
-	let contextMenuOpen = false;
-	let contextMenuX = 0;
-	let contextMenuY = 0;
-	let contextMenuElement: HTMLElement | null = null;
+	let contextMenuOpen = $state(false);
+	let contextMenuX = $state(0);
+	let contextMenuY = $state(0);
+	let contextMenuElement: HTMLElement | null = $state(null);
 	
 	function handleContextMenu(e: MouseEvent) {
 		e.preventDefault();
@@ -276,9 +323,11 @@ export let onUpdateTrackName: (trackId: string, name: string) => void = () => {}
 				{#each trackClips as clip}
 					{@const clipPattern = findPatternById(clip.patternId)}
 					{#if clipPattern}
-						<TimelineClip
+						<TimelineClipComponent
 							{clip}
 							pattern={clipPattern}
+							trackVolume={track.volume ?? 1.0}
+							trackId={track.id}
 							{pixelsPerBeat}
 							isDragging={isDraggingClip?.id === clip.id && isDraggingClip?.type === 'clip'}
 							{isGreyedOut}

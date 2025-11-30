@@ -7,11 +7,16 @@
 
 	// Allow explicit viewMode prop to override store value
 	// Also allow specifying if this is a pattern editor (which uses canvas) vs pattern list view
-	export let viewMode: 'arrangement' | 'pattern' | null = null;
-	export let isPatternEditor: boolean = false;
+	const {
+		viewMode = null,
+		isPatternEditor = false
+	}: {
+		viewMode?: 'arrangement' | 'pattern' | null;
+		isPatternEditor?: boolean;
+	} = $props();
 
 	// Use prop if provided, otherwise use store value
-	$: effectiveViewMode = viewMode ?? $viewStore;
+	const effectiveViewMode = $derived(viewMode ?? $viewStore);
 </script>
 
 <div class="project-skeleton">

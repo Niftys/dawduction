@@ -3,11 +3,14 @@
 	import { projectStore } from '$lib/stores/projectStore';
 	import { loadingStore } from '$lib/stores/loadingStore';
 	import { goto } from '$app/navigation';
-	import { createEventDispatcher } from 'svelte';
 
-	export let isOpen = false;
-
-	const dispatch = createEventDispatcher();
+	let {
+		isOpen = $bindable(false),
+		onClose
+	}: {
+		isOpen?: boolean;
+		onClose?: () => void;
+	} = $props();
 
 	let projects: any[] = [];
 	let loading = false;
@@ -30,13 +33,15 @@
 		loading = false;
 	}
 
-	$: if (isOpen) {
-		loadProjects();
-	}
+	$effect(() => {
+		if (isOpen) {
+			loadProjects();
+		}
+	});
 
 	function closeModal() {
 		isOpen = false;
-		dispatch('close');
+		onClose?.();
 	}
 
 	async function openProject(projectId: string) {

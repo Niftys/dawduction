@@ -3,41 +3,48 @@
 	import { page } from '$app/stores';
 	import { onMount, onDestroy } from 'svelte';
 	import type { Effect, Envelope } from '$lib/types/effects';
+	import { effectPluginStore } from '$lib/stores/effectPluginStore';
 	import '$lib/styles/components/EffectsEnvelopesPanel.css';
 
-	let project: any;
+	let project: any = $state(null);
 	projectStore.subscribe((p) => (project = p));
 
-	let activeTab: 'effects' | 'envelopes' = 'effects';
+	let activeTab: 'effects' | 'envelopes' = $state('effects');
 	
 	// Rename state
-	let editingEffectId: string | null = null;
-	let editingEnvelopeId: string | null = null;
-	let editingEffectInput: HTMLInputElement | null = null;
-	let editingEnvelopeInput: HTMLInputElement | null = null;
+	let editingEffectId: string | null = $state(null);
+	let editingEnvelopeId: string | null = $state(null);
+	let editingEffectInput: HTMLInputElement | null = $state(null);
+	let editingEnvelopeInput: HTMLInputElement | null = $state(null);
 	
 	// Focus inputs when editing starts
-	$: if (editingEffectId && editingEffectInput) {
-		setTimeout(() => editingEffectInput?.focus(), 0);
-	}
-	$: if (editingEnvelopeId && editingEnvelopeInput) {
-		setTimeout(() => editingEnvelopeInput?.focus(), 0);
-	}
+	$effect(() => {
+		if (editingEffectId && editingEffectInput) {
+			setTimeout(() => editingEffectInput?.focus(), 0);
+		}
+	});
+	$effect(() => {
+		if (editingEnvelopeId && editingEnvelopeInput) {
+			setTimeout(() => editingEnvelopeInput?.focus(), 0);
+		}
+	});
 	
 	// Dropdown state
-	let showEffectDropdown = false;
-	let showEnvelopeDropdown = false;
+	let showEffectDropdown = $state(false);
+	let showEnvelopeDropdown = $state(false);
 	
-	$: effects = project?.effects || [];
-	$: envelopes = project?.envelopes || [];
-	$: projectId = $page.params.id;
+	const effects = $derived(project?.effects || []);
+	const envelopes = $derived(project?.envelopes || []);
+	const projectId = $derived($page.params.id);
 
 	const effectTypes: Array<{ value: Effect['type']; label: string }> = [
+		{ value: 'equalizer', label: 'Equalizer' },
+		{ value: 'compressor', label: 'Compressor' },
 		{ value: 'reverb', label: 'Reverb' },
 		{ value: 'delay', label: 'Delay' },
 		{ value: 'filter', label: 'Filter' },
+		{ value: 'saturator', label: 'Saturator' },
 		{ value: 'distortion', label: 'Distortion' },
-		{ value: 'compressor', label: 'Compressor' },
 		{ value: 'chorus', label: 'Chorus' }
 	];
 
@@ -127,8 +134,13 @@
 		};
 	});
 
-	export let onDragStart: ((e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
-	export let onTouchDragStart: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined = undefined;
+	const {
+		onDragStart = undefined,
+		onTouchDragStart = undefined
+	}: {
+		onDragStart?: ((e: DragEvent, data: { type: 'effect' | 'envelope', id: string }) => void) | undefined;
+		onTouchDragStart?: ((data: { type: 'effect' | 'envelope', id: string }) => void) | undefined;
+	} = $props();
 	
 	function handleEffectTouchStart(e: TouchEvent, effectId: string) {
 		if (editingEffectId !== effectId && e.touches.length === 1 && onTouchDragStart) {
@@ -172,6 +184,19 @@
 				onDragStart(e, data);
 			}
 		}
+	}
+
+	function openPluginWindow(effect: Effect) {
+		if (effect.type !== 'equalizer') {
+			return;
+		}
+		
+		effectPluginStore.openWindow({
+			id: effect.id,
+			effectType: 'equalizer',
+			effectId: effect.id,
+			label: effect.name
+		});
 	}
 </script>
 
@@ -231,12 +256,14 @@
 				</div>
 				<div class="items-list">
 					{#each effects as effect}
-						<button
-							class="item {effect.type}"
-							draggable={editingEffectId !== effect.id}
-							on:dragstart={(e) => handleEffectDragStart(e, effect.id)}
-							on:touchstart={(e) => handleEffectTouchStart(e, effect.id)}
-						>
+					<div
+						class="item {effect.type}"
+						draggable={editingEffectId !== effect.id}
+						on:dragstart={(e) => handleEffectDragStart(e, effect.id)}
+						on:touchstart={(e) => handleEffectTouchStart(e, effect.id)}
+						role="button"
+						tabindex="0"
+					>
 							<div class="item-color" style="background: {effect.color};"></div>
 							{#if editingEffectId === effect.id}
 								<input
@@ -277,6 +304,15 @@
 								</span>
 							{/if}
 							<span class="item-type">{effect.type}</span>
+							{#if effect.type === 'equalizer'}
+								<button 
+									class="item-plugin" 
+									on:click|stopPropagation={() => openPluginWindow(effect)} 
+									title="Open plugin window"
+								>
+									🔌
+								</button>
+							{/if}
 							<button 
 								class="item-delete" 
 								on:click|stopPropagation={() => deleteEffect(effect.id)} 
@@ -284,7 +320,7 @@
 							>
 								×
 							</button>
-						</button>
+						</div>
 					{/each}
 					{#if effects.length === 0}
 						<div class="empty-state">No effects yet. Create one above!</div>
@@ -330,12 +366,14 @@
 				</div>
 				<div class="items-list">
 					{#each envelopes as envelope}
-						<button
-							class="item {envelope.type}"
-							draggable={editingEnvelopeId !== envelope.id}
-							on:dragstart={(e) => handleEnvelopeDragStart(e, envelope.id)}
-							on:touchstart={(e) => handleEnvelopeTouchStart(e, envelope.id)}
-						>
+					<div
+						class="item {envelope.type}"
+						draggable={editingEnvelopeId !== envelope.id}
+						on:dragstart={(e) => handleEnvelopeDragStart(e, envelope.id)}
+						on:touchstart={(e) => handleEnvelopeTouchStart(e, envelope.id)}
+						role="button"
+						tabindex="0"
+					>
 							<div class="item-color" style="background: {envelope.color};"></div>
 							{#if editingEnvelopeId === envelope.id}
 								<input
@@ -376,14 +414,14 @@
 								</span>
 							{/if}
 							<span class="item-type">{envelope.type}</span>
-							<button 
-								class="item-delete" 
-								on:click|stopPropagation={() => deleteEnvelope(envelope.id)} 
-								title="Delete envelope"
-							>
-								×
-							</button>
+						<button 
+							class="item-delete" 
+							on:click|stopPropagation={() => deleteEnvelope(envelope.id)} 
+							title="Delete envelope"
+						>
+							×
 						</button>
+					</div>
 					{/each}
 					{#if envelopes.length === 0}
 						<div class="empty-state">No envelopes yet. Create one above!</div>

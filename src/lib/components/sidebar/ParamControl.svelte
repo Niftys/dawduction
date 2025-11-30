@@ -6,23 +6,39 @@
 	import NumericInput from './NumericInput.svelte';
 
 	const fallbackId = `param-${Math.random().toString(36).slice(2)}`;
-	export let id: string = fallbackId;
-	export let label: string;
-	export let value: number;
-	export let min: number;
-	export let max: number;
-	export let step: number;
-	export let onUpdate: ((value: number) => void) | undefined = undefined;
-	export let onChange: ((value: number) => void) | undefined = undefined;
-	export let resetValue: number | undefined = undefined;
-	export let onReset: (() => void) | undefined = undefined;
-	
-	// Automation props
-	export let automationTargetType: 'effect' | 'envelope' | null = null;
-	export let automationTargetId: string | null = null;
-	export let automationParameterKey: string | null = null;
-	export let automationTimelineInstanceId: string | null = null;
-	export let automationLabel: string | null = null;
+	const {
+		id = fallbackId,
+		label,
+		value,
+		min,
+		max,
+		step,
+		onUpdate = undefined,
+		onChange = undefined,
+		resetValue = undefined,
+		onReset = undefined,
+		automationTargetType = null,
+		automationTargetId = null,
+		automationParameterKey = null,
+		automationTimelineInstanceId = null,
+		automationLabel = null
+	}: {
+		id?: string;
+		label: string;
+		value: number;
+		min: number;
+		max: number;
+		step: number;
+		onUpdate?: ((value: number) => void) | undefined;
+		onChange?: ((value: number) => void) | undefined;
+		resetValue?: number | undefined;
+		onReset?: (() => void) | undefined;
+		automationTargetType?: 'effect' | 'envelope' | null;
+		automationTargetId?: string | null;
+		automationParameterKey?: string | null;
+		automationTimelineInstanceId?: string | null;
+		automationLabel?: string | null;
+	} = $props();
 
 	let isDragging = false;
 	let sliderElement: HTMLInputElement;

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import LoadingSpinner from './LoadingSpinner.svelte';
 	
-	export let message: string | null = null;
+	const { message = null }: { message?: string | null } = $props();
 </script>
 
 <div class="loading-screen">

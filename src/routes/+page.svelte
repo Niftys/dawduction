@@ -189,22 +189,22 @@
 <!-- Auth Modal -->
 <AuthModal 
 	bind:isOpen={showAuthModal} 
-	on:success={handleAuthSuccess}
-	on:close={() => showAuthModal = false}
+	onSuccess={handleAuthSuccess}
+	onClose={() => showAuthModal = false}
 />
 
 <!-- Projects Modal -->
 {#if user}
 	<ProjectsModal 
 		bind:isOpen={showProjectsModal}
-		on:close={() => showProjectsModal = false}
+		onClose={() => showProjectsModal = false}
 	/>
 {/if}
 
 <!-- Sandbox Modal -->
 <SandboxModal 
 	bind:isOpen={showSandboxModal}
-	on:enter={handleEnterSandbox}
-	on:close={() => showSandboxModal = false}
+	onEnter={handleEnterSandbox}
+	onClose={() => showSandboxModal = false}
 />
 

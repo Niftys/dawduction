@@ -18,6 +18,15 @@ const synthsDir = path.join(projectRoot, 'src/lib/audio/synths');
 const outputPath = path.join(projectRoot, 'static/EngineWorkletProcessor.js');
 
 // Module files in order (dependencies first)
+// Note: Utility files and effect handlers must come before EffectsProcessor
+const utilityFiles = [
+	'utils/FilterUtils.js'
+];
+
+const effectHandlerFiles = [
+	'effects/EffectHandlers.js'
+];
+
 const moduleFiles = [
 	'TrackStateManager.js',
 	'PlaybackController.js',
@@ -59,8 +68,36 @@ const melodicSynthFiles = [
 function buildWorklet() {
 	console.log('Building AudioWorklet processor...');
 	
+	// Read and concatenate utility files first
+	let modulesCode = '\n\n// ========== UTILITIES ==========\n\n';
+	
+	for (const utilityFile of utilityFiles) {
+		const utilityPath = path.join(modulesDir, utilityFile);
+		if (fs.existsSync(utilityPath)) {
+			console.log(`  Adding utility ${utilityFile}...`);
+			const utilityCode = fs.readFileSync(utilityPath, 'utf8');
+			modulesCode += utilityCode + '\n\n';
+		} else {
+			console.warn(`  Warning: ${utilityFile} not found, skipping...`);
+		}
+	}
+	
+	// Read and concatenate effect handler files
+	modulesCode += '\n\n// ========== EFFECT HANDLERS ==========\n\n';
+	
+	for (const effectHandlerFile of effectHandlerFiles) {
+		const effectHandlerPath = path.join(modulesDir, effectHandlerFile);
+		if (fs.existsSync(effectHandlerPath)) {
+			console.log(`  Adding effect handler ${effectHandlerFile}...`);
+			const effectHandlerCode = fs.readFileSync(effectHandlerPath, 'utf8');
+			modulesCode += effectHandlerCode + '\n\n';
+		} else {
+			console.warn(`  Warning: ${effectHandlerFile} not found, skipping...`);
+		}
+	}
+	
 	// Read and concatenate all module files
-	let modulesCode = '\n\n// ========== MODULES ==========\n\n';
+	modulesCode += '\n\n// ========== MODULES ==========\n\n';
 	
 	for (const moduleFile of moduleFiles) {
 		const modulePath = path.join(modulesDir, moduleFile);

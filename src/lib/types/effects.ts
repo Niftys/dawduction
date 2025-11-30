@@ -2,7 +2,7 @@ export interface Effect {
 	id: string;
 	projectId: string;
 	name: string;
-	type: 'reverb' | 'delay' | 'filter' | 'distortion' | 'compressor' | 'chorus';
+	type: 'reverb' | 'delay' | 'filter' | 'distortion' | 'compressor' | 'chorus' | 'saturator' | 'equalizer';
 	settings: Record<string, any>;
 	color: string;
 	createdAt: number;

@@ -5,21 +5,35 @@
 	import { beatToPixel } from '$lib/utils/timelineUtils';
 	import { generateAutomationCurvePath } from '$lib/utils/automationCurve';
 
-	export let timelineEffect: TimelineEffect;
-	export let effect: Effect;
-	export let pixelsPerBeat: number;
-	export let isSelected: boolean;
-	export let isDragging: boolean;
-	export let automationCurves: Array<{ automation: any; parameterKey: string }>;
-	export let onMouseDown: (e: MouseEvent) => void;
-	export let onClick: (e: MouseEvent) => void;
-	export let onKeyDown: (e: KeyboardEvent) => void;
-	export let onContextMenu: (e: MouseEvent) => void;
-	export let onDelete: (() => void) | undefined = undefined;
+	const {
+		timelineEffect,
+		effect,
+		pixelsPerBeat,
+		isSelected,
+		isDragging,
+		automationCurves,
+		onMouseDown,
+		onClick,
+		onKeyDown,
+		onContextMenu,
+		onDelete = undefined
+	}: {
+		timelineEffect: TimelineEffect;
+		effect: Effect;
+		pixelsPerBeat: number;
+		isSelected: boolean;
+		isDragging: boolean;
+		automationCurves: Array<{ automation: any; parameterKey: string }>;
+		onMouseDown: (e: MouseEvent) => void;
+		onClick: (e: MouseEvent) => void;
+		onKeyDown: (e: KeyboardEvent) => void;
+		onContextMenu: (e: MouseEvent) => void;
+		onDelete?: (() => void) | undefined;
+	} = $props();
 
-	$: effectLeft = beatToPixel(timelineEffect.startBeat, pixelsPerBeat);
-	$: effectWidth = Math.max(20, beatToPixel(timelineEffect.duration, pixelsPerBeat));
-	$: clipHeight = TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT - 18;
+	const effectLeft = $derived(beatToPixel(timelineEffect.startBeat, pixelsPerBeat));
+	const effectWidth = $derived(Math.max(20, Math.min(beatToPixel(timelineEffect.duration, pixelsPerBeat), 10000))); // Clamp to prevent extreme values
+	const clipHeight = $derived(TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT - 18);
 </script>
 
 <div

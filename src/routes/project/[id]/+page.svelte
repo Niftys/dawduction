@@ -23,6 +23,8 @@
 	import { automationStore } from '$lib/stores/automationStore';
 	import SynthPluginWindow from '$lib/components/SynthPluginWindow.svelte';
 	import { synthPluginStore } from '$lib/stores/synthPluginStore';
+	import EffectPluginWindow from '$lib/components/EffectPluginWindow.svelte';
+	import { effectPluginStore } from '$lib/stores/effectPluginStore';
 	import { engineStore } from '$lib/stores/engineStore';
 	import { generateEnvelopeCurvePath } from '$lib/utils/envelopeCurve';
 	import { generateAutomationCurvePath } from '$lib/utils/automationCurve';
@@ -674,11 +676,66 @@
 		}
 	}
 
-	function handleDragOver(e: DragEvent, patternId?: string) {
+	function handleDragOver(e: DragEvent, patternId?: string, rowType?: 'pattern' | 'effect' | 'envelope') {
 		if (viewMode !== 'arrangement') return;
+		
+		// Check what's being dragged
+		let dragType: 'effect' | 'envelope' | 'pattern' | null = null;
+		
+		// First, try to get drag type from JSON data
+		try {
+			const dragData = e.dataTransfer?.getData('application/json');
+			if (dragData) {
+				const data = JSON.parse(dragData);
+				if (data.type === 'effect' || data.type === 'envelope' || data.type === 'pattern') {
+					dragType = data.type;
+				}
+			}
+		} catch (err) {
+			// Not JSON data, continue
+		}
+		
+		// If no drag type from JSON, check state variables (for touch drags)
+		if (!dragType) {
+			if (draggedEffectId) {
+				dragType = 'effect';
+			} else if (draggedEnvelopeId) {
+				dragType = 'envelope';
+			} else if (draggedPatternId) {
+				dragType = 'pattern';
+			}
+		}
+		
+		// If we know what's being dragged, check if types match
+		if (dragType && rowType) {
+			if (dragType === 'effect' && rowType !== 'effect') {
+				// Dragging effect but not over effect track - reject
+				if (e.dataTransfer) {
+					e.dataTransfer.dropEffect = 'none';
+				}
+				return;
+			}
+			if (dragType === 'envelope' && rowType !== 'envelope') {
+				// Dragging envelope but not over envelope track - reject
+				if (e.dataTransfer) {
+					e.dataTransfer.dropEffect = 'none';
+				}
+				return;
+			}
+			if (dragType === 'pattern' && rowType !== 'pattern') {
+				// Dragging pattern but not over pattern track - reject
+				if (e.dataTransfer) {
+					e.dataTransfer.dropEffect = 'none';
+				}
+				return;
+			}
+			// Types match - allow drag over
+		}
+		// If we don't know what's being dragged or rowType, allow it (might be track reordering or other drag)
+		
 		e.preventDefault();
 		if (e.dataTransfer) {
-			e.dataTransfer.dropEffect = 'copy';
+			e.dataTransfer.dropEffect = dragType ? 'copy' : 'move';
 		}
 		if (patternId) {
 			dragOverRow = patternId;
@@ -1884,9 +1941,63 @@
 								onTrackDragLeave={handleTrackDragLeave}
 								onTrackDrop={handleTrackDrop}
 								onRowDragOver={(e) => {
+									// Check what's being dragged and only allow if types match
+									let dragType: 'effect' | 'envelope' | 'pattern' | null = null;
+									
+									// First, try to get drag type from JSON data
+									try {
+										const dragData = e.dataTransfer?.getData('application/json');
+										if (dragData) {
+											const data = JSON.parse(dragData);
+											if (data.type === 'effect' || data.type === 'envelope' || data.type === 'pattern') {
+												dragType = data.type;
+											}
+										}
+									} catch (err) {
+										// Not JSON data, continue
+									}
+									
+									// If no drag type from JSON, check state variables (for touch drags)
+									if (!dragType) {
+										if (draggedEffectId) {
+											dragType = 'effect';
+										} else if (draggedEnvelopeId) {
+											dragType = 'envelope';
+										} else if (draggedPatternId) {
+											dragType = 'pattern';
+										}
+									}
+									
+									// If we know what's being dragged, check if types match
+									if (dragType) {
+										if (dragType === 'effect' && track.type !== 'effect') {
+											// Dragging effect but not over effect track - reject
+											if (e.dataTransfer) {
+												e.dataTransfer.dropEffect = 'none';
+											}
+											return;
+										}
+										if (dragType === 'envelope' && track.type !== 'envelope') {
+											// Dragging envelope but not over envelope track - reject
+											if (e.dataTransfer) {
+												e.dataTransfer.dropEffect = 'none';
+											}
+											return;
+										}
+										if (dragType === 'pattern' && track.type !== 'pattern') {
+											// Dragging pattern but not over pattern track - reject
+											if (e.dataTransfer) {
+												e.dataTransfer.dropEffect = 'none';
+											}
+											return;
+										}
+										// Types match - allow drag over
+									}
+									// If we don't know what's being dragged, allow it (might be track reordering or other drag)
+									
 									e.preventDefault();
 									if (e.dataTransfer) {
-										e.dataTransfer.dropEffect = 'copy';
+										e.dataTransfer.dropEffect = dragType ? 'copy' : 'move';
 									}
 									dragOverRow = track.id;
 								}}
@@ -1983,6 +2094,13 @@
 		{/if}
 	</div>
 </div>
+{/if}
+
+<!-- Effect Plugin Windows -->
+{#if $effectPluginStore.length > 0}
+	{#each $effectPluginStore as window}
+		<EffectPluginWindow {window} />
+	{/each}
 {/if}
 
 <!-- Delete Pattern Confirmation Dialog -->

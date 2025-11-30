@@ -9,6 +9,7 @@ import { flattenTrackPattern } from '../utils/eventFlatten';
 export class EngineWorklet {
 	private audioContext: AudioContext;
 	private workletNode: AudioWorkletNode | null = null;
+	private analyserNode: AnalyserNode | null = null;
 	private isInitialized = false;
 
 	constructor() {
@@ -20,6 +21,13 @@ export class EngineWorklet {
 	 */
 	getAudioContext(): AudioContext {
 		return this.audioContext;
+	}
+
+	/**
+	 * Get the AnalyserNode for waveform visualization
+	 */
+	getAnalyserNode(): AnalyserNode | null {
+		return this.analyserNode;
 	}
 
 	async initialize(): Promise<void> {
@@ -35,8 +43,15 @@ export class EngineWorklet {
 				'engine-worklet-processor'
 			);
 
-			// Connect to output
-			this.workletNode.connect(this.audioContext.destination);
+			// Create analyser node for waveform visualization
+			// Use larger FFT size for better frequency resolution
+			this.analyserNode = this.audioContext.createAnalyser();
+			this.analyserNode.fftSize = 8192; // Higher resolution (4096 bins)
+			this.analyserNode.smoothingTimeConstant = 0.3; // Less smoothing for more responsive visualization
+
+			// Connect worklet -> analyser -> destination
+			this.workletNode.connect(this.analyserNode);
+			this.analyserNode.connect(this.audioContext.destination);
 
 			// Set up message handler
 			this.workletNode.port.onmessage = (event) => {

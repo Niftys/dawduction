@@ -5,10 +5,9 @@
 	import { onMount } from 'svelte';
 	import '$lib/styles/components/AutomationCurveEditor.css';
 
-	export let automationWindow: import('$lib/stores/automationStore').OpenAutomationWindow;
+	const { automationWindow }: { automationWindow: import('$lib/stores/automationStore').OpenAutomationWindow } = $props();
 
-	let project: any;
-	$: project = $projectStore;
+	const project = $derived($projectStore);
 
 	let canvas: HTMLCanvasElement;
 	let ctx: CanvasRenderingContext2D | null = null;
@@ -17,23 +16,23 @@
 	let hoveredPointIndex: number | null = null;
 
 	// Timeline viewport
-	let viewStartBeat = 0;
-	let viewEndBeat = 32; // Default to 32 beats view
+	let viewStartBeat = $state(0);
+	let viewEndBeat = $state(32); // Default to 32 beats view
 	let viewHeight = 200;
 	let viewWidth = 0;
 
 	// Get automation data - reactive to project changes
 	// Use project.automation directly to ensure reactivity
-	$: automation = (() => {
+	const automation = $derived((() => {
 		if (!project || !project.automation) return null;
 		const automationId = automationWindow.timelineInstanceId 
 			? `${automationWindow.targetType}:${automationWindow.targetId}:${automationWindow.timelineInstanceId}:${automationWindow.parameterKey}`
 			: `${automationWindow.targetType}:${automationWindow.targetId}:${automationWindow.parameterKey}`;
 		return (project.automation as any)[automationId] || null;
-	})();
+	})());
 
 	// Get timeline effect/envelope duration if on timeline
-	$: timelineObject = (() => {
+	const timelineObject = $derived((() => {
 		if (!automationWindow.timelineInstanceId || !project?.timeline) return null;
 		
 		if (automationWindow.targetType === 'effect') {
@@ -41,10 +40,10 @@
 		} else {
 			return project.timeline.envelopes?.find((e: any) => e.id === automationWindow.timelineInstanceId);
 		}
-	})();
+	})());
 
 	// Set beat range based on timeline object or full timeline
-	$: {
+	$effect(() => {
 		if (timelineObject) {
 			viewStartBeat = timelineObject.startBeat || 0;
 			viewEndBeat = (timelineObject.startBeat || 0) + (timelineObject.duration || 32);
@@ -52,12 +51,12 @@
 			viewStartBeat = 0;
 			viewEndBeat = project?.timeline?.totalLength || 32;
 		}
-	}
+	});
 
-	$: timelineLength = viewEndBeat;
+	const timelineLength = $derived(viewEndBeat);
 
 	// Get parameter min/max from effect/envelope
-	$: paramMin = (() => {
+	const paramMin = $derived((() => {
 		if (automationWindow.targetType === 'effect') {
 			const effect = project?.effects?.find((e: any) => e.id === automationWindow.targetId);
 			if (effect) {
@@ -71,9 +70,9 @@
 			}
 		}
 		return automation?.min ?? 0;
-	})();
+	})());
 
-	$: paramMax = (() => {
+	const paramMax = $derived((() => {
 		if (automationWindow.targetType === 'effect') {
 			const effect = project?.effects?.find((e: any) => e.id === automationWindow.targetId);
 			if (effect) {
@@ -86,12 +85,12 @@
 			}
 		}
 		return automation?.max ?? 1;
-	})();
+	})());
 
-	$: points = automation?.points || [];
+	const points = $derived(automation?.points || []);
 
 	// Watch for points changes - use stringified version to detect array changes
-	$: pointsKey = points ? JSON.stringify(points) : '';
+	const pointsKey = $derived(points ? JSON.stringify(points) : '');
 
 	onMount(() => {
 		if (canvas) {
@@ -411,17 +410,19 @@
 	// Single reactive statement to handle all redraws - prevents infinite loops
 	let redrawTrigger = 0;
 	// Combine all dependencies into a single reactive key to prevent multiple triggers
-	$: redrawKey = `${pointsKey}-${viewStartBeat}-${viewEndBeat}-${automation?.points?.length || 0}-${paramMin}-${paramMax}`;
-	$: if (canvas && ctx && redrawKey) {
-		// Debounce with requestAnimationFrame to prevent excessive redraws
-		cancelAnimationFrame(redrawTrigger);
-		redrawTrigger = requestAnimationFrame(() => {
-			if (canvas && ctx) {
-				updateCanvasSize();
-				draw();
-			}
-		});
-	}
+	const redrawKey = $derived(`${pointsKey}-${viewStartBeat}-${viewEndBeat}-${automation?.points?.length || 0}-${paramMin}-${paramMax}`);
+	$effect(() => {
+		if (canvas && ctx && redrawKey) {
+			// Debounce with requestAnimationFrame to prevent excessive redraws
+			cancelAnimationFrame(redrawTrigger);
+			redrawTrigger = requestAnimationFrame(() => {
+				if (canvas && ctx) {
+					updateCanvasSize();
+					draw();
+				}
+			});
+		}
+	});
 </script>
 
 <div class="automation-window">

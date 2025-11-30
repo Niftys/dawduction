@@ -1,10 +1,17 @@
 <script lang="ts">
 	import type { Pattern, PatternNode, Instrument } from '$lib/types/pattern';
 	
-	export let pattern: Pattern;
-	export let onClick: () => void;
-	export let onDelete: ((patternId: string) => void) | null = null;
-	export let onCopy: ((patternId: string) => void) | null = null;
+	const {
+		pattern,
+		onClick,
+		onDelete = null,
+		onCopy = null
+	}: {
+		pattern: Pattern;
+		onClick: () => void;
+		onDelete?: ((patternId: string) => void) | null;
+		onCopy?: ((patternId: string) => void) | null;
+	} = $props();
 	
 	// Helper to mute color for preview
 	function muteColor(color: string): string {
@@ -213,9 +220,10 @@
 	let canvas: HTMLCanvasElement;
 	let canvasContext: CanvasRenderingContext2D | null = null;
 	
-	$: if (canvas && pattern) {
-		canvasContext = canvas.getContext('2d');
-		if (canvasContext) {
+	$effect(() => {
+		if (canvas && pattern) {
+			canvasContext = canvas.getContext('2d');
+			if (canvasContext) {
 			// Clear canvas
 			canvasContext.clearRect(0, 0, canvas.width, canvas.height);
 			
@@ -311,7 +319,8 @@
 				}
 			}
 		}
-	}
+		}
+	});
 </script>
 
 <div class="pattern-card" on:click={onClick} role="button" tabindex="0" on:keydown={(e) => {

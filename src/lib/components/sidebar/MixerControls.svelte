@@ -4,29 +4,35 @@ import { projectStore } from '$lib/stores/projectStore';
 import { engineStore } from '$lib/stores/engineStore';
 import { selectionStore } from '$lib/stores/selectionStore';
 import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
-import NumericInput from './NumericInput.svelte';
+	import NumericInput from './NumericInput.svelte';
 	
-	export let selectedTrack: StandaloneInstrument | undefined = undefined;
-	export const selectedPattern: Pattern | undefined = undefined;
-	export let selectedInstrument: any = undefined;
+	const {
+		selectedTrack = undefined,
+		selectedPattern = undefined,
+		selectedInstrument = undefined
+	}: {
+		selectedTrack?: StandaloneInstrument | undefined;
+		selectedPattern?: Pattern | undefined;
+		selectedInstrument?: any;
+	} = $props();
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));
 	
-	let project: any = null;
+	let project: any = $state(null);
 	projectStore.subscribe((p) => (project = p));
 	
-	let selection: any = null;
+	let selection: any = $state(null);
 	selectionStore.subscribe((s) => (selection = s));
 
 	let isDraggingVolume = false;
 	let isDraggingPan = false;
 
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	// Read directly from project store using selection IDs to ensure reactivity
 	// This ensures we always get the latest values from the store, not stale prop references
-	$: itemVolume = (() => {
+	const itemVolume = $derived((() => {
 		if (!project || !selection) return 1.0;
 		
 		// Check for pattern instrument first
@@ -59,9 +65,9 @@ import NumericInput from './NumericInput.svelte';
 		}
 		
 		return 1.0;
-	})();
+	})());
 	
-	$: itemPan = (() => {
+	const itemPan = $derived((() => {
 		if (!project || !selection) return 0.0;
 		
 		// Check for pattern instrument first
@@ -94,7 +100,7 @@ import NumericInput from './NumericInput.svelte';
 		}
 		
 		return 0.0;
-	})();
+	})());
 
 	function getInputValue(e: Event): string {
 		const target = e.target as HTMLInputElement;

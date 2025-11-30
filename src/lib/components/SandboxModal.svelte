@@ -1,17 +1,21 @@
 <script lang="ts">
-	import { createEventDispatcher } from 'svelte';
-
-	export let isOpen = false;
-
-	const dispatch = createEventDispatcher();
+	let {
+		isOpen = $bindable(false),
+		onClose,
+		onEnter
+	}: {
+		isOpen?: boolean;
+		onClose?: () => void;
+		onEnter?: () => void;
+	} = $props();
 
 	function closeModal() {
 		isOpen = false;
-		dispatch('close');
+		onClose?.();
 	}
 
 	function handleEnterSandbox() {
-		dispatch('enter');
+		onEnter?.();
 		closeModal();
 	}
 

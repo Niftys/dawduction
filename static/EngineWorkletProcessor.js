@@ -1,5 +1,776 @@
 
 
+// ========== UTILITIES ==========
+
+/**
+ * Shared filter utilities for audio effects
+ * Provides common filter implementations and coefficient calculations
+ */
+
+// Note: This file is concatenated with other modules, so we use a global class
+class FilterUtils {
+	/**
+	 * Flush extremely small float values to zero to avoid denormals/subnormals
+	 * Denormals can severely impact CPU performance in deep tails/low frequencies.
+	 */
+	static flushDenormals(x) {
+		// Threshold tuned to be inaudible and effective for JS engines
+		return (x > -1e-20 && x < 1e-20) ? 0 : x;
+	}
+
+	/**
+	 * Calculate filter coefficients (cached to avoid recalculating every sample)
+	 * @param {number} cutoff - Cutoff frequency
+	 * @param {number} q - Q factor
+	 * @param {string} type - Filter type ('lowpass', 'highpass', 'bandpass', 'notch', 'bell', 'lowshelf', 'highshelf')
+	 * @param {number} gain - Gain in dB (for bell, notch, shelf filters)
+	 * @param {number} sampleRate - Sample rate
+	 * @returns {Object} Filter coefficients
+	 */
+	static calculateFilterCoeffs(cutoff, q, type, gain, sampleRate) {
+		const clampedCutoff = Math.max(20, Math.min(20000, cutoff));
+		const w0 = 2.0 * Math.PI * clampedCutoff / sampleRate;
+		const cosw0 = Math.cos(w0);
+		const sinw0 = Math.sin(w0);
+		const A = Math.pow(10, (gain || 0) / 40);
+		const alpha = sinw0 / (2.0 * q);
+		
+		if (type === 'lowpass') {
+			const c = 1.0 / Math.tan(Math.PI * clampedCutoff / sampleRate);
+			const a1 = 1.0 / (1.0 + q * c + c * c);
+			return {
+				a1: a1,
+				a2: 2 * a1,
+				a3: a1,
+				b1: 2.0 * (1.0 - c * c) * a1,
+				b2: (1.0 - q * c + c * c) * a1,
+				a0: 1
+			};
+		} else if (type === 'highpass') {
+			const c = 1.0 / Math.tan(Math.PI * clampedCutoff / sampleRate);
+			const a1 = 1.0 / (1.0 + q * c + c * c);
+			return {
+				a1: a1,
+				a2: -2 * a1,
+				a3: a1,
+				b1: 2.0 * (c * c - 1.0) * a1,
+				b2: (1.0 - q * c + c * c) * a1,
+				a0: 1
+			};
+		} else if (type === 'bandpass') {
+			return {
+				b0: alpha,
+				b1: 0,
+				b2: -alpha,
+				a0: 1 + alpha,
+				a1: -2 * cosw0,
+				a2: 1 - alpha
+			};
+		} else if (type === 'notch') {
+			return {
+				b0: 1,
+				b1: -2 * cosw0,
+				b2: 1,
+				a0: 1 + alpha,
+				a1: -2 * cosw0,
+				a2: 1 - alpha
+			};
+		} else if (type === 'bell') {
+			return {
+				b0: 1 + alpha * A,
+				b1: -2 * cosw0,
+				b2: 1 - alpha * A,
+				a0: 1 + alpha / A,
+				a1: -2 * cosw0,
+				a2: 1 - alpha / A
+			};
+		} else if (type === 'lowshelf') {
+			const sqrtA = Math.sqrt(A);
+			return {
+				b0: A * ((A + 1) - (A - 1) * cosw0 + 2 * sqrtA * alpha),
+				b1: 2 * A * ((A - 1) - (A + 1) * cosw0),
+				b2: A * ((A + 1) - (A - 1) * cosw0 - 2 * sqrtA * alpha),
+				a0: (A + 1) + (A - 1) * cosw0 + 2 * sqrtA * alpha,
+				a1: -2 * ((A - 1) + (A + 1) * cosw0),
+				a2: (A + 1) + (A - 1) * cosw0 - 2 * sqrtA * alpha
+			};
+		} else if (type === 'highshelf') {
+			const sqrtA = Math.sqrt(A);
+			return {
+				b0: A * ((A + 1) + (A - 1) * cosw0 + 2 * sqrtA * alpha),
+				b1: -2 * A * ((A - 1) + (A + 1) * cosw0),
+				b2: A * ((A + 1) + (A - 1) * cosw0 - 2 * sqrtA * alpha),
+				a0: (A + 1) - (A - 1) * cosw0 + 2 * sqrtA * alpha,
+				a1: 2 * ((A - 1) - (A + 1) * cosw0),
+				a2: (A + 1) - (A - 1) * cosw0 - 2 * sqrtA * alpha
+			};
+		} else {
+			// Default to bandpass
+			return {
+				b0: alpha,
+				b1: 0,
+				b2: -alpha,
+				a0: 1 + alpha,
+				a1: -2 * cosw0,
+				a2: 1 - alpha
+			};
+		}
+	}
+
+	/**
+	 * Apply filter with pre-calculated coefficients (generic, works for all filter types)
+	 */
+	static applyFilterWithCoeffs(input, state, coeffs, type, flushDenormals) {
+		const flush = flushDenormals || FilterUtils.flushDenormals;
+		let output;
+		
+		if (type === 'lowpass' || type === 'highpass') {
+			// These use a1, a2, a3, b1, b2 format
+			output = flush(
+				coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+				- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
+			);
+		} else {
+			// These use b0, b1, b2, a0, a1, a2 format
+			output = flush(
+				(coeffs.b0 / coeffs.a0) * input + (coeffs.b1 / coeffs.a0) * state.x1 + (coeffs.b2 / coeffs.a0) * state.x2
+				- (coeffs.a1 / coeffs.a0) * state.y1 - (coeffs.a2 / coeffs.a0) * state.y2
+			);
+		}
+
+		state.x2 = flush(state.x1);
+		state.x1 = flush(input);
+		state.y2 = flush(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+
+	/**
+	 * Apply lowpass filter with pre-calculated coefficients
+	 */
+	static applyLowpassFilterWithCoeffs(input, state, coeffs, flushDenormals) {
+		const flush = flushDenormals || FilterUtils.flushDenormals;
+		const output = flush(
+			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
+		);
+
+		state.x2 = flush(state.x1);
+		state.x1 = flush(input);
+		state.y2 = flush(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+
+	/**
+	 * Apply highpass filter with pre-calculated coefficients
+	 */
+	static applyHighpassFilterWithCoeffs(input, state, coeffs, flushDenormals) {
+		const flush = flushDenormals || FilterUtils.flushDenormals;
+		const output = flush(
+			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
+			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
+		);
+
+		state.x2 = flush(state.x1);
+		state.x1 = flush(input);
+		state.y2 = flush(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+
+	/**
+	 * Apply bandpass filter with pre-calculated coefficients
+	 */
+	static applyBandpassFilterWithCoeffs(input, state, coeffs, flushDenormals) {
+		const flush = flushDenormals || FilterUtils.flushDenormals;
+		const output = flush(
+			(coeffs.b0 / coeffs.a0) * input + (coeffs.b1 / coeffs.a0) * state.x1 + (coeffs.b2 / coeffs.a0) * state.x2
+			- (coeffs.a1 / coeffs.a0) * state.y1 - (coeffs.a2 / coeffs.a0) * state.y2
+		);
+
+		state.x2 = flush(state.x1);
+		state.x1 = flush(input);
+		state.y2 = flush(state.y1);
+		state.y1 = output;
+
+		return output;
+	}
+}
+
+
+
+
+
+// ========== EFFECT HANDLERS ==========
+
+/**
+ * Individual effect processor handlers
+ * Each effect is extracted into its own handler class for better organization
+ * Note: This file is concatenated with other modules, so FilterUtils must be loaded first
+ */
+
+/**
+ * Base effect handler with common functionality
+ */
+class EffectHandler {
+	constructor(effectsProcessor) {
+		this.effectsProcessor = effectsProcessor;
+		this._flushDenormals = (x) => (x > -1e-20 && x < 1e-20) ? 0 : x;
+	}
+
+	getSampleRate() {
+		return (this.effectsProcessor.processor && this.effectsProcessor.processor.sampleRate) 
+			? this.effectsProcessor.processor.sampleRate 
+			: 44100;
+	}
+}
+
+/**
+ * Reverb effect handler
+ */
+class ReverbEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const reverbWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+		const reverbDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+		const reverbRoomSize = settings.roomSize !== undefined ? Math.max(0, Math.min(1, settings.roomSize)) : 0.5;
+		const reverbDampening = settings.dampening !== undefined ? Math.max(0, Math.min(1, settings.dampening)) : 0.5;
+		
+		// Initialize reverb buffers if needed
+		if (!this.effectsProcessor._reverbBuffers) {
+			this.effectsProcessor._reverbBuffers = new Map();
+		}
+		const reverbKey = effect.timelineEffectId || 'global';
+		
+		if (!this.effectsProcessor._reverbBuffers.has(reverbKey)) {
+			const maxReverbTime = 3.0;
+			const reverbBufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
+			const combDelays = [
+				Math.floor(sampleRate * 0.0297),
+				Math.floor(sampleRate * 0.0371),
+				Math.floor(sampleRate * 0.0411),
+				Math.floor(sampleRate * 0.0437)
+			];
+			const allpassDelays = [
+				Math.floor(sampleRate * 0.005),
+				Math.floor(sampleRate * 0.0017)
+			];
+			
+			this.effectsProcessor._reverbBuffers.set(reverbKey, {
+				combBuffers: combDelays.map(() => new Float32Array(reverbBufferSize)),
+				combIndices: combDelays.map(() => 0),
+				combDelays: combDelays,
+				allpassBuffers: allpassDelays.map(() => new Float32Array(reverbBufferSize)),
+				allpassIndices: allpassDelays.map(() => 0),
+				allpassDelays: allpassDelays,
+				lowpassStates: combDelays.map(() => 0)
+			});
+		}
+		
+		const reverbState = this.effectsProcessor._reverbBuffers.get(reverbKey);
+		if (!reverbState) return sample;
+		
+		const reverbTime = 0.02 + (reverbRoomSize * 2.98);
+		const baseFeedback = Math.pow(0.001, reverbState.combDelays[0] / (sampleRate * reverbTime));
+		
+		let processed = sample;
+		for (let i = 0; i < reverbState.allpassDelays.length; i++) {
+			const delay = reverbState.allpassDelays[i];
+			const readIndex = (reverbState.allpassIndices[i] - delay + reverbState.allpassBuffers[i].length) % reverbState.allpassBuffers[i].length;
+			const delayed = reverbState.allpassBuffers[i][readIndex];
+			const allpassFeedback = 0.5;
+			const output = processed + delayed * allpassFeedback;
+			reverbState.allpassBuffers[i][reverbState.allpassIndices[i]] = processed - delayed * allpassFeedback;
+			reverbState.allpassIndices[i] = (reverbState.allpassIndices[i] + 1) % reverbState.allpassBuffers[i].length;
+			processed = output;
+		}
+		
+		let reverbOutput = 0;
+		for (let i = 0; i < reverbState.combDelays.length; i++) {
+			const delay = reverbState.combDelays[i];
+			const readIndex = (reverbState.combIndices[i] - delay + reverbState.combBuffers[i].length) % reverbState.combBuffers[i].length;
+			let dampened = reverbState.combBuffers[i][readIndex];
+			
+			if (reverbDampening > 0) {
+				const cutoff = 20000 * (1 - reverbDampening * 0.975);
+				const rc = 1.0 / (cutoff * 2 * Math.PI / sampleRate);
+				const alpha = 1.0 / (1.0 + rc);
+				reverbState.lowpassStates[i] = alpha * dampened + (1 - alpha) * reverbState.lowpassStates[i];
+				dampened = reverbState.lowpassStates[i];
+			}
+			
+			const feedback = baseFeedback * (1 - reverbDampening * 0.3);
+			reverbState.combBuffers[i][reverbState.combIndices[i]] = processed + dampened * feedback;
+			reverbState.combIndices[i] = (reverbState.combIndices[i] + 1) % reverbState.combBuffers[i].length;
+			reverbOutput += dampened;
+		}
+		
+		reverbOutput /= reverbState.combDelays.length;
+		return sample * reverbDry + reverbOutput * reverbWet;
+	}
+}
+
+/**
+ * Delay effect handler
+ */
+class DelayEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const delayWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+		const delayDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
+		const delayFeedback = settings.feedback !== undefined ? Math.max(0, Math.min(0.99, settings.feedback)) : 0.5;
+		const delayTime = settings.time !== undefined ? Math.max(0, Math.min(2.0, settings.time)) : 0.25;
+		
+		if (!this.effectsProcessor._delayBuffers) {
+			this.effectsProcessor._delayBuffers = new Map();
+		}
+		const delayKey = effect.timelineEffectId || 'global';
+		const maxDelayTime = 2.0;
+		const delayBufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
+		
+		if (!this.effectsProcessor._delayBuffers.has(delayKey)) {
+			this.effectsProcessor._delayBuffers.set(delayKey, {
+				buffer: new Float32Array(delayBufferSize),
+				writeIndex: 0
+			});
+		}
+		const delayState = this.effectsProcessor._delayBuffers.get(delayKey);
+		
+		const delaySamples = Math.floor(delayTime * sampleRate);
+		const delayReadIndex = (delayState.writeIndex - delaySamples + delayBufferSize) % delayBufferSize;
+		const delayReadIndex1 = Math.floor(delayReadIndex);
+		const delayReadIndex2 = (delayReadIndex1 + 1) % delayBufferSize;
+		const delayFrac = delayReadIndex - delayReadIndex1;
+		const delayedSample1 = delayState.buffer[delayReadIndex1];
+		const delayedSample2 = delayState.buffer[delayReadIndex2];
+		const delayedSample = delayedSample1 * (1 - delayFrac) + delayedSample2 * delayFrac;
+		
+		delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
+		delayState.writeIndex = (delayState.writeIndex + 1) % delayBufferSize;
+		
+		return sample * delayDry + delayedSample * delayWet;
+	}
+}
+
+/**
+ * Filter effect handler
+ */
+class FilterEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const filterFreq = settings.frequency !== undefined ? Math.max(0, Math.min(1, settings.frequency)) : 0.5;
+		const filterResonance = settings.resonance !== undefined ? Math.max(0, Math.min(1, settings.resonance)) : 0.5;
+		const filterType = settings.type || 'lowpass';
+		
+		if (!this.effectsProcessor._filterStates) {
+			this.effectsProcessor._filterStates = new Map();
+		}
+		const filterKey = effect.timelineEffectId || 'global';
+		
+		if (!this.effectsProcessor._filterStates.has(filterKey)) {
+			this.effectsProcessor._filterStates.set(filterKey, {
+				x1: 0, x2: 0, y1: 0, y2: 0,
+				cachedCutoff: -1,
+				cachedQ: -1,
+				cachedType: '',
+				cachedSampleRate: 0,
+				coeffs: null
+			});
+		}
+		const filterState = this.effectsProcessor._filterStates.get(filterKey);
+		if (!filterState) return sample;
+		
+		const minFreq = 20;
+		const maxFreq = 20000;
+		const cutoff = minFreq + (filterFreq * (maxFreq - minFreq));
+		const q = 0.5 + (filterResonance * 9.5);
+		
+		if (filterState.cachedCutoff !== cutoff || filterState.cachedQ !== q ||
+			filterState.cachedType !== filterType || filterState.cachedSampleRate !== sampleRate) {
+			filterState.cachedCutoff = cutoff;
+			filterState.cachedQ = q;
+			filterState.cachedType = filterType;
+			filterState.cachedSampleRate = sampleRate;
+			filterState.coeffs = FilterUtils.calculateFilterCoeffs(cutoff, q, filterType, 0, sampleRate);
+		}
+		
+		let filtered = sample;
+		if (filterType === 'lowpass') {
+			filtered = FilterUtils.applyLowpassFilterWithCoeffs(sample, filterState, filterState.coeffs, this._flushDenormals);
+		} else if (filterType === 'highpass') {
+			filtered = FilterUtils.applyHighpassFilterWithCoeffs(sample, filterState, filterState.coeffs, this._flushDenormals);
+		} else if (filterType === 'bandpass') {
+			filtered = FilterUtils.applyBandpassFilterWithCoeffs(sample, filterState, filterState.coeffs, this._flushDenormals);
+		}
+		
+		return filtered;
+	}
+}
+
+/**
+ * Distortion effect handler
+ */
+class DistortionEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const distortionDrive = settings.drive !== undefined ? Math.max(0, Math.min(1, settings.drive)) : 0.5;
+		const distortionAmount = settings.amount !== undefined ? Math.max(0, Math.min(1, settings.amount)) : 0.3;
+		
+		const driveMultiplier = 1 + (distortionDrive * 19);
+		const driven = sample * driveMultiplier;
+		let distorted = Math.tanh(driven);
+		
+		if (distortionDrive > 0.7) {
+			const hardClipAmount = (distortionDrive - 0.7) / 0.3;
+			distorted = distorted * (1 - hardClipAmount) + Math.max(-1, Math.min(1, driven)) * hardClipAmount;
+		}
+		
+		return sample * (1 - distortionAmount) + distorted * distortionAmount;
+	}
+}
+
+/**
+ * Compressor effect handler
+ */
+class CompressorEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const compThreshold = settings.threshold !== undefined ? Math.max(0, Math.min(1, settings.threshold)) : 0.7;
+		const compRatio = settings.ratio !== undefined ? Math.max(1, Math.min(20, settings.ratio)) : 4;
+		const compAttack = settings.attack !== undefined ? Math.max(0, Math.min(1, settings.attack)) : 0.01;
+		const compRelease = settings.release !== undefined ? Math.max(0, Math.min(1, settings.release)) : 0.1;
+		
+		if (!this.effectsProcessor._compressorStates) {
+			this.effectsProcessor._compressorStates = new Map();
+		}
+		const compKey = effect.timelineEffectId || 'global';
+		
+		if (!this.effectsProcessor._compressorStates.has(compKey)) {
+			this.effectsProcessor._compressorStates.set(compKey, {
+				envelope: 0,
+				attackCoeff: 0,
+				releaseCoeff: 0,
+				cachedAttack: -1,
+				cachedRelease: -1,
+				cachedSampleRate: 0
+			});
+		}
+		const compState = this.effectsProcessor._compressorStates.get(compKey);
+		
+		if (compState.cachedAttack !== compAttack || compState.cachedRelease !== compRelease || compState.cachedSampleRate !== sampleRate) {
+			compState.attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
+			compState.releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
+			compState.cachedAttack = compAttack;
+			compState.cachedRelease = compRelease;
+			compState.cachedSampleRate = sampleRate;
+		}
+		
+		const absSample = Math.abs(sample);
+		let targetGain = 1.0;
+		if (absSample > compThreshold) {
+			const excess = absSample - compThreshold;
+			const compressed = compThreshold + excess / compRatio;
+			targetGain = compressed / absSample;
+		}
+		
+		if (targetGain < compState.envelope) {
+			compState.envelope = targetGain + (compState.envelope - targetGain) * compState.attackCoeff;
+		} else {
+			compState.envelope = targetGain + (compState.envelope - targetGain) * compState.releaseCoeff;
+		}
+		
+		return sample * compState.envelope;
+	}
+}
+
+/**
+ * Chorus effect handler
+ */
+class ChorusEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const chorusWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+		const chorusRate = settings.rate !== undefined ? Math.max(0, Math.min(1, settings.rate)) : 0.5;
+		const chorusDepth = settings.depth !== undefined ? Math.max(0, Math.min(1, settings.depth)) : 0.6;
+		const chorusDelay = settings.delay !== undefined ? Math.max(0, Math.min(0.1, settings.delay)) : 0.02;
+		
+		if (!this.effectsProcessor._chorusBuffers) {
+			this.effectsProcessor._chorusBuffers = new Map();
+			this.effectsProcessor._chorusPhases = new Map();
+			this.effectsProcessor._chorusCache = new Map();
+		}
+		const chorusKey = effect.timelineEffectId || 'global';
+		const maxDelay = 0.1;
+		const chorusBufferSize = Math.floor(sampleRate * maxDelay * 1.5);
+		
+		if (!this.effectsProcessor._chorusBuffers.has(chorusKey)) {
+			this.effectsProcessor._chorusBuffers.set(chorusKey, {
+				buffer: new Float32Array(chorusBufferSize),
+				writeIndex: 0
+			});
+			this.effectsProcessor._chorusPhases.set(chorusKey, 0);
+			this.effectsProcessor._chorusCache.set(chorusKey, {
+				lfoFreq: 0,
+				delaySamples: 0,
+				cachedRate: -1,
+				cachedDelay: -1,
+				cachedDepth: -1,
+				cachedSampleRate: 0
+			});
+		}
+		const chorusState = this.effectsProcessor._chorusBuffers.get(chorusKey);
+		const chorusPhase = this.effectsProcessor._chorusPhases.get(chorusKey);
+		const chorusCache = this.effectsProcessor._chorusCache.get(chorusKey);
+		
+		if (chorusCache.cachedRate !== chorusRate || chorusCache.cachedDelay !== chorusDelay ||
+			chorusCache.cachedDepth !== chorusDepth || chorusCache.cachedSampleRate !== sampleRate) {
+			chorusCache.lfoFreq = 0.1 + (chorusRate * 9.9);
+			chorusCache.delaySamples = chorusDelay * sampleRate;
+			chorusCache.cachedRate = chorusRate;
+			chorusCache.cachedDelay = chorusDelay;
+			chorusCache.cachedDepth = chorusDepth;
+			chorusCache.cachedSampleRate = sampleRate;
+		}
+		
+		chorusState.buffer[chorusState.writeIndex] = sample;
+		chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
+		
+		const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusCache.lfoFreq);
+		const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
+		const readPos = chorusState.writeIndex - (modulatedDelay * sampleRate);
+		const readIndex1 = Math.floor(readPos);
+		const readIndex2 = readIndex1 + 1;
+		const frac = readPos - readIndex1;
+		
+		let idx1 = readIndex1 % chorusBufferSize;
+		if (idx1 < 0) idx1 += chorusBufferSize;
+		let idx2 = readIndex2 % chorusBufferSize;
+		if (idx2 < 0) idx2 += chorusBufferSize;
+		
+		const sample1 = chorusState.buffer[idx1];
+		const sample2 = chorusState.buffer[idx2];
+		const chorusedSample = sample1 * (1 - frac) + sample2 * frac;
+		
+		this.effectsProcessor._chorusPhases.set(chorusKey, (chorusPhase + chorusCache.lfoFreq / sampleRate) % 1.0);
+		
+		return sample * (1 - chorusWet) + chorusedSample * chorusWet;
+	}
+}
+
+/**
+ * Saturator effect handler
+ */
+class SaturatorEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const satAmount = settings.amount !== undefined ? Math.max(0, Math.min(1, settings.amount)) : 0.3;
+		const satDrive = settings.drive !== undefined ? Math.max(0, Math.min(1, settings.drive)) : 0.5;
+		const satTone = settings.tone !== undefined ? Math.max(0, Math.min(1, settings.tone)) : 0.5;
+		const satWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
+		
+		if (!this.effectsProcessor._saturatorStates) {
+			this.effectsProcessor._saturatorStates = new Map();
+		}
+		const satKey = effect.timelineEffectId || 'global';
+		
+		if (!this.effectsProcessor._saturatorStates.has(satKey)) {
+			this.effectsProcessor._saturatorStates.set(satKey, {
+				toneState: { x1: 0, x2: 0, y1: 0, y2: 0 },
+				cachedTone: -1,
+				cachedSampleRate: 0,
+				toneCoeffs: null
+			});
+		}
+		const satState = this.effectsProcessor._saturatorStates.get(satKey);
+		
+		let toneFiltered = sample;
+		if (satTone !== 0.5) {
+			const toneCutoff = 500 + (satTone * 4500);
+			
+			if (satState.cachedTone !== satTone || satState.cachedSampleRate !== sampleRate) {
+				satState.cachedTone = satTone;
+				satState.cachedSampleRate = sampleRate;
+				
+				if (satTone > 0.5) {
+					satState.toneCoeffs = FilterUtils.calculateFilterCoeffs(toneCutoff, 0.707, 'highpass', 0, sampleRate);
+				} else {
+					satState.toneCoeffs = FilterUtils.calculateFilterCoeffs(toneCutoff, 0.707, 'lowpass', 0, sampleRate);
+				}
+			}
+			
+			if (satTone > 0.5) {
+				toneFiltered = FilterUtils.applyHighpassFilterWithCoeffs(sample, satState.toneState, satState.toneCoeffs, this._flushDenormals);
+			} else {
+				toneFiltered = FilterUtils.applyLowpassFilterWithCoeffs(sample, satState.toneState, satState.toneCoeffs, this._flushDenormals);
+			}
+		}
+		
+		const satDriveMultiplier = 1 + (satDrive * 19);
+		const satDriven = toneFiltered * satDriveMultiplier;
+		let saturated = Math.tanh(satDriven);
+		
+		const saturatedMix = sample * (1 - satAmount) + saturated * satAmount;
+		return sample * (1 - satWet) + saturatedMix * satWet;
+	}
+}
+
+/**
+ * Equalizer effect handler
+ */
+class EqualizerEffect extends EffectHandler {
+	process(sample, settings, effect) {
+		const sampleRate = this.getSampleRate();
+		const hasNewFormat = settings.band0 !== undefined;
+		
+		if (!this.effectsProcessor._eqStates) {
+			this.effectsProcessor._eqStates = new Map();
+		}
+		const eqKey = effect.timelineEffectId || 'global';
+		
+		if (!this.effectsProcessor._eqStates.has(eqKey)) {
+			const state = {
+				bands: [],
+				cachedSampleRate: 0,
+				lowState: { x1: 0, x2: 0, y1: 0, y2: 0 },
+				midState: { x1: 0, x2: 0, y1: 0, y2: 0 },
+				highState: { x1: 0, x2: 0, y1: 0, y2: 0 },
+				cachedLowFreq: -1,
+				cachedMidFreq: -1,
+				cachedHighFreq: -1,
+				cachedLowQ: -1,
+				cachedMidQ: -1,
+				cachedHighQ: -1,
+				lowCoeffs: null,
+				midCoeffs: null,
+				highCoeffs: null
+			};
+			for (let i = 0; i < 8; i++) {
+				state.bands.push({
+					state: { x1: 0, x2: 0, y1: 0, y2: 0 },
+					cachedFreq: -1,
+					cachedQ: -1,
+					cachedGain: -1,
+					cachedType: null,
+					coeffs: null
+				});
+			}
+			this.effectsProcessor._eqStates.set(eqKey, state);
+		}
+		const eqState = this.effectsProcessor._eqStates.get(eqKey);
+		
+		let eqProcessed = sample;
+		
+		if (hasNewFormat) {
+			for (let i = 0; i < 8; i++) {
+				const bandData = settings[`band${i}`];
+				if (!bandData || !bandData.enabled) continue;
+				
+				const bandFreq = Math.max(20, Math.min(20000, bandData.frequency || 1000));
+				const bandQ = Math.max(0.1, Math.min(10, bandData.q || 0.71));
+				const bandGain = Math.max(-12, Math.min(12, bandData.gain || 0));
+				const bandType = bandData.type || 'bell';
+				
+				const bandState = eqState.bands[i];
+				
+				if (bandState.cachedFreq !== bandFreq || bandState.cachedQ !== bandQ ||
+					bandState.cachedGain !== bandGain || bandState.cachedType !== bandType ||
+					eqState.cachedSampleRate !== sampleRate) {
+					bandState.cachedFreq = bandFreq;
+					bandState.cachedQ = bandQ;
+					bandState.cachedGain = bandGain;
+					bandState.cachedType = bandType;
+					eqState.cachedSampleRate = sampleRate;
+					bandState.coeffs = FilterUtils.calculateFilterCoeffs(bandFreq, bandQ, bandType, bandGain, sampleRate);
+				}
+				
+				if (bandState.coeffs) {
+					const filtered = FilterUtils.applyFilterWithCoeffs(sample, bandState.state, bandState.coeffs, bandType, this._flushDenormals);
+					if (bandType === 'bell' || bandType === 'notch' || bandType === 'lowshelf' || bandType === 'highshelf') {
+						eqProcessed = eqProcessed + (filtered - sample);
+					} else {
+						if (Math.abs(bandGain) > 0.01) {
+							const gainLinear = Math.pow(10, bandGain / 20);
+							eqProcessed = eqProcessed + (filtered * (gainLinear - 1));
+						}
+					}
+				}
+			}
+		} else {
+			// Legacy 3-band format
+			const eqLowGain = settings.lowGain !== undefined ? Math.max(-12, Math.min(12, settings.lowGain)) : 0;
+			const eqMidGain = settings.midGain !== undefined ? Math.max(-12, Math.min(12, settings.midGain)) : 0;
+			const eqHighGain = settings.highGain !== undefined ? Math.max(-12, Math.min(12, settings.highGain)) : 0;
+			const eqLowFreq = settings.lowFreq !== undefined ? Math.max(20, Math.min(1000, settings.lowFreq)) : 200;
+			const eqMidFreq = settings.midFreq !== undefined ? Math.max(200, Math.min(8000, settings.midFreq)) : 2000;
+			const eqHighFreq = settings.highFreq !== undefined ? Math.max(2000, Math.min(20000, settings.highFreq)) : 8000;
+			const eqLowQ = settings.lowQ !== undefined ? Math.max(0.1, Math.min(10, settings.lowQ)) : 1;
+			const eqMidQ = settings.midQ !== undefined ? Math.max(0.1, Math.min(10, settings.midQ)) : 1;
+			const eqHighQ = settings.highQ !== undefined ? Math.max(0.1, Math.min(10, settings.highQ)) : 1;
+			
+			if (eqState.cachedLowFreq !== eqLowFreq || eqState.cachedLowQ !== eqLowQ ||
+				eqState.cachedSampleRate !== sampleRate) {
+				eqState.cachedLowFreq = eqLowFreq;
+				eqState.cachedLowQ = eqLowQ;
+				eqState.lowCoeffs = FilterUtils.calculateFilterCoeffs(eqLowFreq, eqLowQ, 'lowpass', 0, sampleRate);
+			}
+			
+			if (eqState.cachedMidFreq !== eqMidFreq || eqState.cachedMidQ !== eqMidQ ||
+				eqState.cachedSampleRate !== sampleRate) {
+				eqState.cachedMidFreq = eqMidFreq;
+				eqState.cachedMidQ = eqMidQ;
+				eqState.midCoeffs = FilterUtils.calculateFilterCoeffs(eqMidFreq, eqMidQ, 'bandpass', 0, sampleRate);
+			}
+			
+			if (eqState.cachedHighFreq !== eqHighFreq || eqState.cachedHighQ !== eqHighQ ||
+				eqState.cachedSampleRate !== sampleRate) {
+				eqState.cachedHighFreq = eqHighFreq;
+				eqState.cachedHighQ = eqHighQ;
+				eqState.cachedSampleRate = sampleRate;
+				eqState.highCoeffs = FilterUtils.calculateFilterCoeffs(eqHighFreq, eqHighQ, 'highpass', 0, sampleRate);
+			}
+			
+			if (Math.abs(eqLowGain) > 0.01) {
+				const lowFiltered = FilterUtils.applyLowpassFilterWithCoeffs(sample, eqState.lowState, eqState.lowCoeffs, this._flushDenormals);
+				const lowGainLinear = Math.pow(10, eqLowGain / 20);
+				eqProcessed = eqProcessed + (lowFiltered * (lowGainLinear - 1));
+			}
+			
+			if (Math.abs(eqMidGain) > 0.01) {
+				const midFiltered = FilterUtils.applyBandpassFilterWithCoeffs(sample, eqState.midState, eqState.midCoeffs, this._flushDenormals);
+				const midGainLinear = Math.pow(10, eqMidGain / 20);
+				eqProcessed = eqProcessed + (midFiltered * (midGainLinear - 1));
+			}
+			
+			if (Math.abs(eqHighGain) > 0.01) {
+				const highFiltered = FilterUtils.applyHighpassFilterWithCoeffs(sample, eqState.highState, eqState.highCoeffs, this._flushDenormals);
+				const highGainLinear = Math.pow(10, eqHighGain / 20);
+				eqProcessed = eqProcessed + (highFiltered * (highGainLinear - 1));
+			}
+		}
+		
+		return eqProcessed;
+	}
+}
+
+// Effect handlers map (available globally after concatenation)
+const EffectHandlers = {
+	reverb: ReverbEffect,
+	delay: DelayEffect,
+	filter: FilterEffect,
+	distortion: DistortionEffect,
+	compressor: CompressorEffect,
+	chorus: ChorusEffect,
+	saturator: SaturatorEffect,
+	equalizer: EqualizerEffect
+};
+
+
+
+
+
 // ========== MODULES ==========
 
 /**
@@ -598,8 +1369,43 @@ class EffectsProcessor {
 	updateEffect(effectId, settings) {
 		const effect = this.effects.find(e => e.id === effectId);
 		if (effect) {
-			// Update effect settings
-			effect.settings = Object.assign({}, effect.settings || {}, settings);
+			// Update effect settings - deep merge to ensure all band settings are preserved
+			if (effect.type === 'equalizer' && settings.band0 !== undefined) {
+				// For equalizer, completely replace settings to ensure all bands are updated
+				effect.settings = Object.assign({}, settings);
+			} else {
+				// For other effects, merge settings
+				effect.settings = Object.assign({}, effect.settings || {}, settings);
+			}
+			
+			// If this is an equalizer effect, invalidate EQ state cache to force recalculation
+			// This ensures immediate updates when EQ bands are changed
+			if (effect.type === 'equalizer' && this._eqStates) {
+				// Find all timeline effects using this effect ID and invalidate their EQ states
+				const timelineEffectIds = this.timelineEffects
+					.filter(te => te.effectId === effectId)
+					.map(te => te.id);
+				
+				// Clear EQ states for this effect (both global and timeline-specific)
+				// The EQ processor will recreate states with new settings on next process call
+				for (const [key, state] of this._eqStates.entries()) {
+					// Invalidate if it's the global state or matches a timeline effect using this effect
+					const isGlobal = key === 'global';
+					const isTimelineEffect = timelineEffectIds.includes(key);
+					
+					if (isGlobal || isTimelineEffect) {
+						// Invalidate cached values to force recalculation
+						state.cachedSampleRate = -1;
+						for (let i = 0; i < state.bands.length; i++) {
+							state.bands[i].cachedFreq = -1;
+							state.bands[i].cachedQ = -1;
+							state.bands[i].cachedGain = -1;
+							state.bands[i].cachedType = null;
+							state.bands[i].coeffs = null;
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -679,6 +1485,11 @@ class EffectsProcessor {
 			
 			// Check if effect is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
+				// Skip effects with targetTrackId - those are track-specific, not global
+				if (timelineEffect.targetTrackId) {
+					continue;
+				}
+				
 				// Include global effects: no trackId/patternId OR on effect track
 				let isGlobal = false;
 				if (!timelineEffect.trackId && !timelineEffect.patternId) {
@@ -745,39 +1556,35 @@ class EffectsProcessor {
 			
 			// Check if effect is active at current position
 			if (currentBeat >= startBeat && currentBeat < endBeat) {
-				// Skip global effects (already handled)
-				if (timelineEffect.trackId || timelineEffect.targetTrackId) {
-					let shouldApply = false;
-					
-					// Check track assignment (per-track insert)
-					if (timelineEffect.targetTrackId && timelineTrackId) {
-						if (timelineEffect.targetTrackId === timelineTrackId) {
-							shouldApply = true;
-						}
-					} else if (timelineEffect.trackId) {
-						// Effects on effect tracks are handled as global in _calculateGlobalEffects
-						shouldApply = false;
-					}
-					// Note: Effects on effect tracks are handled in _calculateGlobalEffects
-					
-					if (shouldApply) {
-						const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
-						if (effectDef) {
-							// Apply automation to effect settings
-							const automatedSettings = this.applyAutomationToEffect(
-								effectDef,
-								timelineEffect.id,
-								currentBeat,
-								startBeat,
-								endBeat
-							);
-							
-							trackSpecificEffects.push(Object.assign({}, effectDef, {
-								settings: automatedSettings,
-								progress: (currentBeat - startBeat) / (endBeat - startBeat),
-								timelineEffectId: timelineEffect.id // Include timeline effect ID for buffer isolation
-							}));
-						}
+				// Only process effects with targetTrackId (track-specific inserts)
+				// Global effects are handled in _calculateGlobalEffects
+				if (!timelineEffect.targetTrackId) {
+					continue;
+				}
+				
+				// Check track assignment (per-track insert)
+				let shouldApply = false;
+				if (timelineTrackId && timelineEffect.targetTrackId === timelineTrackId) {
+					shouldApply = true;
+				}
+				
+				if (shouldApply) {
+					const effectDef = this.effects.find(e => e.id === timelineEffect.effectId);
+					if (effectDef) {
+						// Apply automation to effect settings
+						const automatedSettings = this.applyAutomationToEffect(
+							effectDef,
+							timelineEffect.id,
+							currentBeat,
+							startBeat,
+							endBeat
+						);
+						
+						trackSpecificEffects.push(Object.assign({}, effectDef, {
+							settings: automatedSettings,
+							progress: (currentBeat - startBeat) / (endBeat - startBeat),
+							timelineEffectId: timelineEffect.id // Include timeline effect ID for buffer isolation
+						}));
 					}
 				}
 			}
@@ -1209,573 +2016,24 @@ class EffectsProcessor {
 		if (!effect || !effect.settings) return sample;
 
 		const settings = effect.settings;
-		// Get sample rate from processor if available, otherwise use default
-		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
-
-		switch (effect.type) {
-		case 'reverb':
-			// Proper reverb using Schroeder reverb algorithm with multiple delay taps
-			// Parameters can go from 0 to very high values for maximum flexibility
-			const reverbWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
-			const reverbDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
-			// Room size: 0 = small room, 1 = huge hall (maps to 0.02s to 3.0s reverb time)
-			const reverbRoomSize = settings.roomSize !== undefined ? Math.max(0, Math.min(1, settings.roomSize)) : 0.5;
-			// Dampening: 0 = bright, 1 = very dark (lowpass filter cutoff)
-			const reverbDampening = settings.dampening !== undefined ? Math.max(0, Math.min(1, settings.dampening)) : 0.5;
-			
-			// Initialize reverb buffers if needed
-			if (!this._reverbBuffers) {
-				this._reverbBuffers = new Map();
-			}
-			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
-			const reverbKey = effect.timelineEffectId || 'global';
-			
-			if (!this._reverbBuffers.has(reverbKey)) {
-				// Create multiple comb filters and allpass filters for realistic reverb
-				// Using prime numbers for delay times to avoid comb filtering artifacts
-				const maxReverbTime = 3.0; // Maximum reverb time in seconds
-				const reverbBufferSize = Math.floor(sampleRate * maxReverbTime * 1.5);
-				
-				// 4 comb filters with different delay times (in samples)
-				const combDelays = [
-					Math.floor(sampleRate * 0.0297), // ~30ms
-					Math.floor(sampleRate * 0.0371), // ~37ms
-					Math.floor(sampleRate * 0.0411), // ~41ms
-					Math.floor(sampleRate * 0.0437)  // ~44ms
-				];
-				
-				// 2 allpass filters for diffusion
-				const allpassDelays = [
-					Math.floor(sampleRate * 0.005), // ~5ms
-					Math.floor(sampleRate * 0.0017) // ~1.7ms
-				];
-				
-				this._reverbBuffers.set(reverbKey, {
-					// Comb filter buffers and indices
-					combBuffers: combDelays.map(() => new Float32Array(reverbBufferSize)),
-					combIndices: combDelays.map(() => 0),
-					combDelays: combDelays,
-					combFeedbacks: combDelays.map(() => 0),
-					
-					// Allpass filter buffers and indices
-					allpassBuffers: allpassDelays.map(() => new Float32Array(reverbBufferSize)),
-					allpassIndices: allpassDelays.map(() => 0),
-					allpassDelays: allpassDelays,
-					
-					// Lowpass filter states for dampening (one per comb filter)
-					lowpassStates: combDelays.map(() => 0)
-				});
-			}
-			
-			const reverbState = this._reverbBuffers.get(reverbKey);
-			if (!reverbState) {
-				return sample; // Safety check
-			}
-			
-			// Map room size to reverb time (0.02s to 3.0s)
-			const reverbTime = 0.02 + (reverbRoomSize * 2.98);
-			// Calculate feedback for comb filters based on reverb time
-			// Longer reverb time = higher feedback
-			const baseFeedback = Math.pow(0.001, reverbState.combDelays[0] / (sampleRate * reverbTime));
-			
-			// Process through allpass filters first (for diffusion)
-			let processed = sample;
-			for (let i = 0; i < reverbState.allpassDelays.length; i++) {
-				const delay = reverbState.allpassDelays[i];
-				const readIndex = (reverbState.allpassIndices[i] - delay + reverbState.allpassBuffers[i].length) % reverbState.allpassBuffers[i].length;
-				const delayed = reverbState.allpassBuffers[i][readIndex];
-				
-				// Allpass filter: output = input + delayed * feedback, store input - delayed * feedback
-				const allpassFeedback = 0.5; // Fixed feedback for allpass
-				const output = processed + delayed * allpassFeedback;
-				reverbState.allpassBuffers[i][reverbState.allpassIndices[i]] = processed - delayed * allpassFeedback;
-				reverbState.allpassIndices[i] = (reverbState.allpassIndices[i] + 1) % reverbState.allpassBuffers[i].length;
-				processed = output;
-			}
-			
-			// Process through comb filters (for reverb tail)
-			let reverbOutput = 0;
-			for (let i = 0; i < reverbState.combDelays.length; i++) {
-				const delay = reverbState.combDelays[i];
-				const readIndex = (reverbState.combIndices[i] - delay + reverbState.combBuffers[i].length) % reverbState.combBuffers[i].length;
-				const delayed = reverbState.combBuffers[i][readIndex];
-				
-				// Apply dampening (lowpass filter) to delayed signal
-				let dampened = delayed;
-				if (reverbDampening > 0) {
-					// Lowpass filter: cutoff frequency decreases with dampening
-					// 0 = no filtering, 1 = very dark (cutoff ~500Hz)
-					const cutoff = 20000 * (1 - reverbDampening * 0.975); // 20kHz to 500Hz
-					const rc = 1.0 / (cutoff * 2 * Math.PI / sampleRate);
-					const alpha = 1.0 / (1.0 + rc);
-					reverbState.lowpassStates[i] = alpha * dampened + (1 - alpha) * reverbState.lowpassStates[i];
-					dampened = reverbState.lowpassStates[i];
-				}
-				
-				// Calculate feedback based on reverb time
-				const feedback = baseFeedback * (1 - reverbDampening * 0.3); // Slightly reduce feedback with dampening
-				
-				// Write input + feedback to buffer
-				reverbState.combBuffers[i][reverbState.combIndices[i]] = processed + dampened * feedback;
-				reverbState.combIndices[i] = (reverbState.combIndices[i] + 1) % reverbState.combBuffers[i].length;
-				
-				// Add to reverb output
-				reverbOutput += dampened;
-			}
-			
-			// Normalize and mix
-			reverbOutput /= reverbState.combDelays.length; // Average the comb filters
-			
-			// Mix dry and wet signals
-			return sample * reverbDry + reverbOutput * reverbWet;
-
-		case 'delay':
-			// Delay with proper delay buffer and feedback - can be pushed to extreme
-			const delayWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
-			const delayDry = settings.dry !== undefined ? Math.max(0, Math.min(1, settings.dry)) : 0.5;
-			// Clamp feedback to prevent infinite oscillation (0.99 max for safety)
-			const delayFeedback = settings.feedback !== undefined ? Math.max(0, Math.min(0.99, settings.feedback)) : 0.5;
-			const delayTime = settings.time !== undefined ? Math.max(0, Math.min(2.0, settings.time)) : 0.25;
-			// Use delay buffer for proper echo effect
-			if (!this._delayBuffers) {
-				this._delayBuffers = new Map();
-			}
-			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
-			const delayKey = effect.timelineEffectId || 'global';
-			const maxDelayTime = 2.0; // Maximum delay time in seconds
-			const delayBufferSize = Math.floor(sampleRate * maxDelayTime * 1.5);
-			
-			if (!this._delayBuffers.has(delayKey)) {
-				this._delayBuffers.set(delayKey, {
-					buffer: new Float32Array(delayBufferSize),
-					writeIndex: 0
-				});
-			}
-			const delayState = this._delayBuffers.get(delayKey);
-			
-			// Calculate read position based on delayTime (in samples)
-			const delaySamples = Math.floor(delayTime * sampleRate);
-			const delayReadIndex = (delayState.writeIndex - delaySamples + delayBufferSize) % delayBufferSize;
-			
-			// Read delayed sample (with linear interpolation for smooth changes)
-			const delayReadIndex1 = Math.floor(delayReadIndex);
-			const delayReadIndex2 = (delayReadIndex1 + 1) % delayBufferSize;
-			const delayFrac = delayReadIndex - delayReadIndex1;
-			const delayedSample1 = delayState.buffer[delayReadIndex1];
-			const delayedSample2 = delayState.buffer[delayReadIndex2];
-			const delayedSample = delayedSample1 * (1 - delayFrac) + delayedSample2 * delayFrac;
-			
-			// Write current sample + feedback (can create many repeats at high feedback)
-			delayState.buffer[delayState.writeIndex] = sample + (delayedSample * delayFeedback);
-			delayState.writeIndex = (delayState.writeIndex + 1) % delayBufferSize;
-			
-			// Mix dry and wet - at max wet/dry extremes, can be completely wet or dry
-			return sample * delayDry + delayedSample * delayWet;
-
-		case 'filter':
-			// Proper filter implementation that can go from subtle to extreme
-			const filterFreq = settings.frequency !== undefined ? Math.max(0, Math.min(1, settings.frequency)) : 0.5;
-			const filterResonance = settings.resonance !== undefined ? Math.max(0, Math.min(1, settings.resonance)) : 0.5;
-			const filterType = settings.type || 'lowpass';
-			
-			// Initialize filter state if needed
-			if (!this._filterStates) {
-				this._filterStates = new Map();
-			}
-			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
-			const filterKey = effect.timelineEffectId || 'global';
-			
-			if (!this._filterStates.has(filterKey)) {
-				this._filterStates.set(filterKey, { 
-					x1: 0, x2: 0, y1: 0, y2: 0,
-					cachedCutoff: -1,
-					cachedQ: -1,
-					cachedType: '',
-					cachedSampleRate: 0,
-					coeffs: null
-				});
-			}
-			const filterState = this._filterStates.get(filterKey);
-			if (!filterState) {
-				return sample; // Safety check
-			}
-			
-			// Map frequency (0-1) to actual cutoff frequency
-			// 0 = very low (20Hz), 1 = very high (20kHz)
-			const minFreq = 20;
-			const maxFreq = 20000;
-			const cutoff = minFreq + (filterFreq * (maxFreq - minFreq));
-			
-			// Map resonance (0-1) to Q factor (0.5 to 10 for extreme resonance)
-			const q = 0.5 + (filterResonance * 9.5);
-			
-			// Cache filter coefficients - only recalculate when settings change
-			if (filterState.cachedCutoff !== cutoff || filterState.cachedQ !== q || 
-			    filterState.cachedType !== filterType || filterState.cachedSampleRate !== sampleRate) {
-				filterState.cachedCutoff = cutoff;
-				filterState.cachedQ = q;
-				filterState.cachedType = filterType;
-				filterState.cachedSampleRate = sampleRate;
-				filterState.coeffs = this._calculateFilterCoeffs(cutoff, q, filterType, sampleRate);
-			}
-			
-			// Apply proper biquad filter based on type (using cached coefficients)
-			let filtered = sample;
-			if (filterType === 'lowpass') {
-				filtered = this.applyLowpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
-			} else if (filterType === 'highpass') {
-				filtered = this.applyHighpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
-			} else if (filterType === 'bandpass') {
-				filtered = this.applyBandpassFilterWithCoeffs(sample, filterState, filterState.coeffs);
-			}
-			
-			return filtered;
-
-		case 'distortion':
-			// Distortion/saturation that can go from subtle to extreme
-			const distortionDrive = settings.drive !== undefined ? Math.max(0, Math.min(1, settings.drive)) : 0.5;
-			const distortionAmount = settings.amount !== undefined ? Math.max(0, Math.min(1, settings.amount)) : 0.3;
-			
-			// Drive can go from 1x (no drive) to 20x (extreme drive) for maximum distortion
-			const driveMultiplier = 1 + (distortionDrive * 19);
-			const driven = sample * driveMultiplier;
-			
-			// Apply tanh saturation for soft clipping, then add hard clipping for extreme settings
-			let distorted = Math.tanh(driven);
-			// At high drive, add hard clipping for more aggressive distortion
-			if (distortionDrive > 0.7) {
-				const hardClipAmount = (distortionDrive - 0.7) / 0.3; // 0 to 1 when drive > 0.7
-				distorted = distorted * (1 - hardClipAmount) + Math.max(-1, Math.min(1, driven)) * hardClipAmount;
-			}
-			
-			// Mix between dry and distorted - at max amount, completely distorted
-			return sample * (1 - distortionAmount) + distorted * distortionAmount;
-
-		case 'compressor':
-			// Compressor that can go from subtle to extreme (limiter at max ratio)
-			const compThreshold = settings.threshold !== undefined ? Math.max(0, Math.min(1, settings.threshold)) : 0.7;
-			const compRatio = settings.ratio !== undefined ? Math.max(1, Math.min(20, settings.ratio)) : 4;
-			const compAttack = settings.attack !== undefined ? Math.max(0, Math.min(1, settings.attack)) : 0.01;
-			const compRelease = settings.release !== undefined ? Math.max(0, Math.min(1, settings.release)) : 0.1;
-			
-			// Initialize compressor state if needed
-			if (!this._compressorStates) {
-				this._compressorStates = new Map();
-			}
-			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
-			const compKey = effect.timelineEffectId || 'global';
-			
-			if (!this._compressorStates.has(compKey)) {
-				this._compressorStates.set(compKey, { 
-					envelope: 0,
-					attackCoeff: 0,
-					releaseCoeff: 0,
-					cachedAttack: -1,
-					cachedRelease: -1,
-					cachedSampleRate: 0
-				});
-			}
-			const compState = this._compressorStates.get(compKey);
-			
-			// Cache attack/release coefficients - only recalculate when settings or sample rate change
-			if (compState.cachedAttack !== compAttack || compState.cachedRelease !== compRelease || compState.cachedSampleRate !== sampleRate) {
-				compState.attackCoeff = Math.exp(-1.0 / (compAttack * sampleRate * 0.001 + 0.0001));
-				compState.releaseCoeff = Math.exp(-1.0 / (compRelease * sampleRate * 0.001 + 0.0001));
-				compState.cachedAttack = compAttack;
-				compState.cachedRelease = compRelease;
-				compState.cachedSampleRate = sampleRate;
-			}
-			
-			const absSample = Math.abs(sample);
-			
-			// Calculate target gain reduction
-			let targetGain = 1.0;
-			if (absSample > compThreshold) {
-				const excess = absSample - compThreshold;
-				const compressed = compThreshold + excess / compRatio;
-				targetGain = compressed / absSample; // Gain reduction factor
-			}
-			
-			// Apply attack and release envelope (using cached coefficients)
-			if (targetGain < compState.envelope) {
-				// Attack phase
-				compState.envelope = targetGain + (compState.envelope - targetGain) * compState.attackCoeff;
-			} else {
-				// Release phase
-				compState.envelope = targetGain + (compState.envelope - targetGain) * compState.releaseCoeff;
-			}
-			
-			// Apply gain reduction
-			return sample * compState.envelope;
-
-		case 'chorus':
-			// Chorus with delay buffers - can be pushed to extreme for flanger-like effects
-			const chorusWet = settings.wet !== undefined ? Math.max(0, Math.min(1, settings.wet)) : 0.5;
-			// Rate: 0 = very slow (0.1 Hz), 1 = very fast (10 Hz) for extreme modulation
-			const chorusRate = settings.rate !== undefined ? Math.max(0, Math.min(1, settings.rate)) : 0.5;
-			// Depth: 0 = no modulation, 1 = extreme modulation (100% of delay time)
-			const chorusDepth = settings.depth !== undefined ? Math.max(0, Math.min(1, settings.depth)) : 0.6;
-			// Delay: 0 = no delay, 0.1 = 100ms max delay
-			const chorusDelay = settings.delay !== undefined ? Math.max(0, Math.min(0.1, settings.delay)) : 0.02;
-			
-			if (!this._chorusBuffers) {
-				this._chorusBuffers = new Map();
-				this._chorusPhases = new Map();
-				this._chorusCache = new Map();
-			}
-			// Use timeline effect ID for buffer isolation (each effect instance gets its own buffers)
-			const chorusKey = effect.timelineEffectId || 'global';
-			const maxDelay = 0.1; // Maximum delay time
-			const chorusBufferSize = Math.floor(sampleRate * maxDelay * 1.5);
-			
-			if (!this._chorusBuffers.has(chorusKey)) {
-				this._chorusBuffers.set(chorusKey, {
-					buffer: new Float32Array(chorusBufferSize),
-					writeIndex: 0
-				});
-				this._chorusPhases.set(chorusKey, 0);
-				this._chorusCache.set(chorusKey, {
-					lfoFreq: 0,
-					delaySamples: 0,
-					cachedRate: -1,
-					cachedDelay: -1,
-					cachedDepth: -1,
-					cachedSampleRate: 0
-				});
-			}
-			const chorusState = this._chorusBuffers.get(chorusKey);
-			const chorusPhase = this._chorusPhases.get(chorusKey);
-			const chorusCache = this._chorusCache.get(chorusKey);
-			
-			// Cache LFO frequency and delay calculations - only recalculate when settings change
-			if (chorusCache.cachedRate !== chorusRate || chorusCache.cachedDelay !== chorusDelay || 
-			    chorusCache.cachedDepth !== chorusDepth || chorusCache.cachedSampleRate !== sampleRate) {
-				// Map rate from 0-1 to 0.1-10 Hz for wide range
-				chorusCache.lfoFreq = 0.1 + (chorusRate * 9.9);
-				chorusCache.delaySamples = chorusDelay * sampleRate;
-				chorusCache.cachedRate = chorusRate;
-				chorusCache.cachedDelay = chorusDelay;
-				chorusCache.cachedDepth = chorusDepth;
-				chorusCache.cachedSampleRate = sampleRate;
-			}
-			
-			// Write current sample
-			chorusState.buffer[chorusState.writeIndex] = sample;
-			chorusState.writeIndex = (chorusState.writeIndex + 1) % chorusState.buffer.length;
-			
-			// Calculate modulated delay (LFO) - Math.sin is necessary for smooth LFO
-			const lfo = Math.sin(chorusPhase * 2 * Math.PI * chorusCache.lfoFreq);
-			// Depth controls how much the delay modulates (0 to 100% of delay time)
-			const modulatedDelay = chorusDelay * (1 + lfo * chorusDepth);
-			
-			// Read from modulated position with interpolation
-			const readPos = chorusState.writeIndex - (modulatedDelay * sampleRate);
-			const readIndex1 = Math.floor(readPos);
-			const readIndex2 = readIndex1 + 1;
-			const frac = readPos - readIndex1;
-			
-			// Wrap indices (optimized: avoid double modulo)
-			let idx1 = readIndex1 % chorusBufferSize;
-			if (idx1 < 0) idx1 += chorusBufferSize;
-			let idx2 = readIndex2 % chorusBufferSize;
-			if (idx2 < 0) idx2 += chorusBufferSize;
-			
-			const sample1 = chorusState.buffer[idx1];
-			const sample2 = chorusState.buffer[idx2];
-			const chorusedSample = sample1 * (1 - frac) + sample2 * frac;
-			
-			// Update phase
-			this._chorusPhases.set(chorusKey, (chorusPhase + chorusCache.lfoFreq / sampleRate) % 1.0);
-			
-			// Mix dry and wet - at max wet, completely chorused
-			return sample * (1 - chorusWet) + chorusedSample * chorusWet;
-
-		default:
-			return sample;
-		}
-	}
-	
-	/**
-	 * Apply a lowpass filter (biquad)
-	 */
-	applyLowpassFilter(input, cutoff, q, state) {
-		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
-		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
-		const a1 = 1.0 / (1.0 + q * c + c * c);
-		const a2 = 2 * a1;
-		const a3 = a1;
-		const b1 = 2.0 * (1.0 - c * c) * a1;
-		const b2 = (1.0 - q * c + c * c) * a1;
-
-		const output = this._flushDenormals(
-			a1 * input + a2 * state.x1 + a3 * state.x2
-			- b1 * state.y1 - b2 * state.y2
-		);
-
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
-	}
-	
-	/**
-	 * Apply a highpass filter (biquad)
-	 */
-	applyHighpassFilter(input, cutoff, q, state) {
-		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
-		const c = 1.0 / Math.tan(Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate);
-		const a1 = 1.0 / (1.0 + q * c + c * c);
-		const a2 = -2 * a1;
-		const a3 = a1;
-		const b1 = 2.0 * (c * c - 1.0) * a1;
-		const b2 = (1.0 - q * c + c * c) * a1;
-
-		const output = this._flushDenormals(
-			a1 * input + a2 * state.x1 + a3 * state.x2
-			- b1 * state.y1 - b2 * state.y2
-		);
-
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
-	}
-	
-	/**
-	 * Apply a bandpass filter (biquad)
-	 */
-	applyBandpassFilter(input, cutoff, q, state) {
-		const sampleRate = (this.processor && this.processor.sampleRate) ? this.processor.sampleRate : 44100;
-		const w = 2.0 * Math.PI * Math.max(20, Math.min(20000, cutoff)) / sampleRate;
-		const cosw = Math.cos(w);
-		const sinw = Math.sin(w);
-		const alpha = sinw / (2.0 * q);
 		
-		const b0 = alpha;
-		const b1 = 0;
-		const b2 = -alpha;
-		const a0 = 1 + alpha;
-		const a1 = -2 * cosw;
-		const a2 = 1 - alpha;
-
-		const output = this._flushDenormals(
-			(b0 / a0) * input + (b1 / a0) * state.x1 + (b2 / a0) * state.x2
-			- (a1 / a0) * state.y1 - (a2 / a0) * state.y2
-		);
-
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
-	}
-	
-	/**
-	 * Calculate filter coefficients (cached to avoid recalculating every sample)
-	 * @param {number} cutoff - Cutoff frequency
-	 * @param {number} q - Q factor
-	 * @param {string} type - Filter type ('lowpass', 'highpass', 'bandpass')
-	 * @param {number} sampleRate - Sample rate
-	 * @returns {Object} Filter coefficients
-	 */
-	_calculateFilterCoeffs(cutoff, q, type, sampleRate) {
-		const clampedCutoff = Math.max(20, Math.min(20000, cutoff));
-		
-		if (type === 'lowpass' || type === 'highpass') {
-			const c = 1.0 / Math.tan(Math.PI * clampedCutoff / sampleRate);
-			const a1 = 1.0 / (1.0 + q * c + c * c);
-			
-			if (type === 'lowpass') {
-				return {
-					a1: a1,
-					a2: 2 * a1,
-					a3: a1,
-					b1: 2.0 * (1.0 - c * c) * a1,
-					b2: (1.0 - q * c + c * c) * a1
-				};
-			} else { // highpass
-				return {
-					a1: a1,
-					a2: -2 * a1,
-					a3: a1,
-					b1: 2.0 * (c * c - 1.0) * a1,
-					b2: (1.0 - q * c + c * c) * a1
-				};
+		// Use effect handlers (always available after build)
+		if (typeof EffectHandlers !== 'undefined' && EffectHandlers[effect.type]) {
+			const HandlerClass = EffectHandlers[effect.type];
+			if (!this._effectHandlerInstances) {
+				this._effectHandlerInstances = new Map();
 			}
-		} else { // bandpass
-			const w = 2.0 * Math.PI * clampedCutoff / sampleRate;
-			const cosw = Math.cos(w);
-			const sinw = Math.sin(w);
-			const alpha = sinw / (2.0 * q);
-			
-			return {
-				b0: alpha,
-				b1: 0,
-				b2: -alpha,
-				a0: 1 + alpha,
-				a1: -2 * cosw,
-				a2: 1 - alpha
-			};
+			if (!this._effectHandlerInstances.has(effect.type)) {
+				this._effectHandlerInstances.set(effect.type, new HandlerClass(this));
+			}
+			const handler = this._effectHandlerInstances.get(effect.type);
+			return handler.process(sample, settings, effect);
 		}
-	}
-	
-	/**
-	 * Apply lowpass filter with pre-calculated coefficients
-	 */
-	applyLowpassFilterWithCoeffs(input, state, coeffs) {
-		const output = this._flushDenormals(
-			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
-			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
-		);
 
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
-	}
-	
-	/**
-	 * Apply highpass filter with pre-calculated coefficients
-	 */
-	applyHighpassFilterWithCoeffs(input, state, coeffs) {
-		const output = this._flushDenormals(
-			coeffs.a1 * input + coeffs.a2 * state.x1 + coeffs.a3 * state.x2
-			- coeffs.b1 * state.y1 - coeffs.b2 * state.y2
-		);
-
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
-	}
-	
-	/**
-	 * Apply bandpass filter with pre-calculated coefficients
-	 */
-	applyBandpassFilterWithCoeffs(input, state, coeffs) {
-		const output = this._flushDenormals(
-			(coeffs.b0 / coeffs.a0) * input + (coeffs.b1 / coeffs.a0) * state.x1 + (coeffs.b2 / coeffs.a0) * state.x2
-			- (coeffs.a1 / coeffs.a0) * state.y1 - (coeffs.a2 / coeffs.a0) * state.y2
-		);
-
-		state.x2 = this._flushDenormals(state.x1);
-		state.x1 = this._flushDenormals(input);
-		state.y2 = this._flushDenormals(state.y1);
-		state.y1 = output;
-
-		return output;
+		// Unknown effect type
+		return sample;
 	}
 }
-
 
 
 /**
@@ -3593,7 +3851,31 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	}
 
 	setTempo(bpm) {
+		// If playing, preserve the current beat position when BPM changes
+		const wasPlaying = this.playbackController.isTransportPlaying();
+		let currentBeat = 0;
+		
+		if (wasPlaying && this.currentTime > 0) {
+			// Calculate current beat position before changing BPM
+			currentBeat = this.currentTime / this.playbackController.samplesPerBeat;
+		}
+		
+		// Update BPM
 		this.playbackController.setTempo(bpm);
+		
+		// If playing, adjust currentTime to maintain the same beat position
+		if (wasPlaying && currentBeat > 0) {
+			this.currentTime = currentBeat * this.playbackController.samplesPerBeat;
+		}
+		
+		// Clear scheduled events and reset scheduler state
+		// This ensures events are re-scheduled with the new BPM
+		if (this.eventScheduler) {
+			this.eventScheduler.clear();
+			// Force immediate re-scheduling on next process call
+			this.eventScheduler._lastScheduledBeat = -1;
+			this.eventScheduler._lastCheckedEventIndex = -1;
+		}
 	}
 
 	setTransport(state, position = 0) {
