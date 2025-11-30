@@ -1,6 +1,8 @@
-import type { StandaloneInstrument, AudioEvent } from '$lib/types/pattern';
-import type { TimelineClip } from '$lib/stores/projectStore';
+import type { StandaloneInstrument, AudioEvent, Pattern, Instrument } from '$lib/types/pattern';
+import type { TimelineClip, Timeline } from '$lib/stores/projectStore.types';
+import type { Effect, Envelope } from '$lib/types/effects';
 import { flattenTrackPattern } from '../utils/eventFlatten';
+import { getPatternInstruments } from '$lib/utils/patternUtils';
 
 /**
  * Main AudioWorklet class for managing the audio engine
@@ -66,7 +68,7 @@ export class EngineWorklet {
 		}
 	}
 
-	private handleMessage(message: any) {
+	private handleMessage(message: { type: string; time?: number; eventIds?: string[] }) {
 		// Handle messages from worklet to UI
 		if (message.type === 'playbackUpdate' || message.type === 'playbackPosition') {
 			// message.time is in beats
@@ -74,20 +76,20 @@ export class EngineWorklet {
 		}
 	}
 
-	sendMessage(message: any) {
+	sendMessage(message: { type: string; [key: string]: unknown }) {
 		if (this.workletNode) {
 			this.workletNode.port.postMessage(message);
 		}
 	}
 
-	async loadProject(standaloneInstruments: StandaloneInstrument[], bpm: number, baseMeterTrackId?: string, timeline?: any, patterns?: any[], effects?: any[], envelopes?: any[], automation?: any) {
+	async loadProject(standaloneInstruments: StandaloneInstrument[], bpm: number, baseMeterTrackId?: string, timeline?: Timeline, patterns?: Pattern[], effects?: Effect[], envelopes?: Envelope[], automation?: unknown) {
 		await this.ensureInitialized();
 
 		// If timeline exists, use timeline-based scheduling with patterns
 		if (timeline && timeline.clips && timeline.clips.length > 0 && patterns) {
 			// Timeline mode: schedule events from pattern clips
 			const allEvents: AudioEvent[] = [];
-			const patternMap = new Map(patterns.map((p: any) => [p.id, p]));
+			const patternMap = new Map(patterns.map((p) => [p.id, p]));
 			
 			// Determine a safe timeline length (fallback to clips max or 4 beats)
 			const timelineClips = timeline.clips || [];
@@ -106,25 +108,7 @@ export class EngineWorklet {
 				if (!pattern) continue;
 				
 				// Get all instruments from pattern (handles both new and legacy formats)
-				let patternInstruments: any[] = [];
-				if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
-					// New format: use instruments array
-					patternInstruments = pattern.instruments;
-				} else if (pattern.instrumentType && pattern.patternTree) {
-					// Legacy format: convert single instrument
-					patternInstruments = [{
-						id: pattern.id,
-						instrumentType: pattern.instrumentType,
-						patternTree: pattern.patternTree,
-						settings: pattern.settings || {},
-						instrumentSettings: pattern.instrumentSettings,
-						color: pattern.color || '#7ab8ff',
-						volume: pattern.volume ?? 1.0,
-						pan: pattern.pan ?? 0.0,
-						mute: pattern.mute,
-						solo: pattern.solo
-					}];
-				}
+				const patternInstruments = getPatternInstruments(pattern);
 				
 				// Create a track for each instrument in the pattern
 				// All instruments in a pattern play simultaneously
@@ -175,25 +159,7 @@ export class EngineWorklet {
 				if (!pattern) continue;
 				
 				// Get all instruments from pattern (handles both new and legacy formats)
-				let patternInstruments: any[] = [];
-				if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
-					// New format: use instruments array
-					patternInstruments = pattern.instruments;
-				} else if (pattern.instrumentType && pattern.patternTree) {
-					// Legacy format: convert single instrument
-					patternInstruments = [{
-						id: pattern.id,
-						instrumentType: pattern.instrumentType,
-						patternTree: pattern.patternTree,
-						settings: pattern.settings || {},
-						instrumentSettings: pattern.instrumentSettings,
-						color: pattern.color || '#7ab8ff',
-						volume: pattern.volume ?? 1.0,
-						pan: pattern.pan ?? 0.0,
-						mute: pattern.mute,
-						solo: pattern.solo
-					}];
-				}
+				const patternInstruments = getPatternInstruments(pattern);
 				
 				// Schedule events for each instrument in the pattern (all play simultaneously)
 				for (const instrument of patternInstruments) {
@@ -278,16 +244,7 @@ export class EngineWorklet {
 						if (!pattern) continue;
 						
 						// Get all instruments from pattern
-						let patternInstruments: any[] = [];
-						if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
-							patternInstruments = pattern.instruments;
-						} else if (pattern.instrumentType && pattern.patternTree) {
-							patternInstruments = [{
-								id: pattern.id,
-								instrumentType: pattern.instrumentType,
-								patternTree: pattern.patternTree
-							}];
-						}
+						const patternInstruments = getPatternInstruments(pattern);
 						
 						// Add audio track IDs for each instrument
 						for (const instrument of patternInstruments) {
@@ -331,7 +288,7 @@ export class EngineWorklet {
 
 		// Pattern loop mode (original behavior)
 		// Create pattern map for looking up baseMeter
-		const patternMap = patterns ? new Map(patterns.map((p: any) => [p.id, p])) : new Map();
+		const patternMap = patterns ? new Map(patterns.map((p) => [p.id, p])) : new Map();
 		
 		// Find base meter instrument to determine pattern length
 		const baseMeterId = baseMeterTrackId || standaloneInstruments[0]?.id;
@@ -444,7 +401,7 @@ export class EngineWorklet {
 		});
 	}
 
-	updatePatternTree(trackId: string, patternTree: any, baseMeter: number = 4) {
+	updatePatternTree(trackId: string, patternTree: Pattern['patternTree'], baseMeter: number = 4) {
 		// Update the pattern tree in the worklet
 		this.sendMessage({
 			type: 'updatePatternTree',
@@ -456,7 +413,7 @@ export class EngineWorklet {
 		this.updateTrackEvents(trackId, patternTree, baseMeter);
 	}
 	
-	private updateTrackEvents(trackId: string, patternTree: any, baseMeter: number = 4) {
+	private updateTrackEvents(trackId: string, patternTree: Pattern['patternTree'], baseMeter: number = 4) {
 		// Re-flatten events for this track with baseMeter scaling
 		const newEvents = flattenTrackPattern(patternTree, trackId, baseMeter);
 		
@@ -482,7 +439,7 @@ export class EngineWorklet {
 		});
 	}
 
-	updateTrackSettings(trackId: string, settings: Record<string, any>) {
+	updateTrackSettings(trackId: string, settings: Record<string, unknown>) {
 		this.sendMessage({
 			type: 'updateTrackSettings',
 			trackId,
@@ -490,7 +447,7 @@ export class EngineWorklet {
 		});
 	}
 
-	updateEffect(effectId: string, settings: Record<string, any>) {
+	updateEffect(effectId: string, settings: Record<string, unknown>) {
 		this.sendMessage({
 			type: 'updateEffect',
 			effectId,
@@ -498,7 +455,7 @@ export class EngineWorklet {
 		});
 	}
 
-	updateEnvelope(envelopeId: string, settings: Record<string, any>) {
+	updateEnvelope(envelopeId: string, settings: Record<string, unknown>) {
 		this.sendMessage({
 			type: 'updateEnvelope',
 			envelopeId,

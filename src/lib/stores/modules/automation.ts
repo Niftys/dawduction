@@ -1,7 +1,4 @@
-import type { Project } from '../projectStore.types';
-
-export type UpdateFn = (updater: (project: Project | null) => Project | null, skipHistory?: boolean) => void;
-export type GetCurrent = () => Project | null;
+import type { UpdateFn, GetCurrent } from './types';
 
 export function createAutomationModule(updateFn: UpdateFn, getCurrent: GetCurrent) {
 	return {

@@ -9,9 +9,10 @@ import { projectStore } from '$lib/stores/projectStore';
 import { findNodeAtPosition, findNodesInBox, getRadiusForDepth } from '../utils/nodeFinder';
 import type { PatternNode, Pattern, StandaloneInstrument, Instrument } from '$lib/types/pattern';
 import type { Viewport } from '$lib/canvas/Viewport';
+import type { Project } from '$lib/stores/projectStore.types';
 
 export interface MouseHandlerContext {
-	project: any;
+	project: Project | null;
 	patternId: string | null;
 	pattern: Pattern | null;
 	canvas: HTMLCanvasElement;

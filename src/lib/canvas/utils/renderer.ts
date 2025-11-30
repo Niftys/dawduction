@@ -5,6 +5,7 @@
 
 import type { Pattern, StandaloneInstrument, Instrument } from '$lib/types/pattern';
 import type { NodeRenderer } from '$lib/canvas/NodeRenderer';
+import { getPatternInstruments } from '$lib/utils/patternUtils';
 import { getPlayingNodeIds, getUpcomingNodeIds, getPlayedNodeIds } from './playbackHighlighter';
 import {
 	createTrackSelectionChecker,
@@ -152,7 +153,7 @@ function renderTracks(
 
 /**
  * Renders all instruments in a pattern
- * Uses the same logic as projectStore.getPatternInstruments to handle both new and legacy formats
+ * Uses shared utility to handle both new and legacy formats
  */
 function renderPatternInstruments(
 	ctx: CanvasRenderingContext2D,
@@ -166,29 +167,8 @@ function renderPatternInstruments(
 	isPlaybackActive: boolean,
 	isLoopStart: boolean
 ): void {
-	// Get instruments using the same logic as projectStore.getPatternInstruments
-	let patternInstruments: any[] = [];
-	
-	// Check new format first
-	if (pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0) {
-		patternInstruments = pattern.instruments;
-	} 
-	// If no instruments in new format, check legacy format
-	else if (pattern.instrumentType && pattern.patternTree) {
-		// Legacy format: convert single instrument
-		patternInstruments = [{
-			id: pattern.id,
-			instrumentType: pattern.instrumentType,
-			patternTree: pattern.patternTree,
-			settings: pattern.settings || {},
-			instrumentSettings: pattern.instrumentSettings,
-			color: pattern.color || '#7ab8ff',
-			volume: pattern.volume ?? 1.0,
-			pan: pattern.pan ?? 0.0,
-			mute: pattern.mute,
-			solo: pattern.solo
-		}];
-	}
+	// Get instruments using shared utility
+	const patternInstruments = getPatternInstruments(pattern);
 	
 	const renderContext = {
 		project: null,

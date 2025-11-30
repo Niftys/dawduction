@@ -1,8 +1,5 @@
-import type { Project } from '../projectStore.types';
 import type { Effect } from '$lib/types/effects';
-
-export type UpdateFn = (updater: (project: Project | null) => Project | null, skipHistory?: boolean) => void;
-export type GetCurrent = () => Project | null;
+import type { UpdateFn, GetCurrent } from './types';
 
 export function createEffectsModule(updateFn: UpdateFn, getCurrent: GetCurrent) {
 	return {

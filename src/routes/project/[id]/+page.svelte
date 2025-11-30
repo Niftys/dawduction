@@ -1726,7 +1726,7 @@
 	// Clean up any leftover temporary standalone instruments on mount (cleanup from old code)
 	onMount(() => {
 		// Clean up any temporary pattern instruments that might be lingering
-		projectStore.subscribe((p) => {
+		const unsubscribe = projectStore.subscribe((p) => {
 			if (p && p.standaloneInstruments) {
 				const tempInstruments = p.standaloneInstruments.filter((i) => i.id.startsWith('__pattern_'));
 				if (tempInstruments.length > 0) {
@@ -1738,7 +1738,11 @@
 					}, 100);
 				}
 			}
-		})();
+		});
+		
+		return () => {
+			unsubscribe();
+		};
 	});
 </script>
 

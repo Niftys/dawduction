@@ -42,6 +42,10 @@
 	
 	import NodeContextMenu from './NodeContextMenu.svelte';
 	import type { PatternNode, Pattern } from '$lib/types/pattern';
+	import type { Project } from '$lib/stores/projectStore.types';
+	import type { Viewport as ViewportState } from '$lib/stores/canvasStore';
+	import type { PlaybackState } from '$lib/stores/playbackStore';
+	import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
 	import '$lib/styles/components/Canvas.css';
 
 	// Props: if patternId is provided, also render that pattern's instrument alongside all tracks
@@ -54,11 +58,18 @@
 	let animationFrame: number;
 
 	// Subscribe to stores
-	let project: any;
-	let canvasState: any;
-	let selectionState: any;
-	let playbackState: any;
-	let engine: any = null;
+	let project: Project | null = null;
+	let canvasState: ViewportState;
+	let selectionState: {
+		selectedNodes: Set<string>;
+		selectedTrackId: string | null;
+		selectedPatternId: string | null;
+		selectedInstrumentId: string | null;
+		selectedNodeId: string | null;
+		isRoot: boolean;
+	};
+	let playbackState: PlaybackState;
+	let engine: EngineWorklet | null = null;
 
 	projectStore.subscribe((p) => (project = p));
 	engineStore.subscribe((e) => (engine = e));
@@ -81,7 +92,17 @@
 	let dragStart = { x: 0, y: 0 };
 	let lastMousePos = { x: 0, y: 0 };
 	let isDraggingNode = $state(false);
-	let draggedNode: any = null;
+	let draggedNode: {
+		patternId: string | null;
+		trackId: string | null;
+		nodeId: string;
+		selectedNodeIds: Set<string>;
+		originalTree: PatternNode;
+		startScreenX: number;
+		startScreenY: number;
+		isRoot: boolean;
+		instrumentId?: string | null;
+	} | null = null;
 	let positionUpdateTimeout: ReturnType<typeof setTimeout> | null = null;
 	let pendingPositionUpdate: PendingPositionUpdate | null = null;
 	let isSelecting = $state(false);
@@ -133,7 +154,7 @@
 		if (!canvas) return null;
 		
 		// Get fresh project state to ensure we're searching in the current tree
-		let currentProject: any = null;
+		let currentProject: Project | null = null;
 		projectStore.subscribe((p) => (currentProject = p))();
 		if (!currentProject) return null;
 		
@@ -369,7 +390,14 @@
 			const startCanvasY = e.clientY - rect.top;
 			
 			// Get current selection for group movement
-			let currentSelection: any = null;
+			let currentSelection: {
+				selectedNodes: Set<string>;
+				selectedTrackId: string | null;
+				selectedPatternId: string | null;
+				selectedInstrumentId: string | null;
+				selectedNodeId: string | null;
+				isRoot: boolean;
+			} | null = null;
 			selectionStore.subscribe((s) => (currentSelection = s))();
 			
 			dragState.draggedNode = {
@@ -394,7 +422,14 @@
 					const startCanvasY = e.clientY - rect.top;
 				
 			// Get current selection for group movement
-			let currentSelection: any = null;
+			let currentSelection: {
+				selectedNodes: Set<string>;
+				selectedTrackId: string | null;
+				selectedPatternId: string | null;
+				selectedInstrumentId: string | null;
+				selectedNodeId: string | null;
+				isRoot: boolean;
+			} | null = null;
 			selectionStore.subscribe((s) => (currentSelection = s))();
 			
 			dragState.draggedNode = {
@@ -513,17 +548,24 @@
 			});
 			
 			// Get current selection for group movement
-			let currentSelection: any = null;
+			let currentSelection: {
+				selectedNodes: Set<string>;
+				selectedTrackId: string | null;
+				selectedPatternId: string | null;
+				selectedInstrumentId: string | null;
+				selectedNodeId: string | null;
+				isRoot: boolean;
+			} | null = null;
 			selectionStore.subscribe((s) => (currentSelection = s))();
 			
 			// Get fresh project state to ensure we have the latest tree (after any previous drags)
-			let currentProject: any = null;
+			let currentProject: Project | null = null;
 			projectStore.subscribe((p) => (currentProject = p))();
 			
 			// Find the instrument/track to get the CURRENT tree state
 			let originalTree: PatternNode | null = null;
 			if (touchedNode.trackId) {
-				const track = currentProject?.standaloneInstruments?.find((i: any) => i.id === touchedNode.trackId);
+				const track = currentProject?.standaloneInstruments?.find((i) => i.id === touchedNode.trackId);
 				if (track) {
 					originalTree = cloneTree(track.patternTree);
 				}
@@ -533,7 +575,7 @@
 					const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
 						? pattern.instruments
 						: [];
-					const instrument = instruments.find((inst: any) => inst.id === touchedNode.instrumentId);
+					const instrument = instruments.find((inst) => inst.id === touchedNode.instrumentId);
 					if (instrument) {
 						originalTree = cloneTree(instrument.patternTree);
 					}
