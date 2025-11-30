@@ -68,17 +68,28 @@ export class EngineWorklet {
 		}
 	}
 
-	private handleMessage(message: { type: string; time?: number; eventIds?: string[] }) {
+	private handleMessage(message: { type: string; time?: number; eventIds?: string[]; duration?: number }) {
 		// Handle messages from worklet to UI
 		if (message.type === 'playbackUpdate' || message.type === 'playbackPosition') {
 			// message.time is in beats
 			this.notifyPlaybackUpdate(message.time, message.eventIds || []);
+		} else if (message.type === 'quietPeriod') {
+			// Dispatch custom event for quiet period detection
+			window.dispatchEvent(new CustomEvent('quietPeriodDetected', {
+				detail: {
+					time: message.time,
+					duration: message.duration
+				}
+			}));
 		}
 	}
 
 	sendMessage(message: { type: string; [key: string]: unknown }) {
 		if (this.workletNode) {
-			this.workletNode.port.postMessage(message);
+			// Serialize message to remove any proxies that can't be cloned
+			// This is necessary because postMessage uses structured cloning which can't clone proxies
+			const serializedMessage = JSON.parse(JSON.stringify(message));
+			this.workletNode.port.postMessage(serializedMessage);
 		}
 	}
 

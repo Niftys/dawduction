@@ -12,6 +12,15 @@ class AudioProcessor {
 		this._batchedEventIds = [];
 		this._lastBatchedSampleTime = 0;
 		this._batchInterval = processor.sampleRate * 0.02; // Batch events for 20ms before sending
+		
+		// Quiet period detection for smart reload timing
+		this._quietPeriodCheckInterval = processor.sampleRate * 0.1; // Check every 100ms
+		this._lastQuietPeriodCheck = 0;
+		this._quietPeriodThreshold = 0.06; // 10% volume threshold (0.06 out of ~0.6 max mixed level)
+		this._quietPeriodMinDuration = processor.sampleRate * 0.1; // Need 100ms of quiet to be considered a quiet period
+		this._quietPeriodSamples = 0;
+		this._lastQuietPeriodReport = 0;
+		this._quietPeriodCooldown = processor.sampleRate * 3; // Don't report more than once every 3 seconds
 	}
 
 	/**
@@ -66,6 +75,26 @@ class AudioProcessor {
 				this.processor.projectManager.isArrangementView
 			);
 
+			// Track peak levels for quiet period detection
+			// Track overall mixed output level (sum of left and right channels)
+			const mixedLevel = Math.abs(mixed.left) + Math.abs(mixed.right);
+			
+			// Check if output is below threshold (10% of typical max level)
+			// Typical max level after mixing is around 0.6 (0.3 master gain * 2 channels)
+			// So 10% would be around 0.06
+			if (mixedLevel < this._quietPeriodThreshold) {
+				this._quietPeriodSamples++;
+			} else {
+				this._quietPeriodSamples = 0; // Reset if not quiet
+			}
+			
+			// Check if we should analyze quiet periods periodically
+			const timeSinceLastCheck = (startTime + i) - this._lastQuietPeriodCheck;
+			if (timeSinceLastCheck >= this._quietPeriodCheckInterval) {
+				this._checkQuietPeriod(currentBeat);
+				this._lastQuietPeriodCheck = startTime + i;
+			}
+
 			// Write to output
 			if (output.length >= 2) {
 				output[0][i] = mixed.left;
@@ -105,6 +134,32 @@ class AudioProcessor {
 		this.processor.eventScheduler.checkLoopReset();
 
 		return true;
+	}
+	
+	/**
+	 * Check if we're in a quiet period suitable for reloading
+	 * Sends a message to main thread when quiet periods are detected
+	 */
+	_checkQuietPeriod(currentBeat) {
+		// Only check in arrangement view
+		if (!this.processor.projectManager.isArrangementView) {
+			return;
+		}
+		
+		// Check if we've had enough quiet samples
+		if (this._quietPeriodSamples >= this._quietPeriodMinDuration) {
+			// Check cooldown to avoid spamming quiet period messages
+			const timeSinceLastReport = this.processor.currentTime - this._lastQuietPeriodReport;
+			if (timeSinceLastReport >= this._quietPeriodCooldown) {
+				// Send quiet period detection to main thread
+				this.processor.port.postMessage({
+					type: 'quietPeriod',
+					time: currentBeat,
+					duration: this._quietPeriodSamples / this.processor.sampleRate
+				});
+				this._lastQuietPeriodReport = this.processor.currentTime;
+			}
+		}
 	}
 }
 

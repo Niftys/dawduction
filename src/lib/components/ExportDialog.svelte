@@ -94,9 +94,9 @@
 	});
 	
 	// Export state
-	let isExporting = false;
-	let exportProgress = 0;
-	let exportError: string | null = null;
+	let isExporting = $state(false);
+	let exportProgress = $state(0);
+	let exportError: string | null = $state(null);
 	
 	async function handleExport() {
 		// Check if project has any content to export

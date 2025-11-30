@@ -29,6 +29,23 @@
 	let lastSavedTime: number | null = null;
 	let autoSaveInterval: ReturnType<typeof setInterval> | null = null;
 	
+	// Performance monitoring for automatic reload
+	let periodicReloadInterval: ReturnType<typeof setInterval> | null = null;
+	let lastReloadBeat = 0;
+	const RELOAD_INTERVAL_BEATS = 8; // Fallback: Reload every 8 beats if quiet periods aren't detected
+	let pendingReloadScheduled = false;
+	let lastReloadTime = 0;
+	
+	// Performance monitoring: periodically reload at beat boundaries during playback
+	const stopPeriodicReload = () => {
+		if (periodicReloadInterval !== null) {
+			clearInterval(periodicReloadInterval);
+			periodicReloadInterval = null;
+		}
+		pendingReloadScheduled = false;
+		lastReloadBeat = 0;
+	};
+	
 	// Use $derived for computed values to avoid cyclical dependencies
 	const project = $derived($projectStore);
 	const selection = $derived($selectionStore);
@@ -124,6 +141,15 @@
 		
 		// Listen for project reload requests (e.g., when instrument changes)
 		const handleReload = async () => {
+			// Reset performance monitoring state when manual reload happens
+			pendingReloadScheduled = false;
+			// Reset reload beat counter so we don't reload again immediately
+			let currentPosition = 0;
+			playbackStore.subscribe((state) => {
+				currentPosition = state.currentTime || 0;
+			})();
+			lastReloadBeat = Math.floor(currentPosition);
+			
 			if (engine) {
 				// Use a small delay to ensure any pending store updates have completed
 				await new Promise(resolve => setTimeout(resolve, 10));
@@ -210,6 +236,132 @@
 		};
 		window.addEventListener('reloadProject', handleReload);
 		
+		// Performance monitoring: periodically reload at beat boundaries during playback
+		// This proactively prevents performance degradation by reloading the engine periodically
+		// Reloads happen at beat boundaries to avoid interrupting active notes
+		const scheduleReloadAtBeatBoundary = () => {
+			if (!engine || pendingReloadScheduled) return;
+			
+			// Get current playback position
+			let currentPosition = 0;
+			playbackStore.subscribe((state) => {
+				currentPosition = state.currentTime || 0;
+			})();
+			
+			// Calculate time until next beat boundary
+			// Round up to next beat (e.g., if at 1.3 beats, wait until beat 2.0)
+			const nextBeat = Math.ceil(currentPosition);
+			const beatsUntilNext = nextBeat - currentPosition;
+			
+			// Get current project for BPM
+			let currentProject: any;
+			projectStore.subscribe((p) => (currentProject = p))();
+			if (!currentProject) return;
+			
+			// Convert beats to milliseconds using current BPM
+			const currentBpm = currentProject.bpm ?? 120;
+			const beatsPerSecond = currentBpm / 60;
+			const msPerBeat = 1000 / beatsPerSecond;
+			const msUntilNextBeat = beatsUntilNext * msPerBeat;
+			
+			// Add a small buffer (50ms) to ensure we're past the boundary
+			const delay = Math.max(50, msUntilNextBeat + 50);
+			
+			pendingReloadScheduled = true;
+			
+			// Schedule reload at beat boundary
+			setTimeout(() => {
+				// Check if still playing before reloading
+				if (transportState === 'play' && isPlaying && viewMode === 'arrangement') {
+					window.dispatchEvent(new CustomEvent('reloadProject'));
+				}
+				pendingReloadScheduled = false;
+			}, delay);
+		};
+		
+		// Listen for quiet period detection from audio worklet
+		const handleQuietPeriod = (e: CustomEvent) => {
+			if (!engine || !project) return;
+			
+			// Only reload if playing in arrangement view
+			if (transportState !== 'play' || !isPlaying || viewMode !== 'arrangement') {
+				return;
+			}
+			
+			// Check if enough time has passed since last reload
+			const timeSinceLastReload = Date.now() - lastReloadTime;
+			const minReloadInterval = 3000; // Minimum 3 seconds between reloads
+			
+			if (!pendingReloadScheduled && timeSinceLastReload >= minReloadInterval) {
+				// Schedule reload immediately during quiet period
+				// The quiet period detection already found a good moment
+				const quietTime = e.detail.time || 0;
+				scheduleReloadAtBeatBoundary();
+				lastReloadBeat = Math.floor(quietTime);
+				lastReloadTime = Date.now();
+			}
+		};
+		window.addEventListener('quietPeriodDetected', handleQuietPeriod as EventListener);
+		
+		const startPeriodicReload = () => {
+			if (periodicReloadInterval !== null) return; // Already monitoring
+			
+			// Initialize last reload beat to current position
+			let currentPosition = 0;
+			playbackStore.subscribe((state) => {
+				currentPosition = state.currentTime || 0;
+			})();
+			lastReloadBeat = Math.floor(currentPosition);
+			lastReloadTime = Date.now();
+			
+			// Fallback: Still check periodically in case quiet periods aren't detected
+			// But rely primarily on quiet period detection
+			periodicReloadInterval = setInterval(() => {
+				if (!engine || !project) return;
+				
+				// Only reload if playing in arrangement view
+				if (transportState !== 'play' || !isPlaying || viewMode !== 'arrangement') {
+					return;
+				}
+				
+				// Get current playback position
+				let currentPosition = 0;
+				playbackStore.subscribe((state) => {
+					currentPosition = state.currentTime || 0;
+				})();
+				
+				const currentBeat = Math.floor(currentPosition);
+				const beatsSinceLastReload = currentBeat - lastReloadBeat;
+				
+				// Fallback: Reload every RELOAD_INTERVAL_BEATS beats if no quiet periods detected
+				// This ensures we still reload even if quiet period detection fails
+				if (beatsSinceLastReload >= RELOAD_INTERVAL_BEATS * 2) {
+					// Check if we're at or very close to a beat boundary (within 0.1 beats)
+					const fractionalBeat = currentPosition - currentBeat;
+					if (fractionalBeat < 0.1) {
+						// Schedule reload at this beat boundary (fallback only)
+						if (!pendingReloadScheduled) {
+							scheduleReloadAtBeatBoundary();
+							lastReloadBeat = currentBeat;
+							lastReloadTime = Date.now();
+						}
+					}
+				}
+			}, 200); // Check less frequently since quiet period detection is primary
+		};
+		
+		// Start periodic reload when playing in arrangement view
+		$effect(() => {
+			const isArrangement = viewMode === 'arrangement';
+			const isCurrentlyPlaying = transportState === 'play' && isPlaying;
+			
+			if (isArrangement && isCurrentlyPlaying) {
+				startPeriodicReload();
+			} else {
+				stopPeriodicReload();
+			}
+		});
+		
 		// Keyboard shortcuts for undo/redo and play/pause
 		const handleKeyDown = (e: KeyboardEvent) => {
 			// Spacebar for play/pause (only if not typing in an input)
@@ -235,10 +387,13 @@
 		return () => {
 			window.removeEventListener('reloadProject', handleReload);
 			window.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('quietPeriodDetected', handleQuietPeriod as EventListener);
 			// Clear auto-save interval on unmount
 			if (autoSaveInterval) {
 				clearInterval(autoSaveInterval);
 			}
+			// Stop periodic reload
+			stopPeriodicReload();
 		};
 	});
 
@@ -248,6 +403,8 @@
 		if (autoSaveInterval) {
 			clearInterval(autoSaveInterval);
 		}
+		// Stop periodic reload
+		stopPeriodicReload();
 	});
 
 	// Track last BPM to avoid infinite loops
@@ -709,7 +866,7 @@
 		}
 	}
 
-	let showExportDialog = false;
+	let showExportDialog = $state(false);
 	
 	function handleExport() {
 		showExportDialog = true;
