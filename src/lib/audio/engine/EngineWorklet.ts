@@ -406,7 +406,8 @@ export class EngineWorklet {
 		this.sendMessage({
 			type: 'updatePatternTree',
 			trackId,
-			patternTree
+			patternTree,
+			baseMeter
 		});
 		
 		// Re-flatten events for this track and update the worklet

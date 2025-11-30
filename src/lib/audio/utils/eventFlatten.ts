@@ -67,25 +67,36 @@ export function flattenTree(
 
 /**
  * Flatten a complete track's pattern tree
- * Root node's division value determines the pattern structure
- * Base meter scales the pattern speed: patternLength = root.division * (baseMeter / root.division) = baseMeter
- * When baseMeter = root.division, patternLength = root.division (normal speed)
- * When baseMeter < root.division, patternLength < root.division (faster)
- * When baseMeter > root.division, patternLength > root.division (slower)
+ * Base meter determines the pattern length in beats (always)
+ * Root node's division affects the internal rhythmic structure relative to baseMeter
  * 
- * Examples:
- * - baseMeter=6, root=6: patternLength = 6 beats (normal speed)
- * - baseMeter=3, root=6: patternLength = 3 beats (double speed)
- * - baseMeter=12, root=6: patternLength = 12 beats (half speed)
+ * When root.division = baseMeter: normal timing (children split baseMeter proportionally)
+ * When root.division > baseMeter: compressed timing (children distributed as if pattern were root.division beats, compressed into baseMeter)
+ * When root.division < baseMeter: stretched timing (children distributed as if pattern were root.division beats, stretched to baseMeter)
  * 
  * @param rootNode - The root pattern node
  * @param trackId - Track/instrument ID
- * @param baseMeter - Base meter (denominator X in Y/X time signature), defaults to 4
+ * @param baseMeter - Base meter (pattern length in beats), defaults to 4
  */
 export function flattenTrackPattern(rootNode: PatternNode, trackId: string, baseMeter: number = 4): AudioEvent[] {
-	// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
-	// The hierarchical structure is preserved because children split parent's duration proportionally
+	// Pattern length is always baseMeter
 	const patternLength = baseMeter;
-	return flattenTree(rootNode, patternLength, 0.0, trackId);
+	
+	// Root division is calculated from the sum of its children's divisions
+	// If root has no children, use baseMeter as default
+	let rootDivision: number;
+	if (rootNode.children && rootNode.children.length > 0) {
+		rootDivision = rootNode.children.reduce((sum, child) => sum + (child.division || 1), 0);
+	} else {
+		rootDivision = baseMeter; // Default if no children
+	}
+	
+	// Start with root division as parent duration, which will be scaled by the ratio
+	// The children will be distributed proportionally within rootDivision, then the whole pattern scales to baseMeter
+	return flattenTree(rootNode, rootDivision, 0.0, trackId).map(event => ({
+		...event,
+		// Scale event times from rootDivision space to baseMeter space
+		time: event.time * (baseMeter / rootDivision)
+	}));
 }
 

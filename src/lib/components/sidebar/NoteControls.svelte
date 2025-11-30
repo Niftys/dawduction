@@ -117,6 +117,7 @@ import NumericInput from './NumericInput.svelte';
 
 	function updateNodeDivision(value: number) {
 		if (selectedNodes.length === 0) return;
+		// Note: NoteControls is only shown when !isRootNode in Sidebar, so root nodes can't be edited here
 		
 		for (const { node, pattern, track, instrumentId } of selectedNodes) {
 			if (pattern) {
@@ -125,7 +126,10 @@ import NumericInput from './NumericInput.svelte';
 				projectStore.updateNodeDivision(track.id, node.id, value);
 			}
 		}
-		updateEnginePatternTreeFromSelection();
+		// Small delay to ensure store update completes, then update engine for live audio updates
+		setTimeout(() => {
+			updateEnginePatternTreeFromSelection();
+		}, 0);
 	}
 </script>
 
@@ -248,17 +252,27 @@ import NumericInput from './NumericInput.svelte';
 {/if}
 
 <div class="section">
-	<label for="division-input">Division</label>
-	<NumericInput
-		id="division-input"
-		min={1}
-		value={currentDivision}
-		placeholder={isMultiSelect && hasMixedValues((n) => n.division, 1) ? 'Mixed' : ''}
-		onInput={(val) => {
-			if (val > 0) {
-				updateNodeDivision(val);
-			}
-		}}
-	/>
+	<div class="division-row">
+		<div class="division-description">
+			<label for="division-input" title="Controls how much time this node takes relative to its siblings. Higher values = longer duration.">
+				Division
+			</label>
+			<div class="help-text" title="Controls how much time this node takes relative to its siblings. Higher values = longer duration.">
+				This value determines how many beats this node takes to play relative to its siblings
+			</div>
+		</div>
+		<NumericInput
+			id="division-input"
+			min={1}
+			value={currentDivision}
+			placeholder={isMultiSelect && hasMixedValues((n) => n.division, 1) ? 'Mixed' : ''}
+			title="Controls how much time this node takes relative to its siblings. Higher values = longer duration."
+			onInput={(val) => {
+				if (val > 0) {
+					updateNodeDivision(val);
+				}
+			}}
+		/>
+	</div>
 </div>
 

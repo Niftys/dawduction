@@ -366,7 +366,7 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 				};
 			});
 		},
-		// Update node pitch (and inherit to all children)
+		// Update node pitch (and transpose all children by the same amount)
 		updateNodePitch: (instrumentId: string, nodeId: string, pitch: number) => {
 			updateFn((project) => {
 				if (!project) return project;
@@ -375,15 +375,34 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 					standaloneInstruments: project.standaloneInstruments.map((instrument) => {
 						if (instrument.id !== instrumentId) return instrument;
 						
+						// Find the node to get its old pitch
+						const findNode = (node: PatternNode, targetId: string): PatternNode | null => {
+							if (node.id === targetId) return node;
+							for (const child of node.children) {
+								const found = findNode(child, targetId);
+								if (found) return found;
+							}
+							return null;
+						};
+						
+						const targetNode = findNode(instrument.patternTree, nodeId);
+						const oldPitch = targetNode?.pitch ?? 60; // Default to middle C if no pitch set
+						const pitchDifference = pitch - oldPitch;
+						
 						const updateNode = (node: PatternNode): PatternNode => {
 							if (node.id === nodeId) {
-								// Update this node and all its children recursively
-								const updateChildren = (n: PatternNode): PatternNode => ({
-									...n,
-									pitch,
-									children: n.children.map(updateChildren)
-								});
-								return updateChildren(node);
+								// Update this node and transpose all its children recursively
+								const transposeChildren = (n: PatternNode): PatternNode => {
+									const newPitch = n.pitch !== undefined 
+										? Math.max(0, Math.min(127, n.pitch + pitchDifference))
+										: undefined;
+									return {
+										...n,
+										pitch: n.id === nodeId ? pitch : newPitch,
+										children: n.children.map(transposeChildren)
+									};
+								};
+								return transposeChildren(node);
 							}
 							return {
 								...node,

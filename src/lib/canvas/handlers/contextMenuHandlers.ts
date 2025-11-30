@@ -52,6 +52,10 @@ export function handleContextAction(
 			handleDelete(menu, node, project, engine);
 			break;
 		case 'edit':
+			// Don't allow editing root node division
+			if (menu.isRoot) {
+				return { editingNode: null, editValue: '' };
+			}
 			return {
 				editingNode: {
 					node,

@@ -36,9 +36,9 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			case 'setTempo':
 				this.setTempo(message.bpm);
 				break;
-			case 'updatePatternTree':
-				this.updatePatternTree(message.trackId, message.patternTree);
-				break;
+		case 'updatePatternTree':
+			this.updatePatternTree(message.trackId, message.patternTree, message.baseMeter);
+			break;
 			case 'updateTrackSettings':
 				this.updateTrackSettings(message.trackId, message.settings);
 				break;
@@ -76,7 +76,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		// For now, we'll receive events via message
 	}
 
-	updatePatternTree(trackId, patternTree) {
+	updatePatternTree(trackId, patternTree, baseMeter = 4) {
 		// Update pattern and re-flatten
 		const track = this.tracks?.find(t => t.id === trackId);
 		if (track) {

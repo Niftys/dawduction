@@ -879,17 +879,26 @@
 	
 	function saveEdit() {
 		if (!editingNode) return;
+		// Don't allow editing root node division
+		if (selectionState.isRoot) {
+			editingNode = null;
+			return;
+		}
 		const division = parseInt(editValue);
 		if (isNaN(division) || division < 1) return;
 		
 		if (editingNode.patternId) {
 			projectStore.updatePatternNodeDivision(editingNode.patternId, editingNode.node.id, division, editingNode.instrumentId);
-			// Update pattern tree in engine for real-time audio updates
-			updateEnginePatternTree(engine, createUpdateContext({ editingNode }));
+			// Small delay to ensure store update completes, then update engine
+			setTimeout(() => {
+				updateEnginePatternTree(engine, createUpdateContext({ editingNode }));
+			}, 0);
 		} else if (editingNode.trackId) {
 			projectStore.updateNodeDivision(editingNode.trackId, editingNode.node.id, division);
-			// Update pattern tree in engine for real-time audio updates
-			updateEnginePatternTree(engine, createUpdateContext({ editingNode }));
+			// Small delay to ensure store update completes, then update engine
+			setTimeout(() => {
+				updateEnginePatternTree(engine, createUpdateContext({ editingNode }));
+			}, 0);
 		}
 		editingNode = null;
 	}
@@ -929,12 +938,18 @@
 {#if editingNode}
 	<div class="edit-overlay">
 		<div class="edit-dialog">
-			<label for="edit-division">Division:</label>
+			<label for="edit-division" title="Controls how much time this node takes relative to its siblings. Higher values = longer duration.">
+				Division:
+			</label>
+			<div class="edit-help-text" title="Controls how much time this node takes relative to its siblings. Higher values = longer duration.">
+				This value determines how many beats this node takes to play relative to its siblings
+			</div>
 			<input
 				id="edit-division"
 				type="number"
 				bind:value={editValue}
 				min="1"
+				title="Controls how much time this node takes relative to its siblings. Higher values = longer duration."
 				on:keydown={(e) => {
 					if (e.key === 'Enter') saveEdit();
 					if (e.key === 'Escape') editingNode = null;

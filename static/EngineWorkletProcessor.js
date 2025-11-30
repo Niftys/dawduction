@@ -2487,16 +2487,16 @@ class ProjectManager {
 		return null;
 	}
 
-	updatePatternTree(trackId, patternTree) {
+	updatePatternTree(trackId, patternTree, baseMeter = 4) {
 		const track = this.getTrack(trackId);
 		if (track) {
 			track.patternTree = patternTree;
 			// Re-flatten events for this track in real-time
-			this.updateTrackEvents(trackId);
+			this.updateTrackEvents(trackId, baseMeter);
 		}
 	}
 	
-	updateTrackEvents(trackId) {
+	updateTrackEvents(trackId, baseMeter = 4) {
 		// Remove old events for this track
 		this.events = this.events.filter(e => e.instrumentId !== trackId);
 		
@@ -2545,14 +2545,25 @@ class ProjectManager {
 		};
 		
 		const flattenTrackPattern = (rootNode, trackId, baseMeter = 4) => {
-			// Pattern length = baseMeter, which preserves structure when baseMeter = root.division
-			// The hierarchical structure is preserved because children split parent's duration proportionally
+			// Pattern length is always baseMeter
 			const patternLength = baseMeter;
-			return flattenTree(rootNode, patternLength, 0.0, trackId);
+			
+			// Root division affects the internal structure - use it as the initial parent duration
+			const rootDivision = rootNode.division || baseMeter;
+			
+			// Calculate events using rootDivision, then scale to baseMeter
+			const events = flattenTree(rootNode, rootDivision, 0.0, trackId);
+			const scaleFactor = baseMeter / rootDivision;
+			
+			// Scale all event times from rootDivision space to baseMeter space
+			return events.map(event => ({
+				...event,
+				time: event.time * scaleFactor
+			}));
 		};
 		
 		// Determine baseMeter for this track
-		let baseMeter = 4; // Default for standalone instruments
+		let finalBaseMeter = 4; // Default for standalone instruments
 		if (trackId && trackId.startsWith('__pattern_')) {
 			// Extract pattern ID and get baseMeter from patterns
 			const lastUnderscore = trackId.lastIndexOf('_');
@@ -2561,13 +2572,13 @@ class ProjectManager {
 				if (this.patterns) {
 					const pattern = this.patterns.find(p => p.id === patternId);
 					if (pattern) {
-						baseMeter = pattern.baseMeter || 4;
+						finalBaseMeter = pattern.baseMeter || 4;
 					}
 				}
 			}
 		}
 		
-		const newEvents = flattenTrackPattern(track.patternTree, trackId, baseMeter);
+		const newEvents = flattenTrackPattern(track.patternTree, trackId, finalBaseMeter);
 		
 		// Add new events
 		this.events.push(...newEvents);
@@ -3680,9 +3691,9 @@ class MessageHandler {
 			case 'setTempo':
 				this.processor.setTempo(message.bpm);
 				break;
-			case 'updatePatternTree':
-				this.processor.updatePatternTree(message.trackId, message.patternTree);
-				break;
+		case 'updatePatternTree':
+			this.processor.updatePatternTree(message.trackId, message.patternTree, message.baseMeter);
+			break;
 			case 'updateTrackSettings':
 				this.processor.updateTrackSettings(message.trackId, message.settings);
 				break;
@@ -3882,8 +3893,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.playbackController.setTransport(state, position);
 	}
 
-	updatePatternTree(trackId, patternTree) {
-		this.projectManager.updatePatternTree(trackId, patternTree);
+	updatePatternTree(trackId, patternTree, baseMeter = 4) {
+		this.projectManager.updatePatternTree(trackId, patternTree, baseMeter);
 	}
 
 	updateTrackSettings(trackId, settings) {
@@ -3927,7 +3938,21 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			
 		// If pattern tree changed, update it in real-time
 		if (oldTrack && updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
-			this.updatePatternTree(trackId, updatedTrack.patternTree);
+			// Determine baseMeter for this track
+			let baseMeter = 4; // Default for standalone instruments
+			if (trackId && trackId.startsWith('__pattern_')) {
+				const lastUnderscore = trackId.lastIndexOf('_');
+				if (lastUnderscore > '__pattern_'.length) {
+					const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+					if (this.projectManager.patterns) {
+						const pattern = this.projectManager.patterns.find(p => p.id === patternId);
+						if (pattern) {
+							baseMeter = pattern.baseMeter || 4;
+						}
+					}
+				}
+			}
+			this.updatePatternTree(trackId, updatedTrack.patternTree, baseMeter);
 		}
 		} else {
 			// Track doesn't exist yet, add it
@@ -3949,7 +3974,21 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			
 			// If pattern tree exists, update events
 			if (updatedTrack.patternTree) {
-				this.updatePatternTree(trackId, updatedTrack.patternTree);
+				// Determine baseMeter for this track
+				let baseMeter = 4; // Default for standalone instruments
+				if (trackId && trackId.startsWith('__pattern_')) {
+					const lastUnderscore = trackId.lastIndexOf('_');
+					if (lastUnderscore > '__pattern_'.length) {
+						const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+						if (this.projectManager.patterns) {
+							const pattern = this.projectManager.patterns.find(p => p.id === patternId);
+							if (pattern) {
+								baseMeter = pattern.baseMeter || 4;
+							}
+						}
+					}
+				}
+				this.updatePatternTree(trackId, updatedTrack.patternTree, baseMeter);
 			}
 		}
 	}

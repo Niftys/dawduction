@@ -165,37 +165,43 @@ export class NodeRenderer {
 		this.ctx.shadowBlur = 0;
 		this.ctx.globalAlpha = 1.0; // Reset alpha
 
-		// Draw number with professional styling
-		// For intermediate nodes (depth 1), show number of children instead of division
-		// For root (depth 0), show division (total beats)
-		// For leaf nodes (depth 2+), show division
-		let displayValue: number;
-		if (depth === 1 && node.children.length > 0) {
-			displayValue = node.children.length; // Show number of subdivisions
+		// Draw text in center of node
+		if (depth === 0) {
+			// Root node: show instrument name in center
+			if (instrumentType) {
+				const fontSize = 14;
+				this.ctx.fillStyle = '#e8e8e8';
+				this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+				this.ctx.textAlign = 'center';
+				this.ctx.textBaseline = 'middle';
+				// Capitalize first letter
+				const label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+				this.ctx.fillText(label, sx, sy);
+			}
 		} else {
-			displayValue = node.division; // Show division value
-		}
-		
-		// Font size - root is large, others are small
-		const fontSize = depth === 0 ? 18 : 10;
-		const textOpacity = depth === 0 ? 1.0 : opacity;
-		this.ctx.fillStyle = depth === 0 ? '#e8e8e8' : `rgba(255, 255, 255, ${textOpacity})`;
-		this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-		this.ctx.textAlign = 'center';
-		this.ctx.textBaseline = 'middle';
-		this.ctx.fillText(displayValue.toString(), sx, sy);
-		
-		// Draw instrument label for root nodes
-		if (depth === 0 && instrumentType) {
-			const labelY = sy + scaledRadius + 20;
-			const labelFontSize = 12 * this.viewport.zoom;
-			this.ctx.font = `${labelFontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-			this.ctx.fillStyle = '#b0b0b0';
+			// Non-root nodes: show division or number of children
+			// For parent nodes (with children): show division if it differs from default (number of children), otherwise show number of children
+			// For leaf nodes (no children): show division
+			let displayValue: number;
+			if (node.children.length > 0) {
+				// Parent node: show division if it's been changed from default, otherwise show number of children
+				const defaultDivision = node.children.length;
+				if (node.division !== undefined && node.division !== defaultDivision) {
+					displayValue = node.division; // Show division if it's been customized
+				} else {
+					displayValue = defaultDivision; // Show number of children as default
+				}
+			} else {
+				displayValue = node.division || 1; // Leaf node: show division value
+			}
+			
+			const fontSize = 10;
+			const textOpacity = opacity;
+			this.ctx.fillStyle = `rgba(255, 255, 255, ${textOpacity})`;
+			this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 			this.ctx.textAlign = 'center';
-			this.ctx.textBaseline = 'top';
-			// Capitalize first letter
-			const label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
-			this.ctx.fillText(label, sx, labelY);
+			this.ctx.textBaseline = 'middle';
+			this.ctx.fillText(displayValue.toString(), sx, sy);
 		}
 	}
 

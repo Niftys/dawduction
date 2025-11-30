@@ -67,6 +67,36 @@
 	letter-spacing: 0.5px;
 }
 
+.help-text {
+	color: #888888;
+	font-size: 11px;
+	font-style: italic;
+	margin-top: -4px;
+	margin-bottom: 4px;
+	line-height: 1.4;
+}
+
+.division-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.division-description {
+	flex: 1;
+	min-width: 0;
+}
+
+.division-description label {
+	margin-bottom: 4px;
+}
+
+.division-description .help-text {
+	margin-top: 2px;
+	margin-bottom: 0;
+}
+
 .section h3 {
 	color: #e8e8e8;
 	margin-bottom: 12px;

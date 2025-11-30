@@ -101,7 +101,24 @@ function createEngineStore() {
 				
 				// If pattern tree changed, update it in real-time
 				if (updates.patternTree) {
-					engine.updatePatternTree(trackId, updates.patternTree);
+					// Determine baseMeter for this track
+					let baseMeter = 4; // Default for standalone instruments
+					if (trackId && trackId.startsWith('__pattern_')) {
+						const { projectStore } = await import('./projectStore');
+						let project: any;
+						projectStore.subscribe((p) => (project = p))();
+						if (project) {
+							const lastUnderscore = trackId.lastIndexOf('_');
+							if (lastUnderscore > '__pattern_'.length) {
+								const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+								const pattern = project.patterns?.find((p: any) => p.id === patternId);
+								if (pattern) {
+									baseMeter = pattern.baseMeter || 4;
+								}
+							}
+						}
+					}
+					engine.updatePatternTree(trackId, updates.patternTree, baseMeter);
 				}
 			}
 		}

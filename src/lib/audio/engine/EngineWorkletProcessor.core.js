@@ -100,8 +100,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.playbackController.setTransport(state, position);
 	}
 
-	updatePatternTree(trackId, patternTree) {
-		this.projectManager.updatePatternTree(trackId, patternTree);
+	updatePatternTree(trackId, patternTree, baseMeter = 4) {
+		this.projectManager.updatePatternTree(trackId, patternTree, baseMeter);
 	}
 
 	updateTrackSettings(trackId, settings) {
@@ -145,7 +145,21 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			
 		// If pattern tree changed, update it in real-time
 		if (oldTrack && updatedTrack.patternTree && oldTrack.patternTree !== updatedTrack.patternTree) {
-			this.updatePatternTree(trackId, updatedTrack.patternTree);
+			// Determine baseMeter for this track
+			let baseMeter = 4; // Default for standalone instruments
+			if (trackId && trackId.startsWith('__pattern_')) {
+				const lastUnderscore = trackId.lastIndexOf('_');
+				if (lastUnderscore > '__pattern_'.length) {
+					const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+					if (this.projectManager.patterns) {
+						const pattern = this.projectManager.patterns.find(p => p.id === patternId);
+						if (pattern) {
+							baseMeter = pattern.baseMeter || 4;
+						}
+					}
+				}
+			}
+			this.updatePatternTree(trackId, updatedTrack.patternTree, baseMeter);
 		}
 		} else {
 			// Track doesn't exist yet, add it
@@ -167,7 +181,21 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			
 			// If pattern tree exists, update events
 			if (updatedTrack.patternTree) {
-				this.updatePatternTree(trackId, updatedTrack.patternTree);
+				// Determine baseMeter for this track
+				let baseMeter = 4; // Default for standalone instruments
+				if (trackId && trackId.startsWith('__pattern_')) {
+					const lastUnderscore = trackId.lastIndexOf('_');
+					if (lastUnderscore > '__pattern_'.length) {
+						const patternId = trackId.substring('__pattern_'.length, lastUnderscore);
+						if (this.projectManager.patterns) {
+							const pattern = this.projectManager.patterns.find(p => p.id === patternId);
+							if (pattern) {
+								baseMeter = pattern.baseMeter || 4;
+							}
+						}
+					}
+				}
+				this.updatePatternTree(trackId, updatedTrack.patternTree, baseMeter);
 			}
 		}
 	}

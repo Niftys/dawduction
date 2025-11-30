@@ -50,6 +50,15 @@
 	letter-spacing: 0.5px;
 }
 
+.edit-help-text {
+	color: #888888;
+	font-size: 11px;
+	font-style: italic;
+	margin-top: -6px;
+	margin-bottom: 8px;
+	line-height: 1.4;
+}
+
 .edit-dialog input {
 	width: 100%;
 	background: #1a1a1a;

@@ -97,7 +97,7 @@ function updatePatternInstrument(
 	// Create the pattern instrument track ID (format: __pattern_{patternId}_{instrumentId})
 	const patternTrackId = `__pattern_${patternId}_${instrument.id}`;
 
-	// Get baseMeter from pattern (defaults to 4)
+	// Get baseMeter from pattern (always set, defaults to 4)
 	const baseMeter = pattern.baseMeter || 4;
 
 	engine.updatePatternTree(patternTrackId, instrument.patternTree, baseMeter);
@@ -122,7 +122,9 @@ function updateStandaloneInstrument(
 		return false;
 	}
 
-	engine.updatePatternTree(instrumentId, instrument.patternTree);
+	// Standalone instruments use default baseMeter of 4
+	// Root division will affect the internal rhythm relative to baseMeter
+	engine.updatePatternTree(instrumentId, instrument.patternTree, 4);
 	return true;
 }
 

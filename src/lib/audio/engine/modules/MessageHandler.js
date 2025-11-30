@@ -19,9 +19,9 @@ class MessageHandler {
 			case 'setTempo':
 				this.processor.setTempo(message.bpm);
 				break;
-			case 'updatePatternTree':
-				this.processor.updatePatternTree(message.trackId, message.patternTree);
-				break;
+		case 'updatePatternTree':
+			this.processor.updatePatternTree(message.trackId, message.patternTree, message.baseMeter);
+			break;
 			case 'updateTrackSettings':
 				this.processor.updateTrackSettings(message.trackId, message.settings);
 				break;

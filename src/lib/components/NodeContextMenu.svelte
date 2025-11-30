@@ -99,9 +99,11 @@
 	<button class="menu-item" on:click={handleAddChild}>
 		Add Child <span class="shortcut">(A)</span>
 	</button>
-	<button class="menu-item" on:click={handleEdit}>
-		Edit Division
-	</button>
+	{#if !isRoot}
+		<button class="menu-item" on:click={handleEdit}>
+			Edit Division
+		</button>
+	{/if}
 	<button class="menu-item danger" on:click={handleDelete}>
 		{isRoot ? (patternId ? 'Delete Pattern' : 'Delete Track') : 'Delete Node'}
 	</button>

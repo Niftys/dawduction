@@ -576,15 +576,44 @@ export function createPatternsModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 					patterns: (project.patterns || []).map((pattern) => {
 						if (pattern.id !== patternId) return pattern;
 						
+						// Helper to find a node in a tree
+						const findNode = (node: PatternNode, targetId: string): PatternNode | null => {
+							if (node.id === targetId) return node;
+							for (const child of node.children) {
+								const found = findNode(child, targetId);
+								if (found) return found;
+							}
+							return null;
+						};
+						
+						// Get the tree to search
+						const getTree = (): PatternNode | null => {
+							if (instrumentId && pattern.instruments && Array.isArray(pattern.instruments)) {
+								const instrument = pattern.instruments.find(inst => inst.id === instrumentId);
+								return instrument?.patternTree || null;
+							}
+							return pattern.patternTree || null;
+						};
+						
+						const tree = getTree();
+						const targetNode = tree ? findNode(tree, nodeId) : null;
+						const oldPitch = targetNode?.pitch ?? 60; // Default to middle C if no pitch set
+						const pitchDifference = pitch - oldPitch;
+						
 						const updateNode = (node: PatternNode): PatternNode => {
 							if (node.id === nodeId) {
-								// Update this node and all its children recursively
-								const updateChildren = (n: PatternNode): PatternNode => ({
-									...n,
-									pitch,
-									children: n.children.map(updateChildren)
-								});
-								return updateChildren(node);
+								// Update this node and transpose all its children recursively
+								const transposeChildren = (n: PatternNode): PatternNode => {
+									const newPitch = n.pitch !== undefined 
+										? Math.max(0, Math.min(127, n.pitch + pitchDifference))
+										: undefined;
+									return {
+										...n,
+										pitch: n.id === nodeId ? pitch : newPitch,
+										children: n.children.map(transposeChildren)
+									};
+								};
+								return transposeChildren(node);
 							}
 							return {
 								...node,
