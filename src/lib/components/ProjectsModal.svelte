@@ -1,43 +1,32 @@
 <script lang="ts">
-	import { getUserProjects, loadProject, deleteProject } from '$lib/utils/projectSaveLoad';
+	import { loadProject, deleteProject } from '$lib/utils/projectSaveLoad';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { loadingStore } from '$lib/stores/loadingStore';
 	import { goto } from '$app/navigation';
 
 	let {
 		isOpen = $bindable(false),
+		projects: initialProjects = [],
+		onRefresh,
 		onClose
 	}: {
 		isOpen?: boolean;
+		projects?: any[];
+		onRefresh?: () => void;
 		onClose?: () => void;
 	} = $props();
 
-	let projects: any[] = [];
-	let loading = false;
+	// Use derived to automatically update when prop changes
+	const projects = $derived(initialProjects || []);
 	let error = '';
 	let showDeleteConfirm = false;
 	let projectToDelete: any = null;
 
-	async function loadProjects() {
-		if (!isOpen) return;
-		
-		loading = true;
-		error = '';
-		const { projects: userProjects, error: projectsError } = await getUserProjects();
-		
-		if (projectsError) {
-			error = projectsError;
-		} else {
-			projects = userProjects || [];
+	async function refreshProjects() {
+		if (onRefresh) {
+			onRefresh();
 		}
-		loading = false;
 	}
-
-	$effect(() => {
-		if (isOpen) {
-			loadProjects();
-		}
-	});
 
 	function closeModal() {
 		isOpen = false;
@@ -86,7 +75,7 @@
 			}
 
 			// Reload projects list
-			await loadProjects();
+			await refreshProjects();
 			showDeleteConfirm = false;
 			projectToDelete = null;
 		} catch (err: any) {
@@ -132,9 +121,7 @@
 
 			<h2 id="modal-title" class="modal-title">Your Projects</h2>
 
-			{#if loading}
-				<div class="loading-state">Loading projects...</div>
-			{:else if error}
+			{#if error}
 				<div class="error-message">{error}</div>
 			{:else if projects.length === 0}
 				<div class="empty-state">

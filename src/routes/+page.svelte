@@ -4,6 +4,7 @@
 	import { projectStore } from '$lib/stores/projectStore';
 	import { loadingStore } from '$lib/stores/loadingStore';
 	import { supabase, getCurrentUser } from '$lib/utils/supabase';
+	import { getUserProjects } from '$lib/utils/projectSaveLoad';
 	import AuthModal from '$lib/components/AuthModal.svelte';
 	import ProjectsModal from '$lib/components/ProjectsModal.svelte';
 	import SandboxModal from '$lib/components/SandboxModal.svelte';
@@ -11,27 +12,70 @@
 
 	const circleText = 'DAWDUCTION • '.repeat(5);
 
-	let user: any = null;
-	let showAuthModal = false;
-	let showProjectsModal = false;
-	let showSandboxModal = false;
+	let user: any = $state(null);
+	let showAuthModal = $state(false);
+	let showProjectsModal = $state(false);
+	let showSandboxModal = $state(false);
+	let userProjects: any[] = $state([]);
+	let projectsLoading = $state(false);
+
+	async function loadUserProjects() {
+		if (!user) {
+			userProjects = [];
+			return;
+		}
+		
+		projectsLoading = true;
+		try {
+			const { projects, error } = await getUserProjects();
+			if (error) {
+				console.error('Error loading projects:', error);
+				userProjects = [];
+			} else {
+				userProjects = projects || [];
+			}
+		} catch (err) {
+			console.error('Error loading projects:', err);
+			userProjects = [];
+		} finally {
+			projectsLoading = false;
+		}
+	}
 
 	onMount(async () => {
-		// Check if user is authenticated
-		user = await getCurrentUser();
+		try {
+			// Check if user is authenticated
+			user = await getCurrentUser();
+			
+			// Pre-load projects if user is logged in
+			if (user) {
+				loadUserProjects();
+			}
+		} catch (err) {
+			console.error('Error in onMount:', err);
+		}
 
 		// Listen for auth state changes
-		supabase.auth.onAuthStateChange((_event, session) => {
-			user = session?.user ?? null;
-			if (!user) {
-				showProjectsModal = false;
+		supabase.auth.onAuthStateChange(async (_event, session) => {
+			try {
+				user = session?.user ?? null;
+				if (!user) {
+					showProjectsModal = false;
+					userProjects = [];
+				} else {
+					// User just logged in - load projects
+					loadUserProjects();
+				}
+			} catch (err) {
+				console.error('Error in auth state change:', err);
 			}
 		});
 	});
 
-	function handleAuthSuccess() {
+	async function handleAuthSuccess() {
 		showAuthModal = false;
 		// User will be updated via auth state change listener
+		// Projects will be loaded by the auth state change listener
 	}
 
 	async function createNewProject() {
@@ -95,6 +139,14 @@
 		} finally {
 			loadingStore.stopLoading();
 		}
+	}
+
+	function openSandboxModal() {
+		showSandboxModal = true;
+	}
+
+	function openAuthModal() {
+		showAuthModal = true;
 	}
 
 	async function handleEnterSandbox() {
@@ -171,10 +223,10 @@
 					</button>
 				{:else}
 					<div class="button-group">
-						<button class="sandbox-button" on:click={() => showSandboxModal = true}>
+						<button class="sandbox-button" on:click={openSandboxModal}>
 							Sandbox
 						</button>
-						<button class="sign-in-button" on:click={() => showAuthModal = true}>
+						<button class="sign-in-button" on:click={openAuthModal}>
 							Sign In
 						</button>
 					</div>
@@ -197,6 +249,8 @@
 {#if user}
 	<ProjectsModal 
 		bind:isOpen={showProjectsModal}
+		projects={userProjects}
+		onRefresh={loadUserProjects}
 		onClose={() => showProjectsModal = false}
 	/>
 {/if}
