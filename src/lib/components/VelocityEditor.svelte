@@ -20,9 +20,9 @@
 	projectStore.subscribe((p) => (project = p));
 	selectionStore.subscribe((s) => (selection = s));
 	
-	// Instruments that support pitch editing via MidiEditor (melodic + drums)
+	// Instruments that support pitch editing via MidiEditor (melodic + drums + samples)
 	// VelocityEditor should NOT show for these - MidiEditor handles both pitch and velocity modes
-	const pitchEditableInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ', 'kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'];
+	const pitchEditableInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ', 'kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot', 'sample'];
 	
 	// Check if we should show the velocity editor
 	// Only show for instruments that DON'T support pitch editing

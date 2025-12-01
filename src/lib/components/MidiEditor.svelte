@@ -29,8 +29,10 @@
 	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ'];
 	// Drum instruments that also support pitch editing
 	const drumInstruments = ['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'];
-	// All instruments that support pitch editing (melodic + drums)
-	const pitchEditableInstruments = [...melodicInstruments, ...drumInstruments];
+	// Sample instruments that support pitch editing (via playback rate)
+	const sampleInstruments = ['sample'];
+	// All instruments that support pitch editing (melodic + drums + samples)
+	const pitchEditableInstruments = [...melodicInstruments, ...drumInstruments, ...sampleInstruments];
 	
 	// Editor mode: 'pitch' or 'velocity' - use shared store to sync with NoteControls
 	$: editorMode = $editorModeStore;

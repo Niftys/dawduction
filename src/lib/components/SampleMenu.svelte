@@ -40,6 +40,9 @@
 	let isUploading = $state(false);
 	let uploadProgress = $state(0);
 	let errorMessage = $state<string | null>(null);
+	let previewingSampleId: string | null = $state(null);
+	let previewAudioContext: AudioContext | null = null;
+	let previewSource: AudioBufferSourceNode | null = null;
 	
 	// Load samples when menu opens
 	async function openMenu() {
@@ -313,6 +316,57 @@
 		if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
 		return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 	}
+	
+	async function previewSample(sample: SampleMetadata, event: Event) {
+		event.stopPropagation();
+		
+		// Stop any currently playing preview
+		if (previewSource) {
+			try {
+				previewSource.stop();
+			} catch (e) {
+				// Already stopped
+			}
+			previewSource = null;
+		}
+		
+		// If clicking the same sample, just stop it
+		if (previewingSampleId === sample.id) {
+			previewingSampleId = null;
+			return;
+		}
+		
+		try {
+			previewingSampleId = sample.id;
+			
+			// Create audio context if needed
+			if (!previewAudioContext) {
+				previewAudioContext = new AudioContext();
+			}
+			
+			// Load and play the sample
+			const audioBuffer = await loadSampleAudio(sample.id);
+			if (!audioBuffer) {
+				previewingSampleId = null;
+				return;
+			}
+			
+			const source = previewAudioContext.createBufferSource();
+			source.buffer = audioBuffer;
+			source.connect(previewAudioContext.destination);
+			
+			source.onended = () => {
+				previewingSampleId = null;
+				previewSource = null;
+			};
+			
+			previewSource = source;
+			source.start(0);
+		} catch (error) {
+			console.error('Error previewing sample:', error);
+			previewingSampleId = null;
+		}
+	}
 </script>
 
 <button 
@@ -374,6 +428,13 @@
 						<div class="samples-grid">
 							{#each samples as sample}
 								<div class="sample-item" role="button" tabindex="0" onclick={() => addSampleToPattern(sample)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addSampleToPattern(sample); } }}>
+									<button 
+										class="preview-btn"
+										onclick={(e) => previewSample(sample, e)}
+										title={previewingSampleId === sample.id ? "Stop preview" : "Preview sample"}
+									>
+										{previewingSampleId === sample.id ? '⏸' : '▶'}
+									</button>
 									<div class="sample-info">
 										<div class="sample-name">{sample.fileName}</div>
 										<div class="sample-meta">
@@ -537,21 +598,54 @@
 	
 	.sample-item {
 		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 12px;
+		align-items: stretch;
+		gap: 0;
+		padding: 0;
 		background: #2a2a2a;
 		border-radius: 4px;
 		cursor: pointer;
 		transition: background 0.2s;
+		min-height: 60px;
+		overflow: hidden;
 	}
 	
 	.sample-item:hover {
 		background: #333;
 	}
 	
+	.preview-btn {
+		background: #2d2d2d;
+		border: none;
+		border-right: 1px solid rgba(255, 255, 255, 0.1);
+		color: #e8e8e8;
+		padding: 0 24px;
+		border-radius: 4px 0 0 4px;
+		cursor: pointer;
+		font-size: 14px;
+		transition: all 0.2s;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 80px;
+		flex-shrink: 0;
+	}
+	
+	.preview-btn:hover {
+		background: #333333;
+		color: #9b59b6;
+		border-right-color: rgba(155, 89, 182, 0.3);
+	}
+	
+	.preview-btn:active {
+		background: #3a3a3a;
+	}
+	
 	.sample-info {
 		flex: 1;
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		padding: 12px 0 12px 16px;
 	}
 	
 	.sample-name {
@@ -566,23 +660,23 @@
 	}
 	
 	.delete-btn {
-		background: #ff4444;
+		background: transparent;
 		border: none;
-		color: white;
-		width: 24px;
-		height: 24px;
-		border-radius: 4px;
+		color: #999;
+		font-size: 20px;
 		cursor: pointer;
-		font-size: 18px;
-		line-height: 1;
+		padding: 0 16px;
+		transition: all 0.2s;
+		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: background 0.2s;
+		border-radius: 0 4px 4px 0;
 	}
 	
 	.delete-btn:hover {
-		background: #cc0000;
+		color: #ff4444;
+		background: rgba(255, 68, 68, 0.1);
 	}
 </style>
 

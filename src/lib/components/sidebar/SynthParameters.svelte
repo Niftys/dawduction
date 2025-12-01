@@ -14,6 +14,7 @@
 	import BassSynthParams from './synthParams/BassSynthParams.svelte';
 	import PadSynthParams from './synthParams/PadSynthParams.svelte';
 	import OrganSynthParams from './synthParams/OrganSynthParams.svelte';
+	import SampleParams from './synthParams/SampleParams.svelte';
 
 	let selection: any;
 	selectionStore.subscribe((s) => (selection = s));
@@ -70,7 +71,7 @@
 					engine.updateTrackSettings(patternTrackId, defaults.settings);
 				}
 			} else if (selectedTrack) {
-				projectStore.updateTrack(selectedTrack.id, { settings: { ...defaults.settings } });
+				projectStore.updateStandaloneInstrument(selectedTrack.id, { settings: { ...defaults.settings } });
 				if (engine) {
 					engine.updateTrackSettings(selectedTrack.id, defaults.settings);
 				}
@@ -116,11 +117,11 @@
 		<h3>Synth Parameters</h3>
 		<div class="param-header-actions">
 			{#if activeItem && (activeItem.instrumentType === 'pad' || activeItem.instrumentType === 'organ')}
-				<button class="plugin-btn" on:click={openPluginWindow} title="Open Plugin Window">
+				<button class="plugin-btn" onclick={openPluginWindow} title="Open Plugin Window">
 					Plugin
 				</button>
 			{/if}
-			<button class="reset-btn" on:click={resetSynthParameters}>Reset All</button>
+			<button class="reset-btn" onclick={resetSynthParameters}>Reset All</button>
 		</div>
 	</div>
 	{#if activeItem && ['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'].includes(activeItem.instrumentType)}
@@ -141,6 +142,8 @@
 		<PadSynthParams selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} {trackSettings} />
 	{:else if activeItem && activeItem.instrumentType === 'organ'}
 		<OrganSynthParams selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} {trackSettings} />
+	{:else if activeItem && activeItem.instrumentType === 'sample'}
+		<SampleParams selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} {trackSettings} />
 	{/if}
 </div>
 

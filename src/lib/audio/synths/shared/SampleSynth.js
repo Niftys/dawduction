@@ -17,6 +17,11 @@ class SampleSynth {
 		this.pitch = 60; // MIDI note (default: Middle C)
 		this.playbackRate = 1.0; // For pitch shifting
 		
+		// Sample trimming and looping
+		this.startPoint = 0; // Start position in samples (0 = beginning)
+		this.endPoint = null; // End position in samples (null = end of buffer)
+		this.loop = false; // Whether to loop the sample
+		
 		// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
@@ -25,6 +30,9 @@ class SampleSynth {
 		
 		// DC blocking filter
 		this.dcFilterState = { x1: 0, y1: 0 };
+		
+		// Initialize settings
+		this._initSettings();
 	}
 
 	updateSettings(settings) {
@@ -32,6 +40,29 @@ class SampleSynth {
 		// If audio buffer is provided in settings, set it
 		if (settings.audioBuffer && settings.audioBuffer instanceof Float32Array) {
 			this.setAudioBuffer(settings.audioBuffer);
+		}
+		// Update trimming and loop settings
+		if (settings.startPoint !== undefined) {
+			this.startPoint = Math.max(0, Math.floor(settings.startPoint));
+		}
+		if (settings.endPoint !== undefined) {
+			this.endPoint = settings.endPoint === null ? null : Math.max(0, Math.floor(settings.endPoint));
+		}
+		if (settings.loop !== undefined) {
+			this.loop = settings.loop;
+		}
+	}
+	
+	// Initialize settings from constructor settings
+	_initSettings() {
+		if (this.settings.startPoint !== undefined) {
+			this.startPoint = Math.max(0, Math.floor(this.settings.startPoint));
+		}
+		if (this.settings.endPoint !== undefined) {
+			this.endPoint = this.settings.endPoint === null ? null : Math.max(0, Math.floor(this.settings.endPoint));
+		}
+		if (this.settings.loop !== undefined) {
+			this.loop = this.settings.loop;
 		}
 	}
 
@@ -50,12 +81,14 @@ class SampleSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
-		this.playbackPosition = 0;
 		
 		// Calculate playback rate for pitch shifting
 		// Base pitch is Middle C (MIDI 60)
 		const basePitch = 60;
 		this.playbackRate = Math.pow(2, (this.pitch - basePitch) / 12);
+		
+		// Set playback position to start point
+		this.playbackPosition = this.startPoint;
 		
 		// Reset DC filter state on trigger
 		this.dcFilterState.x1 = 0;
@@ -72,21 +105,45 @@ class SampleSynth {
 			return 0;
 		}
 		
-		// Check if we've reached the end of the buffer
-		if (this.playbackPosition >= this.audioBuffer.length) {
-			this.isActive = false;
-			return 0;
+		// Calculate effective buffer bounds
+		const effectiveStart = this.startPoint;
+		const effectiveEnd = this.endPoint !== null ? this.endPoint : this.audioBuffer.length;
+		const effectiveLength = effectiveEnd - effectiveStart;
+		
+		// Check if we've reached the end
+		if (this.playbackPosition >= effectiveEnd) {
+			if (this.loop) {
+				// Loop: wrap back to start point
+				this.playbackPosition = effectiveStart + (this.playbackPosition - effectiveEnd);
+			} else {
+				// One-shot: stop playback
+				this.isActive = false;
+				return 0;
+			}
+		}
+		
+		// Ensure we're within bounds (for safety)
+		if (this.playbackPosition < effectiveStart) {
+			this.playbackPosition = effectiveStart;
+		}
+		if (this.playbackPosition >= effectiveEnd) {
+			if (this.loop) {
+				this.playbackPosition = effectiveStart;
+			} else {
+				this.isActive = false;
+				return 0;
+			}
 		}
 		
 		// Linear interpolation for smooth playback with pitch shifting
 		const position = Math.floor(this.playbackPosition);
 		const fraction = this.playbackPosition - position;
 		
-		// Get samples for interpolation
-		const sample1 = this.audioBuffer[position] || 0;
-		const sample2 = position + 1 < this.audioBuffer.length 
-			? this.audioBuffer[position + 1] 
-			: sample1;
+		// Get samples for interpolation (clamp to buffer bounds)
+		const clampedPos = Math.max(effectiveStart, Math.min(effectiveEnd - 1, position));
+		const sample1 = this.audioBuffer[clampedPos] || 0;
+		const nextPos = Math.max(effectiveStart, Math.min(effectiveEnd - 1, position + 1));
+		const sample2 = this.audioBuffer[nextPos] || sample1;
 		
 		// Linear interpolation
 		const sample = sample1 + (sample2 - sample1) * fraction;
@@ -118,18 +175,18 @@ class SampleSynth {
 		// Advance playback position
 		this.playbackPosition += this.playbackRate;
 		
-		// Stop if we've reached the end
-		if (this.playbackPosition >= this.audioBuffer.length) {
+		// Handle end of sample (for one-shot mode)
+		if (!this.loop && this.playbackPosition >= effectiveEnd) {
 			// Smooth fade-out at the end to prevent clicks
-			const remainingSamples = this.audioBuffer.length - Math.floor(this.playbackPosition - this.playbackRate);
+			const remainingSamples = effectiveEnd - Math.floor(this.playbackPosition - this.playbackRate);
 			const fadeOutSamples = Math.min(remainingSamples, Math.floor(0.01 * this.sampleRate)); // 10ms fade
 			if (fadeOutSamples > 0) {
-				const fadeProgress = (this.audioBuffer.length - this.playbackPosition) / (fadeOutSamples * this.playbackRate);
+				const fadeProgress = (effectiveEnd - this.playbackPosition) / (fadeOutSamples * this.playbackRate);
 				const fadeOutGain = Math.max(0, Math.min(1, fadeProgress));
 				output *= fadeOutGain;
 			}
 			
-			if (this.playbackPosition >= this.audioBuffer.length) {
+			if (this.playbackPosition >= effectiveEnd) {
 				this.isActive = false;
 				this.dcFilterState.x1 = 0;
 				this.dcFilterState.y1 = 0;
