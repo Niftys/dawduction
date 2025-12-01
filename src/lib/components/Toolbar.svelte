@@ -236,6 +236,27 @@
 		};
 		window.addEventListener('reloadProject', handleReload);
 		
+		// Listen for playback stopped events (e.g., when seeking via ruler click)
+		const handlePlaybackStopped = () => {
+			if (isPlaying) {
+				isPlaying = false;
+				transportState = 'stop';
+				// Don't clear playback store here - it's already updated by the seek operation
+			}
+		};
+		
+		// Listen for playback seeked events (when seeking during active playback)
+		const handlePlaybackSeeked = (e: CustomEvent) => {
+			// When seeking during playback, ensure Toolbar state stays in sync
+			if (e.detail?.isPlaying) {
+				isPlaying = true;
+				transportState = 'play';
+			}
+		};
+		
+		window.addEventListener('playbackStopped', handlePlaybackStopped);
+		window.addEventListener('playbackSeeked', handlePlaybackSeeked as EventListener);
+		
 		// Performance monitoring: periodically reload at beat boundaries during playback
 		// This proactively prevents performance degradation by reloading the engine periodically
 		// Reloads happen at beat boundaries to avoid interrupting active notes
@@ -386,6 +407,8 @@
 		
 		return () => {
 			window.removeEventListener('reloadProject', handleReload);
+			window.removeEventListener('playbackStopped', handlePlaybackStopped);
+			window.removeEventListener('playbackSeeked', handlePlaybackSeeked as EventListener);
 			window.removeEventListener('keydown', handleKeyDown);
 			window.removeEventListener('quietPeriodDetected', handleQuietPeriod as EventListener);
 			// Clear auto-save interval on unmount
@@ -505,16 +528,33 @@
 		// Ensure AudioContext is resumed (required for audio playback after page load)
 		await engine.resume();
 
+		const wasPlaying = isPlaying;
 		isPlaying = !isPlaying;
 		transportState = isPlaying ? 'play' : 'stop';
-		engine.setTransport(transportState);
 
-		// Clear playback state when stopping
+		// Stop playback but preserve the current position
 		if (!isPlaying) {
-			playbackStore.clear();
+			// Get current position before clearing playing state
+			let currentPosition = 0;
+			playbackStore.subscribe((state) => {
+				currentPosition = state.currentTime || 0;
+			})();
+			
+			// Stop transport at current position (don't reset to 0)
+			engine.setTransport('stop', currentPosition);
+			
+			// Clear playing nodes but preserve currentTime
+			playbackStore.update((state) => ({
+				...state,
+				playingNodes: new Set(),
+				playedNodes: new Set(),
+				isLoopStart: false
+				// Keep currentTime as-is
+			}));
+			return; // Early return when stopping
 		}
 
-		// Load project if playing
+		// Load project if playing (don't call setTransport yet - wait until we have the position)
 		if (isPlaying) {
 			let project: any;
 			projectStore.subscribe((p) => (project = p))();
@@ -526,13 +566,15 @@
 				if (currentViewMode === 'arrangement' && project.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
 					// Load timeline in arrangement view
 					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, project.timeline, project.patterns, project.effects, project.envelopes, project.automation);
-					// Reset transport position when starting in arrangement view
-					transportState = 'stop';
-					isPlaying = false;
-					engine.setTransport('stop', 0);
+					// Get current playback position from store
+					let currentPosition = 0;
+					playbackStore.subscribe((state) => {
+						currentPosition = state.currentTime || 0;
+					})();
+					// Start playback from current position (or 0 if not set)
 					transportState = 'play';
 					isPlaying = true;
-					engine.setTransport('play', 0);
+					engine.setTransport('play', currentPosition);
 				} else {
 					// Pattern view - check if we're in a pattern editor page
 					const currentPath = window.location.pathname;
@@ -584,20 +626,37 @@
 							const allTracks = [...(project.standaloneInstruments || []), ...patternTracks];
 							
 							await engine.loadProject(allTracks, currentBpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+							// Get current playback position from store
+							let currentPosition = 0;
+							playbackStore.subscribe((state) => {
+								currentPosition = state.currentTime || 0;
+							})();
 							transportState = 'play';
 							isPlaying = true;
-							engine.setTransport('play');
+							engine.setTransport('play', currentPosition);
 						} else {
 							// Pattern not found, fall back to standalone instruments
 							await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
+							// Get current playback position from store
+							let currentPosition = 0;
+							playbackStore.subscribe((state) => {
+								currentPosition = state.currentTime || 0;
+							})();
 							transportState = 'play';
 							isPlaying = true;
-							engine.setTransport('play');
+							engine.setTransport('play', currentPosition);
 						}
 					} else {
 						// Regular pattern view - use standalone instruments
-					await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
-					engine.setTransport('play');
+						await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
+						// Get current playback position from store
+						let currentPosition = 0;
+						playbackStore.subscribe((state) => {
+							currentPosition = state.currentTime || 0;
+						})();
+						transportState = 'play';
+						isPlaying = true;
+						engine.setTransport('play', currentPosition);
 					}
 				}
 			}

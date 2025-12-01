@@ -109,29 +109,127 @@ export async function saveProject(project: Project): Promise<{ success: boolean;
 
 		// Save effects
 		if (project.effects && project.effects.length > 0) {
-			const effects = project.effects.map((effect: Effect) => ({
-				id: effect.id,
-				project_id: project.id,
-				name: effect.name,
-				type: effect.type,
-				settings: effect.settings,
-				color: effect.color,
-				updated_at: new Date().toISOString()
-			}));
+			// Valid effect types according to TypeScript types
+			const validEffectTypes = ['reverb', 'delay', 'filter', 'distortion', 'compressor', 'chorus', 'saturator', 'equalizer'];
+			
+			// Filter and validate effects before saving
+			const validEffects = project.effects.filter((effect: Effect) => {
+				if (!validEffectTypes.includes(effect.type)) {
+					console.warn(`Skipping effect with invalid type: ${effect.type}`, effect);
+					return false;
+				}
+				return true;
+			});
 
-			// Delete existing effects for this project
-			await supabase
-				.from('effects')
-				.delete()
-				.eq('project_id', project.id);
+			if (validEffects.length > 0) {
+				// Query existing effects from ANY project to determine which types are allowed
+				const { data: existingEffects } = await supabase
+					.from('effects')
+					.select('type')
+					.limit(100);
 
-			// Insert new effects
-			const { error: effectError } = await supabase
-				.from('effects')
-				.insert(effects);
+				// Get unique types that exist in the database (these are allowed by the constraint)
+				const allowedTypes = new Set<string>();
+				if (existingEffects && existingEffects.length > 0) {
+					existingEffects.forEach((eff: any) => {
+						allowedTypes.add(eff.type.toLowerCase());
+					});
+					console.log('Types currently allowed by database constraint:', Array.from(allowedTypes));
+				}
 
-			if (effectError) {
-				console.error('Error saving effects:', effectError);
+				// Determine the case format from existing effects
+				let caseFormat: 'lowercase' | 'uppercase' | 'titlecase' = 'lowercase';
+				if (existingEffects && existingEffects.length > 0) {
+					const sampleType = existingEffects[0].type;
+					if (sampleType === sampleType.toUpperCase()) {
+						caseFormat = 'uppercase';
+					} else if (sampleType === sampleType.charAt(0).toUpperCase() + sampleType.slice(1).toLowerCase()) {
+						caseFormat = 'titlecase';
+					}
+				}
+
+				// Split effects into those that match existing types and new types
+				const effectsWithAllowedTypes = validEffects.filter(e => 
+					allowedTypes.size === 0 || allowedTypes.has(e.type.toLowerCase())
+				);
+				const effectsWithNewTypes = validEffects.filter(e => 
+					allowedTypes.size > 0 && !allowedTypes.has(e.type.toLowerCase())
+				);
+
+				// Transform function based on detected case format
+				const transformType = (type: string): string => {
+					if (caseFormat === 'uppercase') return type.toUpperCase();
+					if (caseFormat === 'titlecase') return type.charAt(0).toUpperCase() + type.slice(1).toLowerCase();
+					return type.toLowerCase();
+				};
+
+				// Delete existing effects for this project
+				await supabase
+					.from('effects')
+					.delete()
+					.eq('project_id', project.id);
+
+				// Save effects one at a time to identify which types are failing
+				const savedEffects: Effect[] = [];
+				const failedEffects: Array<{ effect: Effect; error: any }> = [];
+
+				for (const effect of validEffects) {
+					const effectToSave = {
+						id: effect.id,
+						project_id: project.id,
+						name: effect.name,
+						type: transformType(effect.type),
+						settings: effect.settings,
+						color: effect.color,
+						updated_at: new Date().toISOString()
+					};
+
+					const { error: effectError } = await supabase
+						.from('effects')
+						.insert([effectToSave]);
+
+					if (effectError) {
+						if (effectError.code === '23514') {
+							console.error(`✗ Failed to save effect "${effect.name}" with type "${effectToSave.type}": constraint violation`);
+							failedEffects.push({ effect, error: effectError });
+						} else {
+							console.error(`✗ Failed to save effect "${effect.name}":`, effectError);
+							failedEffects.push({ effect, error: effectError });
+						}
+					} else {
+						console.log(`✓ Saved effect "${effect.name}" with type "${effectToSave.type}"`);
+						savedEffects.push(effect);
+					}
+				}
+
+				// Report results
+				if (savedEffects.length > 0) {
+					console.log(`\n✓ Successfully saved ${savedEffects.length} effect(s)`);
+				}
+
+				if (failedEffects.length > 0) {
+					const failedTypes = [...new Set(failedEffects.map(f => f.effect.type))];
+					console.error(`\n❌ Failed to save ${failedEffects.length} effect(s) with types:`, failedTypes);
+					console.error('');
+					console.error('🔍 The database constraint does not allow these effect types.');
+					console.error('');
+					console.error('📝 To fix this, run this SQL in your Supabase SQL Editor:');
+					console.error('');
+					console.error('-- First, check what the current constraint allows:');
+					console.error('SELECT conname, pg_get_constraintdef(oid)');
+					console.error('FROM pg_constraint');
+					console.error('WHERE conname = \'effects_type_check\';');
+					console.error('');
+					console.error('-- Then, update the constraint to include all types:');
+					console.error('ALTER TABLE effects DROP CONSTRAINT IF EXISTS effects_type_check;');
+					console.error('');
+					console.error('ALTER TABLE effects ADD CONSTRAINT effects_type_check');
+					console.error('CHECK (type IN (\'reverb\', \'delay\', \'filter\', \'distortion\', \'compressor\', \'chorus\', \'saturator\', \'equalizer\'));');
+					console.error('');
+					console.error('After running this SQL, try saving your project again.');
+				}
+			} else if (project.effects.length > 0) {
+				console.warn('All effects were filtered out due to invalid types');
 			}
 		}
 

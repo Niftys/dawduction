@@ -475,7 +475,7 @@
 		selectedEnvelopeId = null;
 	}
 
-	function handleRulerClick(e: MouseEvent) {
+	async function handleRulerClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		
 		// CRITICAL: Check for dropdown menu elements FIRST
@@ -491,6 +491,112 @@
 		if (target.closest('.ruler-label-spacer') || 
 		    target.closest('button')) {
 			return;
+		}
+		
+		// Calculate the beat position from the click
+		// The playhead is positioned at: ROW_LABEL_WIDTH + beatToPixel(beat)
+		// So we need to calculate the click position relative to timeline-area
+		if (!timelineAreaElement) return;
+		
+		const timelineRect = timelineAreaElement.getBoundingClientRect();
+		const clickX = e.clientX - timelineRect.left;
+		
+		// Account for scroll position
+		const scrollLeft = timelineAreaElement.scrollLeft;
+		const absoluteX = clickX + scrollLeft;
+		
+		// Subtract the row label width to get position within the ruler content area
+		// (same calculation as playhead positioning: ROW_LABEL_WIDTH + beatToPixel(beat))
+		const adjustedX = absoluteX - ROW_LABEL_WIDTH;
+		
+		// Convert pixel position to beat
+		const targetBeat = Math.max(0, snapToBeat(pixelToBeatLocal(adjustedX)));
+		
+		// Clamp to timeline length
+		const clampedBeat = Math.min(targetBeat, timeline.totalLength || 0);
+		
+		// Get engine instance
+		const engine = $engineStore;
+		if (!engine) return;
+		
+		// Check if playback is currently active
+		// Use multiple checks to be more reliable:
+		// 1. Check if there are playing nodes (most reliable during active playback)
+		// 2. Check if currentTime is advancing (indicates playback)
+		// We'll preserve playback state if any of these indicate it's playing
+		const hasPlayingNodes = playbackState?.playingNodes?.size > 0;
+		const wasPlaying = hasPlayingNodes || (playbackState?.currentTime !== undefined && playbackState.currentTime > 0);
+		
+		// Seek to the clicked position
+		if (wasPlaying) {
+			// If playback is active, reload the project to reschedule events from the new position
+			// This ensures all clips/events play correctly from the seek position
+			const currentBpm = project?.bpm ?? 120;
+			const currentViewMode = $viewStore;
+			
+			if (currentViewMode === 'arrangement' && project?.timeline && project.timeline.clips && project.timeline.clips.length > 0) {
+				// Reload timeline in arrangement view
+				await engine.loadProject(
+					project.standaloneInstruments || [],
+					currentBpm,
+					project.baseMeterTrackId,
+					project.timeline,
+					project.patterns,
+					project.effects,
+					project.envelopes,
+					project.automation
+				);
+			} else {
+				// Pattern view - reload standalone instruments
+				await engine.loadProject(
+					project?.standaloneInstruments || [],
+					currentBpm,
+					project?.baseMeterTrackId,
+					undefined,
+					project?.patterns,
+					project?.effects,
+					project?.envelopes
+				);
+			}
+			
+			// Small delay to ensure loadProject completes before setting transport
+			await new Promise(resolve => setTimeout(resolve, 10));
+			
+			// Seek to new position while keeping playback active
+			// IMPORTANT: Must call setTransport AFTER loadProject to ensure playback continues
+			engine.setTransport('play', clampedBeat);
+			
+			// Clear playedNodes so events can replay from the new position
+			playbackStore.update((state) => ({
+				...state,
+				currentTime: clampedBeat,
+				playedNodes: new Set(), // Clear so events can replay
+				isLoopStart: false
+				// Keep playingNodes as-is (they'll be updated by the engine)
+			}));
+			
+			// Dispatch event immediately to notify Toolbar that playback is still active after seek
+			// This ensures the play/pause button state stays correct
+			window.dispatchEvent(new CustomEvent('playbackSeeked', { 
+				detail: { position: clampedBeat, isPlaying: true } 
+			}));
+			
+			// Also dispatch again after a short delay to ensure it's received
+			// (in case the first one was missed due to timing)
+			setTimeout(() => {
+				window.dispatchEvent(new CustomEvent('playbackSeeked', { 
+					detail: { position: clampedBeat, isPlaying: true } 
+				}));
+			}, 100);
+		} else {
+			// Playback is stopped, just move the playhead
+			engine.setTransport('stop', clampedBeat);
+			
+			// Update playback store to reflect the new playhead position
+			playbackStore.update((state) => ({
+				...state,
+				currentTime: clampedBeat
+			}));
 		}
 		
 		// Deselect effect/envelope when clicking on ruler
@@ -636,8 +742,14 @@
 	let selectedEnvelopeId: string | null = null;
 	
 	// Resize state
-	let isResizing: { type: 'clip' | 'effect' | 'envelope', id: string, side: 'left' | 'right', startBeat: number, startDuration: number, startX: number } | null = null;
-	let isDraggingClip: { type: 'clip' | 'effect' | 'envelope', id: string, startBeat: number, startX: number } | null = null;
+	let isResizing: { type: 'clip' | 'effect' | 'envelope', id: string, side: 'left' | 'right', startBeat: number, startDuration: number, startX: number, startScrollLeft: number } | null = null;
+	let isDraggingClip: { type: 'clip' | 'effect' | 'envelope', id: string, startBeat: number, startX: number, startScrollLeft: number } | null = null;
+	
+	// Auto-scroll state
+	let autoScrollInterval: ReturnType<typeof setInterval> | null = null;
+	let autoScrollDirection: 'left' | 'right' | null = null;
+	let lastMouseX: number | null = null;
+	let currentMouseX: number | null = null;
 
 	function handleDragStart(e: DragEvent, patternId: string) {
 		if (viewMode !== 'arrangement') return;
@@ -822,13 +934,15 @@
 			if (!rect) return;
 			
 			const startX = e.clientX - rect.left - ROW_LABEL_WIDTH;
+			const startScrollLeft = timelineAreaElement?.scrollLeft || 0;
 			isResizing = {
 				type,
 				id: clip.id,
 				side,
 				startBeat: clip.startBeat,
 				startDuration: clip.duration,
-				startX
+				startX,
+				startScrollLeft
 			};
 		} else {
 			// Start dragging the clip - begin batching for undo/redo
@@ -839,11 +953,13 @@
 			if (!rect) return;
 			
 			const startX = e.clientX - rect.left - ROW_LABEL_WIDTH;
+			const startScrollLeft = timelineAreaElement?.scrollLeft || 0;
 			isDraggingClip = {
 				type,
 				id: clip.id,
 				startBeat: clip.startBeat,
-				startX
+				startX,
+				startScrollLeft
 			};
 		}
 	}
@@ -918,7 +1034,8 @@
 						type: pendingClipDrag.type,
 						id: pendingClipDrag.clip.id,
 						startBeat: pendingClipDrag.clip.startBeat,
-						startX: pendingClipDrag.startX
+						startX: pendingClipDrag.startX,
+						startScrollLeft: timelineAreaElement?.scrollLeft || 0
 					};
 					pendingClipDrag = null;
 					clipDragDelayTimeout = null;
@@ -965,51 +1082,226 @@
 		const rect = target.getBoundingClientRect();
 		if (!rect) return;
 		
+		// Auto-scroll when mouse is near viewport edges
+		// Speed matches cursor movement to keep cursor on drag handle
+		if (timelineAreaElement) {
+			const mouseX = e.clientX;
+			currentMouseX = mouseX; // Update tracked mouse position
+			const viewportRect = timelineAreaElement.getBoundingClientRect();
+			const edgeThreshold = 100; // pixels from edge to trigger scroll
+			
+			// Track mouse movement to match scroll speed
+			const mouseDeltaX = lastMouseX !== null ? mouseX - lastMouseX : 0;
+			lastMouseX = mouseX;
+			
+			// Clear existing auto-scroll if mouse moved away from edge
+			const isNearRightEdge = mouseX > viewportRect.right - edgeThreshold;
+			const isNearLeftEdge = mouseX < viewportRect.left + edgeThreshold;
+			
+			if (!isNearRightEdge && !isNearLeftEdge) {
+				if (autoScrollInterval) {
+					clearInterval(autoScrollInterval);
+					autoScrollInterval = null;
+					autoScrollDirection = null;
+				}
+			}
+			
+			// Check if mouse is near right edge
+			if (isNearRightEdge) {
+				const maxScroll = timelineAreaElement.scrollWidth - timelineAreaElement.clientWidth;
+				if (timelineAreaElement.scrollLeft < maxScroll) {
+					// Clear existing interval if direction changed
+					if (autoScrollDirection !== 'right' && autoScrollInterval) {
+						clearInterval(autoScrollInterval);
+						autoScrollInterval = null;
+					}
+					
+					if (!autoScrollInterval) {
+						autoScrollDirection = 'right';
+						autoScrollInterval = setInterval(() => {
+							if (!timelineAreaElement || currentMouseX === null) {
+								if (autoScrollInterval) clearInterval(autoScrollInterval);
+								autoScrollInterval = null;
+								return;
+							}
+							
+							const viewportRect = timelineAreaElement.getBoundingClientRect();
+							const distanceFromEdge = viewportRect.right - currentMouseX;
+							
+							// Only scroll if still near edge
+							if (currentMouseX > viewportRect.right - edgeThreshold) {
+								const normalizedDistance = Math.max(0, Math.min(1, distanceFromEdge / edgeThreshold));
+								// Use a smooth curve for better feel
+								const speedMultiplier = 1 - (normalizedDistance * normalizedDistance);
+								// Base speed from cursor movement, with smooth acceleration
+								const baseSpeed = Math.abs(mouseDeltaX) || 2; // Minimum 2px/frame
+								const scrollSpeed = Math.min(12, baseSpeed * (1 + speedMultiplier * 1.5)); // Cap at 12px/frame
+								
+								const maxScroll = timelineAreaElement.scrollWidth - timelineAreaElement.clientWidth;
+								if (timelineAreaElement.scrollLeft < maxScroll) {
+									timelineAreaElement.scrollLeft = Math.min(
+										maxScroll,
+										timelineAreaElement.scrollLeft + scrollSpeed
+									);
+								} else {
+									if (autoScrollInterval) clearInterval(autoScrollInterval);
+									autoScrollInterval = null;
+									autoScrollDirection = null;
+								}
+							} else {
+								if (autoScrollInterval) clearInterval(autoScrollInterval);
+								autoScrollInterval = null;
+								autoScrollDirection = null;
+							}
+						}, 16); // ~60fps
+					}
+				}
+			}
+			// Check if mouse is near left edge
+			else if (isNearLeftEdge) {
+				if (timelineAreaElement.scrollLeft > 0) {
+					if (autoScrollDirection !== 'left' && autoScrollInterval) {
+						clearInterval(autoScrollInterval);
+						autoScrollInterval = null;
+					}
+					
+					if (!autoScrollInterval) {
+						autoScrollDirection = 'left';
+						autoScrollInterval = setInterval(() => {
+							if (!timelineAreaElement || currentMouseX === null) {
+								if (autoScrollInterval) clearInterval(autoScrollInterval);
+								autoScrollInterval = null;
+								return;
+							}
+							
+							const viewportRect = timelineAreaElement.getBoundingClientRect();
+							const distanceFromEdge = currentMouseX - viewportRect.left;
+							
+							// Only scroll if still near edge
+							if (currentMouseX < viewportRect.left + edgeThreshold) {
+								const normalizedDistance = Math.max(0, Math.min(1, distanceFromEdge / edgeThreshold));
+								const speedMultiplier = 1 - (normalizedDistance * normalizedDistance);
+								const baseSpeed = Math.abs(mouseDeltaX) || 2;
+								const scrollSpeed = Math.min(12, baseSpeed * (1 + speedMultiplier * 1.5));
+								
+								if (timelineAreaElement.scrollLeft > 0) {
+									timelineAreaElement.scrollLeft = Math.max(
+										0,
+										timelineAreaElement.scrollLeft - scrollSpeed
+									);
+								} else {
+									if (autoScrollInterval) clearInterval(autoScrollInterval);
+									autoScrollInterval = null;
+									autoScrollDirection = null;
+								}
+							} else {
+								if (autoScrollInterval) clearInterval(autoScrollInterval);
+								autoScrollInterval = null;
+								autoScrollDirection = null;
+							}
+						}, 16); // ~60fps
+					}
+				}
+			}
+		}
+		
 		if (isResizing) {
 			const resize = isResizing; // Capture for type narrowing
 			const currentX = e.clientX - rect.left - ROW_LABEL_WIDTH;
-			const deltaX = currentX - resize.startX;
+			// Account for scroll offset change during drag
+			const scrollDelta = (timelineAreaElement?.scrollLeft || 0) - resize.startScrollLeft;
+			const deltaX = currentX - resize.startX + scrollDelta;
 			const deltaBeat = pixelToBeatLocal(deltaX);
 			
 			if (resize.type === 'clip') {
 				const clip = timeline.clips?.find((c: TimelineClip) => c.id === resize.id);
 				if (clip) {
+					let newStart = clip.startBeat;
+					let newDuration = clip.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineClip(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineClip(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					// Auto-expand timeline if clip extends past current end
+					const clipEnd = newStart + newDuration;
+					if (clipEnd > timeline.totalLength && timelineAreaElement) {
+						// Expand timeline to accommodate the clip (with some padding)
+						const expandedLength = Math.ceil(clipEnd / 4) * 4; // Round up to next measure
+						projectStore.updateTimelineLength(expandedLength);
+						
+						// Auto-scroll to keep the clip visible
+						const clipEndPixel = beatToPixelLocal(clipEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (clipEndPixel > visibleEnd - 50) { // 50px padding
+							timelineAreaElement.scrollLeft = clipEndPixel - timelineAreaElement.clientWidth + 100; // Extra padding
 						}
 					}
 				}
 			} else if (resize.type === 'effect') {
 				const effect = timeline.effects?.find((e) => e.id === resize.id);
 				if (effect) {
+					let newStart = effect.startBeat;
+					let newDuration = effect.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineEffect(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineEffect(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					// Auto-expand timeline if effect extends past current end
+					const effectEnd = newStart + newDuration;
+					if (effectEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(effectEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const effectEndPixel = beatToPixelLocal(effectEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (effectEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = effectEndPixel - timelineAreaElement.clientWidth + 100;
 						}
 					}
 				}
 			} else if (resize.type === 'envelope') {
 				const envelope = timeline.envelopes?.find((e) => e.id === resize.id);
 				if (envelope) {
+					let newStart = envelope.startBeat;
+					let newDuration = envelope.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineEnvelope(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineEnvelope(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					// Auto-expand timeline if envelope extends past current end
+					const envelopeEnd = newStart + newDuration;
+					if (envelopeEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(envelopeEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const envelopeEndPixel = beatToPixelLocal(envelopeEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (envelopeEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = envelopeEndPixel - timelineAreaElement.clientWidth + 100;
 						}
 					}
 				}
@@ -1017,7 +1309,9 @@
 		} else if (isDraggingClip) {
 			const drag = isDraggingClip; // Capture for type narrowing
 			const currentX = e.clientX - rect.left - ROW_LABEL_WIDTH;
-			const deltaX = currentX - drag.startX;
+			// Account for scroll offset change during drag
+			const scrollDelta = (timelineAreaElement?.scrollLeft || 0) - drag.startScrollLeft;
+			const deltaX = currentX - drag.startX + scrollDelta;
 			const deltaBeat = pixelToBeatLocal(deltaX);
 			const newStart = Math.max(0, snapToBeat(drag.startBeat + deltaBeat));
 			
@@ -1025,16 +1319,54 @@
 				const clip = timeline.clips?.find((c: TimelineClip) => c.id === drag.id);
 				if (clip) {
 					projectStore.updateTimelineClip(drag.id, { startBeat: newStart });
+					
+					// Auto-expand timeline if clip is dragged past current end
+					const clipEnd = newStart + clip.duration;
+					if (clipEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(clipEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						// Auto-scroll to keep the clip visible
+						const clipEndPixel = beatToPixelLocal(clipEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (clipEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = clipEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			} else if (drag.type === 'effect') {
 				const effect = timeline.effects?.find((e) => e.id === drag.id);
 				if (effect) {
 					projectStore.updateTimelineEffect(drag.id, { startBeat: newStart });
+					
+					const effectEnd = newStart + effect.duration;
+					if (effectEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(effectEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const effectEndPixel = beatToPixelLocal(effectEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (effectEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = effectEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			} else if (drag.type === 'envelope') {
 				const envelope = timeline.envelopes?.find((e) => e.id === drag.id);
 				if (envelope) {
 					projectStore.updateTimelineEnvelope(drag.id, { startBeat: newStart });
+					
+					const envelopeEnd = newStart + envelope.duration;
+					if (envelopeEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(envelopeEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const envelopeEndPixel = beatToPixelLocal(envelopeEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (envelopeEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = envelopeEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			}
 		}
@@ -1051,57 +1383,169 @@
 
 		const rect = target.getBoundingClientRect();
 		if (!rect) return;
-
+		
 		const touch = e.touches[0];
 		if (!touch) return;
 
 		const clientX = touch.clientX;
+		
+		// Auto-scroll when touch is near viewport edges
+		if (timelineAreaElement) {
+			const touchX = touch.clientX;
+			const viewportRect = timelineAreaElement.getBoundingClientRect();
+			const edgeThreshold = 80; // pixels from edge to trigger scroll
+			const scrollSpeed = 15; // pixels to scroll per interval
+			
+			// Clear existing auto-scroll
+			if (autoScrollInterval) {
+				clearInterval(autoScrollInterval);
+				autoScrollInterval = null;
+				autoScrollDirection = null;
+			}
+			
+			// Check if touch is near right edge
+			if (touchX > viewportRect.right - edgeThreshold) {
+				const maxScroll = timelineAreaElement.scrollWidth - timelineAreaElement.clientWidth;
+				if (timelineAreaElement.scrollLeft < maxScroll) {
+					autoScrollDirection = 'right';
+					autoScrollInterval = setInterval(() => {
+						if (!timelineAreaElement) {
+							if (autoScrollInterval) clearInterval(autoScrollInterval);
+							autoScrollInterval = null;
+							return;
+						}
+						const maxScroll = timelineAreaElement.scrollWidth - timelineAreaElement.clientWidth;
+						if (timelineAreaElement.scrollLeft < maxScroll) {
+							timelineAreaElement.scrollLeft = Math.min(
+								maxScroll,
+								timelineAreaElement.scrollLeft + scrollSpeed
+							);
+						} else {
+							if (autoScrollInterval) clearInterval(autoScrollInterval);
+							autoScrollInterval = null;
+							autoScrollDirection = null;
+						}
+					}, 16); // ~60fps
+				}
+			}
+			// Check if touch is near left edge
+			else if (touchX < viewportRect.left + edgeThreshold) {
+				if (timelineAreaElement.scrollLeft > 0) {
+					autoScrollDirection = 'left';
+					autoScrollInterval = setInterval(() => {
+						if (!timelineAreaElement) {
+							if (autoScrollInterval) clearInterval(autoScrollInterval);
+							autoScrollInterval = null;
+							return;
+						}
+						if (timelineAreaElement.scrollLeft > 0) {
+							timelineAreaElement.scrollLeft = Math.max(
+								0,
+								timelineAreaElement.scrollLeft - scrollSpeed
+							);
+						} else {
+							if (autoScrollInterval) clearInterval(autoScrollInterval);
+							autoScrollInterval = null;
+							autoScrollDirection = null;
+						}
+					}, 16); // ~60fps
+				}
+			}
+		}
 
 		if (isResizing) {
 			const resize = isResizing;
 			const currentX = clientX - rect.left - ROW_LABEL_WIDTH;
-			const deltaX = currentX - resize.startX;
+			// Account for scroll offset change during drag
+			const scrollDelta = (timelineAreaElement?.scrollLeft || 0) - resize.startScrollLeft;
+			const deltaX = currentX - resize.startX + scrollDelta;
 			const deltaBeat = pixelToBeatLocal(deltaX);
 
 			if (resize.type === 'clip') {
 				const clip = timeline.clips?.find((c: TimelineClip) => c.id === resize.id);
 				if (clip) {
+					let newStart = clip.startBeat;
+					let newDuration = clip.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineClip(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineClip(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					// Auto-expand timeline if clip extends past current end
+					const clipEnd = newStart + newDuration;
+					if (clipEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(clipEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const clipEndPixel = beatToPixelLocal(clipEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (clipEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = clipEndPixel - timelineAreaElement.clientWidth + 100;
 						}
 					}
 				}
 			} else if (resize.type === 'effect') {
 				const effect = timeline.effects?.find((e) => e.id === resize.id);
 				if (effect) {
+					let newStart = effect.startBeat;
+					let newDuration = effect.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineEffect(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineEffect(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					const effectEnd = newStart + newDuration;
+					if (effectEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(effectEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const effectEndPixel = beatToPixelLocal(effectEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (effectEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = effectEndPixel - timelineAreaElement.clientWidth + 100;
 						}
 					}
 				}
 			} else if (resize.type === 'envelope') {
 				const envelope = timeline.envelopes?.find((e) => e.id === resize.id);
 				if (envelope) {
+					let newStart = envelope.startBeat;
+					let newDuration = envelope.duration;
+					
 					if (resize.side === 'right') {
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration + deltaBeat));
 						projectStore.updateTimelineEnvelope(resize.id, { duration: newDuration });
 					} else {
-						const newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
-						const newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
+						newStart = Math.max(0, snapToBeat(resize.startBeat + deltaBeat));
+						newDuration = Math.max(0.25, snapToBeat(resize.startDuration - deltaBeat));
 						if (newDuration > 0) {
 							projectStore.updateTimelineEnvelope(resize.id, { startBeat: newStart, duration: newDuration });
+						}
+					}
+					
+					const envelopeEnd = newStart + newDuration;
+					if (envelopeEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(envelopeEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const envelopeEndPixel = beatToPixelLocal(envelopeEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (envelopeEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = envelopeEndPixel - timelineAreaElement.clientWidth + 100;
 						}
 					}
 				}
@@ -1109,7 +1553,9 @@
 		} else if (isDraggingClip) {
 			const drag = isDraggingClip;
 			const currentX = clientX - rect.left - ROW_LABEL_WIDTH;
-			const deltaX = currentX - drag.startX;
+			// Account for scroll offset change during drag
+			const scrollDelta = (timelineAreaElement?.scrollLeft || 0) - drag.startScrollLeft;
+			const deltaX = currentX - drag.startX + scrollDelta;
 			const deltaBeat = pixelToBeatLocal(deltaX);
 			const newStart = Math.max(0, snapToBeat(drag.startBeat + deltaBeat));
 
@@ -1117,16 +1563,52 @@
 				const clip = timeline.clips?.find((c: TimelineClip) => c.id === drag.id);
 				if (clip) {
 					projectStore.updateTimelineClip(drag.id, { startBeat: newStart });
+					
+					const clipEnd = newStart + clip.duration;
+					if (clipEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(clipEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const clipEndPixel = beatToPixelLocal(clipEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (clipEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = clipEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			} else if (drag.type === 'effect') {
 				const effect = timeline.effects?.find((e) => e.id === drag.id);
 				if (effect) {
 					projectStore.updateTimelineEffect(drag.id, { startBeat: newStart });
+					
+					const effectEnd = newStart + effect.duration;
+					if (effectEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(effectEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const effectEndPixel = beatToPixelLocal(effectEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (effectEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = effectEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			} else if (drag.type === 'envelope') {
 				const envelope = timeline.envelopes?.find((e) => e.id === drag.id);
 				if (envelope) {
 					projectStore.updateTimelineEnvelope(drag.id, { startBeat: newStart });
+					
+					const envelopeEnd = newStart + envelope.duration;
+					if (envelopeEnd > timeline.totalLength && timelineAreaElement) {
+						const expandedLength = Math.ceil(envelopeEnd / 4) * 4;
+						projectStore.updateTimelineLength(expandedLength);
+						
+						const envelopeEndPixel = beatToPixelLocal(envelopeEnd) + ROW_LABEL_WIDTH;
+						const visibleEnd = timelineAreaElement.scrollLeft + timelineAreaElement.clientWidth;
+						if (envelopeEndPixel > visibleEnd - 50) {
+							timelineAreaElement.scrollLeft = envelopeEndPixel - timelineAreaElement.clientWidth + 100;
+						}
+					}
 				}
 			}
 		}
@@ -1135,6 +1617,15 @@
 	}
 	
 	function handleTimelineMouseUp() {
+		// Stop auto-scroll
+		if (autoScrollInterval) {
+			clearInterval(autoScrollInterval);
+			autoScrollInterval = null;
+			autoScrollDirection = null;
+		}
+		lastMouseX = null;
+		currentMouseX = null;
+		
 		// End batching if we were dragging or resizing
 		if (isResizing || isDraggingClip) {
 			projectStore.endBatch();
