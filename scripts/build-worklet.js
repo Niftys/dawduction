@@ -65,6 +65,11 @@ const melodicSynthFiles = [
 	'melodic/OrganSynth.js'
 ];
 
+// Shared synth files (samples, etc.)
+const sharedSynthFiles = [
+	'shared/SampleSynth.js'
+];
+
 function buildWorklet() {
 	console.log('Building AudioWorklet processor...');
 	
@@ -150,7 +155,24 @@ function buildWorklet() {
 		}
 	}
 	
-	const synthsCode = drumSynthsCode + melodicSynthsCode;
+	// Read and concatenate shared synth files
+	let sharedSynthsCode = '\n\n// ========== SHARED SYNTH CLASSES ==========\n\n';
+	
+	for (const synthFile of sharedSynthFiles) {
+		// Skip comment lines
+		if (synthFile.trim().startsWith('//')) continue;
+		
+		const synthPath = path.join(synthsDir, synthFile);
+		if (fs.existsSync(synthPath)) {
+			console.log(`  Adding shared synth: ${synthFile}...`);
+			const synthCode = fs.readFileSync(synthPath, 'utf8');
+			sharedSynthsCode += synthCode + '\n\n';
+		} else {
+			console.warn(`  Warning: ${synthFile} not found, skipping...`);
+		}
+	}
+	
+	const synthsCode = drumSynthsCode + melodicSynthsCode + sharedSynthsCode;
 	
 	// Combine everything: modules first, then processor core, then synths
 	const finalCode = modulesCode + processorCore + synthsCode + '\nregisterProcessor(\'engine-worklet-processor\', EngineWorkletProcessor);\n';
@@ -163,6 +185,7 @@ function buildWorklet() {
 	console.log(`  Processor core: ${processorCore.length} bytes`);
 	console.log(`  Drum synths: ${drumSynthsCode.length} bytes`);
 	console.log(`  Melodic synths: ${melodicSynthsCode.length} bytes`);
+	console.log(`  Shared synths: ${sharedSynthsCode.length} bytes`);
 	console.log(`  Total: ${finalCode.length} bytes`);
 }
 

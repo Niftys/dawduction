@@ -312,6 +312,14 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		this.envelopesProcessor.updateEnvelope(envelopeId, settings);
 	}
 
+	loadSample(trackId, sampleData, sampleRate) {
+		// Convert ArrayBuffer to Float32Array
+		const audioBuffer = new Float32Array(sampleData);
+		
+		// Store the buffer in SynthManager (it will be applied when synth is created)
+		this.synthManager.loadSample(trackId, audioBuffer, sampleRate);
+	}
+
 	process(inputs, outputs, parameters) {
 		return this.audioProcessor.process(inputs, outputs, parameters);
 	}

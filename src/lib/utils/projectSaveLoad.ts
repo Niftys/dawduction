@@ -297,10 +297,14 @@ export async function loadProject(projectId: string): Promise<{ project: Project
 			.eq('project_id', projectId);
 
 		// Load patterns
-		const { data: patternsData } = await supabase
+		const { data: patternsData, error: patternsError } = await supabase
 			.from('patterns')
 			.select('*')
 			.eq('project_id', projectId);
+
+		if (patternsError) {
+			console.error('Error loading patterns:', patternsError);
+		}
 
 		// Load effects
 		const { data: effectsData } = await supabase
@@ -332,7 +336,19 @@ export async function loadProject(projectId: string): Promise<{ project: Project
 				mute: inst.mute,
 				solo: inst.solo
 			})),
-			patterns: (patternsData || []).map((pat: any) => pat.pattern_data as Pattern),
+			patterns: (patternsData || []).map((pat: any) => {
+				// Safely parse pattern_data, handle null or invalid JSON
+				try {
+					if (!pat.pattern_data) {
+						console.warn('Pattern missing pattern_data:', pat.id);
+						return null;
+					}
+					return pat.pattern_data as Pattern;
+				} catch (error) {
+					console.error('Error parsing pattern_data for pattern:', pat.id, error);
+					return null;
+				}
+			}).filter((p): p is Pattern => p !== null),
 			effects: (effectsData || []).map((eff: any) => ({
 				id: eff.id,
 				projectId: eff.project_id,

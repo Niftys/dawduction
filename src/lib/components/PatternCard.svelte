@@ -55,7 +55,8 @@
 		offsetY: number,
 		instrumentColor: string,
 		depth: number,
-		instrumentType?: string
+		instrumentType?: string,
+		displayName?: string
 	) {
 		const nodeX = node.x || 0;
 		const nodeY = node.y || 0;
@@ -93,7 +94,7 @@
 				}
 				
 				// Recursively render children
-				renderPreviewNode(child, ctx, scale, offsetX, offsetY, instrumentColor, depth + 1, instrumentType);
+				renderPreviewNode(child, ctx, scale, offsetX, offsetY, instrumentColor, depth + 1, instrumentType, displayName);
 			}
 		}
 		
@@ -175,8 +176,18 @@
 				ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 				ctx.textAlign = 'center';
 				ctx.textBaseline = 'middle';
-				// Capitalize first letter
-				const label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+				// For sample instruments, use displayName if available, otherwise capitalize instrumentType
+				let label: string;
+				if (instrumentType === 'sample' && displayName) {
+					label = displayName;
+				} else {
+					label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+				}
+				// Truncate long names
+				const maxLength = 10;
+				if (label.length > maxLength) {
+					label = label.substring(0, maxLength - 2) + '..';
+				}
 				ctx.fillText(label, x, y);
 			}
 		} else {
@@ -314,6 +325,10 @@
 					// Render all instruments
 					for (const instrument of instruments) {
 						if (instrument.patternTree) {
+							// Get display name for sample instruments
+							const displayName = instrument.instrumentType === 'sample' && instrument.settings?.displayName 
+								? instrument.settings.displayName 
+								: undefined;
 							renderPreviewNode(
 								instrument.patternTree, 
 								canvasContext, 
@@ -322,7 +337,8 @@
 								offsetY,
 								instrument.color || '#7ab8ff',
 								0, // Start at depth 0
-								instrument.instrumentType
+								instrument.instrumentType,
+								displayName
 							);
 						}
 					}

@@ -10,7 +10,7 @@ export class NodeRenderer {
 		private viewport: Viewport
 	) {}
 
-	renderNode(node: PatternNode, trackColor: string, depth: number, isSelected: boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false) {
+	renderNode(node: PatternNode, trackColor: string, depth: number, isSelected: boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false, displayName?: string) {
 		if (node.x === undefined || node.y === undefined) return;
 
 		const [sx, sy] = this.viewport.worldToScreen(node.x, node.y);
@@ -174,8 +174,18 @@ export class NodeRenderer {
 				this.ctx.font = `${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
 				this.ctx.textAlign = 'center';
 				this.ctx.textBaseline = 'middle';
-				// Capitalize first letter
-				const label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+				// For sample instruments, use displayName if available, otherwise capitalize instrumentType
+				let label: string;
+				if (instrumentType === 'sample' && displayName) {
+					label = displayName;
+				} else {
+					label = instrumentType.charAt(0).toUpperCase() + instrumentType.slice(1);
+				}
+				// Truncate long names to fit in node
+				const maxLength = 12;
+				if (label.length > maxLength) {
+					label = label.substring(0, maxLength - 2) + '..';
+				}
 				this.ctx.fillText(label, sx, sy);
 			}
 		} else {
@@ -372,9 +382,9 @@ export class NodeRenderer {
 		return hex;
 	}
 
-	renderTree(rootNode: PatternNode, trackColor: string, isSelected: (id: string) => boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false) {
+	renderTree(rootNode: PatternNode, trackColor: string, isSelected: (id: string) => boolean, isPlaying: (id: string) => boolean = () => false, isUpcoming: (id: string) => boolean = () => false, playedNodeIds: Set<string> = new Set(), instrumentType?: string, isGreyedOut: boolean = false, isPlaybackActive: boolean = false, isLoopStart: boolean = false, displayName?: string) {
 		const renderRecursive = (node: PatternNode, depth: number) => {
-			this.renderNode(node, trackColor, depth, isSelected(node.id), isPlaying, isUpcoming, playedNodeIds, depth === 0 ? instrumentType : undefined, isGreyedOut, isPlaybackActive, isLoopStart);
+			this.renderNode(node, trackColor, depth, isSelected(node.id), isPlaying, isUpcoming, playedNodeIds, depth === 0 ? instrumentType : undefined, isGreyedOut, isPlaybackActive, isLoopStart, depth === 0 ? displayName : undefined);
 
 			for (const child of node.children) {
 				renderRecursive(child, depth + 1);

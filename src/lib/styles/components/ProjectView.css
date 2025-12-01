@@ -953,6 +953,15 @@
 	padding: 12px 20px;
 	background: #252525;
 	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+
+.pattern-header-actions {
+	display: flex;
+	gap: 12px;
+	align-items: center;
 }
 
 .pattern-name-input {

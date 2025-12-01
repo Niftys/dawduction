@@ -10,6 +10,7 @@
 	import MidiEditor from '$lib/components/MidiEditor.svelte';
 	import VelocityEditor from '$lib/components/VelocityEditor.svelte';
 	import SynthPluginWindow from '$lib/components/SynthPluginWindow.svelte';
+	import SampleMenu from '$lib/components/SampleMenu.svelte';
 	import { synthPluginStore } from '$lib/stores/synthPluginStore';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -227,9 +228,11 @@
 				class="pattern-name-input"
 			/>
 		</div>
-		<button 
-			class="add-instrument-btn" 
-			on:click={() => {
+		<div class="pattern-header-actions">
+			<SampleMenu />
+			<button 
+				class="add-instrument-btn" 
+				on:click={() => {
 				if (!project || !pattern) return;
 				
 				// Create a new instrument with default kick settings
@@ -306,6 +309,7 @@
 		>
 			+ Instrument
 		</button>
+		</div>
 	</div>
 	<Canvas patternId={pattern.id} />
 		<Sidebar />

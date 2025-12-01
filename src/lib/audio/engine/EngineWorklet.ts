@@ -3,6 +3,8 @@ import type { TimelineClip, Timeline } from '$lib/stores/projectStore.types';
 import type { Effect, Envelope } from '$lib/types/effects';
 import { flattenTrackPattern } from '../utils/eventFlatten';
 import { getPatternInstruments } from '$lib/utils/patternUtils';
+import { loadSampleAudio } from '$lib/utils/sampleStorage';
+import { loadSampleToEngine } from '$lib/utils/sampleLoader';
 
 /**
  * Main AudioWorklet class for managing the audio engine
@@ -94,6 +96,8 @@ export class EngineWorklet {
 	}
 
 	async loadProject(standaloneInstruments: StandaloneInstrument[], bpm: number, baseMeterTrackId?: string, timeline?: Timeline, patterns?: Pattern[], effects?: Effect[], envelopes?: Envelope[], automation?: unknown) {
+		// Load sample audio buffers for sample instruments before sending to worklet
+		await this.loadSamplesForInstruments(standaloneInstruments, patterns);
 		await this.ensureInitialized();
 
 		// If timeline exists, use timeline-based scheduling with patterns
@@ -592,6 +596,81 @@ export class EngineWorklet {
 		if (this.audioContext.state !== 'closed') {
 			this.audioContext.close();
 		}
+	}
+
+	/**
+	 * Load sample audio buffers for all sample instruments in the project
+	 * This ensures samples are loaded when the project is loaded or reloaded
+	 */
+	private async loadSamplesForInstruments(
+		standaloneInstruments: StandaloneInstrument[],
+		patterns?: Pattern[]
+	): Promise<void> {
+		// Load samples for standalone instruments
+		for (const instrument of standaloneInstruments) {
+			if (instrument.instrumentType === 'sample' && instrument.settings?.sampleId) {
+				await this.loadSampleForInstrument(instrument.id, instrument.settings);
+			}
+		}
+
+		// Load samples for pattern instruments
+		if (patterns) {
+			for (const pattern of patterns) {
+				const patternInstruments = getPatternInstruments(pattern);
+				for (const instrument of patternInstruments) {
+					if (instrument.instrumentType === 'sample' && instrument.settings?.sampleId) {
+						const trackId = `__pattern_${pattern.id}_${instrument.id}`;
+						await this.loadSampleForInstrument(trackId, instrument.settings);
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Load a single sample for an instrument
+	 */
+	private async loadSampleForInstrument(trackId: string, settings: Record<string, any>): Promise<void> {
+		try {
+			const sampleId = settings.sampleId;
+			if (!sampleId) return;
+
+			// Load the audio buffer
+			const audioBuffer = await loadSampleAudio(sampleId);
+			if (!audioBuffer) {
+				console.warn(`Failed to load sample audio for track ${trackId}`);
+				return;
+			}
+
+			// Convert to mono Float32Array
+			const monoBuffer = audioBuffer.numberOfChannels > 1
+				? this.convertToMono(audioBuffer)
+				: new Float32Array(audioBuffer.getChannelData(0));
+
+			// Load to engine
+			await loadSampleToEngine(this, trackId, monoBuffer, audioBuffer.sampleRate);
+		} catch (error) {
+			console.error(`Error loading sample for track ${trackId}:`, error);
+		}
+	}
+
+	/**
+	 * Convert stereo/multi-channel audio to mono
+	 */
+	private convertToMono(audioBuffer: AudioBuffer): Float32Array {
+		const numChannels = audioBuffer.numberOfChannels;
+		const length = audioBuffer.length;
+		const mono = new Float32Array(length);
+
+		for (let i = 0; i < length; i++) {
+			let sum = 0;
+			for (let ch = 0; ch < numChannels; ch++) {
+				sum += audioBuffer.getChannelData(ch)[i];
+			}
+			mono[i] = sum / numChannels;
+		}
+
+		return mono;
 	}
 }
 

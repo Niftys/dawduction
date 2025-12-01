@@ -13,6 +13,7 @@ class SynthManager {
 	constructor(processor) {
 		this.processor = processor;
 		this.synths = new Map();
+		this.sampleBuffers = new Map(); // Store sample buffers by trackId
 	}
 
 	/**
@@ -56,6 +57,11 @@ class SynthManager {
 					if (patternId) {
 						synth._patternId = patternId;
 					}
+					// If there's a stored sample buffer for this track, set it on the synth
+					const storedBuffer = this.sampleBuffers.get(trackId);
+					if (storedBuffer && synth.setAudioBuffer) {
+						synth.setAudioBuffer(storedBuffer);
+					}
 					// Debug: Log synth creation
 					this.processor.port.postMessage({
 						type: 'debug',
@@ -64,7 +70,8 @@ class SynthManager {
 							trackId,
 							patternId: patternId || 'none',
 							instrumentType: instrumentType,
-							totalSynths: this.synths.size
+							totalSynths: this.synths.size,
+							hasSampleBuffer: !!storedBuffer
 						}
 					});
 				} else {
@@ -207,6 +214,23 @@ class SynthManager {
 			}
 		}
 		return false;
+	}
+
+	/**
+	 * Load a sample buffer for a track
+	 * @param {string} trackId - The track ID
+	 * @param {Float32Array} buffer - The audio buffer
+	 * @param {number} sampleRate - The sample rate
+	 */
+	loadSample(trackId, buffer, sampleRate) {
+		// Store the buffer
+		this.sampleBuffers.set(trackId, buffer);
+		
+		// If a synth already exists for this track, update its buffer
+		const synth = this.synths.get(trackId);
+		if (synth && synth.setAudioBuffer) {
+			synth.setAudioBuffer(buffer);
+		}
 	}
 }
 

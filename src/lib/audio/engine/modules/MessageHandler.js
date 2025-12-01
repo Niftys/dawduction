@@ -61,6 +61,9 @@ class MessageHandler {
 		case 'updateEnvelope':
 			this.processor.updateEnvelope(message.envelopeId, message.settings);
 			break;
+		case 'loadSample':
+			this.processor.loadSample(message.trackId, message.sampleData, message.sampleRate);
+			break;
 		}
 	}
 }

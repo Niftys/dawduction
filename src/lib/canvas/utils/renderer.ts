@@ -147,7 +147,11 @@ function renderTracks(
 		const isUpcoming = createTrackUpcomingChecker(instrument, renderContext);
 		const isGreyedOut = isTrackGreyedOut(instrument, project);
 		
-		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart);
+		// Get display name for sample instruments
+		const displayName = instrument.instrumentType === 'sample' && instrument.settings?.displayName 
+			? instrument.settings.displayName 
+			: undefined;
+		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart, displayName);
 	}
 }
 
@@ -187,7 +191,12 @@ function renderPatternInstruments(
 		const isUpcoming = createInstrumentUpcomingChecker(instrument, pattern, renderContext);
 		const isGreyedOut = isInstrumentGreyedOut(instrument, pattern);
 		
-		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart);
+		// Get display name for sample instruments
+		const displayName = instrument.instrumentType === 'sample' && instrument.settings?.displayName 
+			? instrument.settings.displayName 
+			: undefined;
+		
+		renderer.renderTree(instrument.patternTree, instrument.color, isSelected, isPlaying, isUpcoming, playedNodeIds, instrument.instrumentType, isGreyedOut, isPlaybackActive, isLoopStart, displayName);
 	}
 }
 

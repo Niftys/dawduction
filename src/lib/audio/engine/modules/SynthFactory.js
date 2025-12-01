@@ -42,6 +42,8 @@ class SynthFactory {
 			return new PadSynth(settings, this.sampleRate);
 		case 'organ':
 			return new OrganSynth(settings, this.sampleRate);
+		case 'sample':
+			return new SampleSynth(settings, this.sampleRate);
 		default:
 			return null;
 	}
