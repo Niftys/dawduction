@@ -38,7 +38,10 @@
 	}
 
 	function updateSetting(key: string, value: any) {
-		if (!activeItem) return;
+		// Get fresh activeItem to avoid stale closures
+		const currentActiveItem = selectedInstrument || selectedTrack;
+		if (!currentActiveItem) return;
+		
 		let processedValue = value;
 		if (typeof value === 'number') {
 			if (isNaN(value)) return;
@@ -50,10 +53,13 @@
 				processedValue = parseFloat(value.toFixed(2));
 			}
 		}
-		const newSettings = { ...activeItem.settings, [key]: processedValue };
-		const instrumentSettings = activeItem.instrumentSettings || {};
-		if (activeItem.instrumentType) {
-			instrumentSettings[activeItem.instrumentType] = { ...newSettings };
+		
+		// Get current settings from the item (not from activeItem which might be stale)
+		const currentSettings = currentActiveItem.settings || {};
+		const newSettings = { ...currentSettings, [key]: processedValue };
+		const instrumentSettings = currentActiveItem.instrumentSettings || {};
+		if (currentActiveItem.instrumentType) {
+			instrumentSettings[currentActiveItem.instrumentType] = { ...newSettings };
 		}
 		
 		if (selectedPattern && selectedInstrument) {

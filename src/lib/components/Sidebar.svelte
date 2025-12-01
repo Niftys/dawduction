@@ -12,22 +12,39 @@
 	import { findNodeInTree, getInputValue, getSelectValue } from './sidebar/sidebarUtils';
 	import '$lib/styles/components/Sidebar.css';
 
-	let project: any;
-	let selection: any;
+	// Use $state with $effect for proper reactivity
+	let project: any = $state(null);
+	let selection: any = $state({ selectedNodes: new Set(), selectedTrackId: null, selectedPatternId: null, selectedInstrumentId: null, selectedNodeId: null, isRoot: false });
 	let engine: EngineWorklet | null = null;
 	
-	projectStore.subscribe((p) => (project = p));
-	selectionStore.subscribe((s) => (selection = s));
-	engineStore.subscribe((e) => (engine = e));
+	$effect(() => {
+		const unsubscribeProject = projectStore.subscribe((p) => {
+			project = p;
+		});
+		const unsubscribeSelection = selectionStore.subscribe((s) => {
+			selection = s;
+		});
+		const unsubscribeEngine = engineStore.subscribe((e) => {
+			engine = e;
+		});
+		
+		return () => {
+			unsubscribeProject();
+			unsubscribeSelection();
+			unsubscribeEngine();
+		};
+	});
 
 	// Find the selected standalone instrument or pattern
-	$: selectedTrack = selection.selectedTrackId && project?.standaloneInstruments
-		.find((i: StandaloneInstrument) => i.id === selection.selectedTrackId);
-	$: selectedPattern = selection.selectedPatternId && project?.patterns
-		.find((p) => p.id === selection.selectedPatternId);
+	const selectedTrack = $derived(selection.selectedTrackId && project?.standaloneInstruments
+		? project.standaloneInstruments.find((i: StandaloneInstrument) => i.id === selection.selectedTrackId)
+		: undefined);
+	const selectedPattern = $derived(selection.selectedPatternId && project?.patterns
+		? project.patterns.find((p: any) => p.id === selection.selectedPatternId)
+		: undefined);
 	
 	// Get the selected instrument from pattern (if in pattern edit mode)
-	$: selectedInstrument = (() => {
+	const selectedInstrument = $derived((() => {
 		if (!selectedPattern || !selection.selectedInstrumentId) return null;
 		const instruments = selectedPattern.instruments && Array.isArray(selectedPattern.instruments) && selectedPattern.instruments.length > 0
 			? selectedPattern.instruments
@@ -44,30 +61,81 @@
 				solo: selectedPattern.solo
 			}] : []);
 		return instruments.find(inst => inst.id === selection.selectedInstrumentId) || instruments[0] || null;
-	})();
+	})());
 	
 	// Get the pattern tree from selected instrument (if pattern), or track
-	$: patternTree = selectedInstrument?.patternTree || selectedTrack?.patternTree;
-	$: selectedNode = patternTree && selection.selectedNodeId 
+	const patternTree = $derived(selectedInstrument?.patternTree || selectedTrack?.patternTree);
+	const selectedNode = $derived(patternTree && selection.selectedNodeId 
 		? findNodeInTree(patternTree, selection.selectedNodeId) 
-		: null;
-	$: isRootNode = selection.isRoot || false;
+		: null);
+	const isRootNode = $derived(selection.isRoot || false);
 	
 	// Get the active item (selected instrument from pattern, or standalone instrument) for settings/instrument type
-	$: activeItem = selectedInstrument || selectedTrack;
+	const activeItem = $derived(selectedInstrument || selectedTrack);
 	
 	// Check if the selected standalone instrument/instrument is a melodic instrument
 	const melodicInstruments = ['bass', 'subtractive', 'fm', 'wavetable', 'supersaw', 'pluck', 'pad', 'organ'];
-	$: isMelodicInstrument = activeItem ? melodicInstruments.includes(activeItem.instrumentType) : false;
+	const isMelodicInstrument = $derived(activeItem ? melodicInstruments.includes(activeItem.instrumentType) : false);
 	
 	// Force reactivity for standalone instrument values to ensure sliders update when number inputs change
-	$: trackVolume = selectedTrack?.volume ?? selectedInstrument?.volume ?? 1.0;
-	$: trackPan = selectedTrack?.pan ?? selectedInstrument?.pan ?? 0.0;
-	$: trackSettings = activeItem?.settings ?? {};
+	const trackVolume = $derived(selectedTrack?.volume ?? selectedInstrument?.volume ?? 1.0);
+	const trackPan = $derived(selectedTrack?.pan ?? selectedInstrument?.pan ?? 0.0);
+	
+	// Make trackSettings reactive to project changes by using $state and $effect
+	// This ensures it updates immediately when settings are changed via updateSetting functions
+	let trackSettings: Record<string, any> = $state({});
+	
+	$effect(() => {
+		// Access project and selection to track changes
+		if (!project) {
+			trackSettings = {};
+			return;
+		}
+		
+		// Use selection IDs directly to ensure we're always getting fresh data
+		const patternId = selection.selectedPatternId;
+		const instrumentId = selection.selectedInstrumentId;
+		const trackId = selection.selectedTrackId;
+		
+		// If we have a selected instrument in a pattern, get its settings from the project
+		if (patternId && instrumentId) {
+			const pattern = project.patterns?.find((p: any) => p.id === patternId);
+			if (pattern) {
+				const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+					? pattern.instruments
+					: (pattern.instrumentType && pattern.patternTree ? [{
+						id: pattern.id,
+						instrumentType: pattern.instrumentType,
+						patternTree: pattern.patternTree,
+						settings: pattern.settings || {},
+						instrumentSettings: pattern.instrumentSettings,
+						color: pattern.color || '#7ab8ff',
+						volume: pattern.volume ?? 1.0,
+						pan: pattern.pan ?? 0.0,
+						mute: pattern.mute,
+						solo: pattern.solo
+					}] : []);
+				const instrument = instruments.find((inst: any) => inst.id === instrumentId) || instruments[0];
+				// Create a new object reference to ensure Svelte detects the change
+				trackSettings = instrument?.settings ? { ...instrument.settings } : {};
+				return;
+			}
+		}
+		
+		// If we have a selected track, get its settings from the project
+		if (trackId) {
+			const track = project.standaloneInstruments?.find((t: any) => t.id === trackId);
+			// Create a new object reference to ensure Svelte detects the change
+			trackSettings = track?.settings ? { ...track.settings } : {};
+			return;
+		}
+		
+		trackSettings = {};
+	});
 	
 	// Get all selected nodes (for multi-select)
 	// Force reactivity by depending on both selectedNodes Set and selectedNodeId
-	$: selectedNodes = (() => {
+	const selectedNodes = $derived((() => {
 		if (!project || (!selection.selectedTrackId && !selection.selectedPatternId)) return [];
 		
 		// Use selectedNodes Set if it has items, otherwise fall back to selectedNodeId
@@ -134,14 +202,14 @@
 				instrumentId: selection.selectedInstrumentId
 			} : null;
 		}).filter((item): item is { node: PatternNode; pattern?: any; track?: StandaloneInstrument; instrument?: any; instrumentId?: string | null } => item !== null);
-	})();
+	})());
 	
-	$: isMultiSelect = selectedNodes.length > 1;
+	const isMultiSelect = $derived(selectedNodes.length > 1);
 	
 	// Reactive values that update when selected nodes change
-	$: currentPitch = selectedNodes.length > 0 ? getCommonValue((n) => n.pitch, 60) : 60;
-	$: currentVelocity = selectedNodes.length > 0 ? getCommonValue((n) => n.velocity, 1.0) : 1.0;
-	$: currentDivision = selectedNodes.length > 0 ? getCommonValue((n) => n.division, 1) : 1;
+	const currentPitch = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.pitch, 60) : 60);
+	const currentVelocity = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.velocity, 1.0) : 1.0);
+	const currentDivision = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.division, 1) : 1);
 	
 	// Get a value that's common across all selected nodes, or return the first one
 	function getCommonValue<T>(getter: (node: any) => T | undefined, defaultValue: T): T {
@@ -183,7 +251,7 @@
 	<div class="sidebar">
 		<div class="sidebar-header">
 			<h2>{selectedPattern ? 'Pattern Settings' : 'Instrument Settings'}</h2>
-			<button class="close-btn" on:click={() => selectionStore.clearSelection()}>Close</button>
+			<button class="close-btn" onclick={() => selectionStore.clearSelection()}>Close</button>
 		</div>
 
 		<div class="sidebar-content">
@@ -202,7 +270,7 @@
 	<div class="sidebar">
 		<div class="sidebar-header">
 			<h2>Note Settings</h2>
-			<button class="close-btn" on:click={() => selectionStore.clearSelection()}>Close</button>
+			<button class="close-btn" onclick={() => selectionStore.clearSelection()}>Close</button>
 		</div>
 
 		<div class="sidebar-content">

@@ -51,22 +51,6 @@ class EffectsProcessor {
 		// Build automation lookup map for fast access
 		this._buildAutomationMap();
 		
-		// Debug: Log initialization
-		if (this.processor && this.processor.port) {
-			const automationKeys = automation ? Object.keys(automation) : [];
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EffectsProcessor initialized',
-				data: {
-					effectsCount: this.effects.length,
-					timelineEffectsCount: this.timelineEffects.length,
-					timelineTrackMappingSize: this.timelineTrackToAudioTracks.size,
-					automationLoaded: !!automation,
-					automationKeysCount: automationKeys.length,
-					automationKeys: automationKeys.slice(0, 5) // First 5 keys for debugging
-				}
-			});
-		}
 	}
 
 	/**
@@ -396,31 +380,6 @@ class EffectsProcessor {
 					matchStatus
 				};
 			});
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'Effect matching debug',
-				data: {
-					trackId,
-					timelineTrackId,
-					currentBeat: currentBeat.toFixed(2),
-					timelineEffectsCount: this.timelineEffects.length,
-					timelineEffects: matchingDetails,
-					timelineTrackMapping: (function() {
-						const result = [];
-						const entries = this.timelineTrackToAudioTracks.entries();
-						for (let entry = entries.next(); !entry.done; entry = entries.next()) {
-							const tid = entry.value[0];
-							const aids = entry.value[1];
-							result.push({
-								timelineTrackId: tid,
-								audioTrackIds: aids,
-								includesCurrentTrack: aids.includes(trackId)
-							});
-						}
-						return result;
-					}.call(this))
-				}
-			});
 		}
 
 		// Find timeline effects that are active at this position
@@ -448,18 +407,6 @@ class EffectsProcessor {
 						}
 					} else {
 						// Timeline track not found - this shouldn't happen but handle gracefully
-						// Debug: Log this case
-						if (this.processor && this.processor.port && Math.random() < 0.1) {
-							this.processor.port.postMessage({
-								type: 'debug',
-								message: 'Timeline track not found for effect',
-								data: {
-									effectTrackId: timelineEffect.trackId,
-									availableTrackIds: this.timelineTracks.map(t => t.id),
-									timelineTracksCount: this.timelineTracks.length
-								}
-							});
-						}
 						matchReason = 'trackId mismatch: effect=' + timelineEffect.trackId + ' (track not found), audioTrack=' + timelineTrackId;
 					}
 				} else if (timelineEffect.targetTrackId) {
@@ -505,35 +452,8 @@ class EffectsProcessor {
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
 								this._missingEffectLogTimes[lastLogKey] = currentBeat;
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'Effect definition not found',
-									data: { 
-										effectId: timelineEffect.effectId, 
-										availableIds: this.effects.map(e => e.id),
-										matchReason
-									}
-								});
 							}
 						}
-					}
-				} else {
-					// Debug: Log why effect didn't match (occasionally)
-					if (this.processor && this.processor.port && Math.random() < 0.1) {
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Effect not matching',
-							data: {
-								effectId: timelineEffect.effectId,
-								matchReason,
-								effectTrackId: timelineEffect.trackId,
-								targetTrackId: timelineEffect.targetTrackId,
-								audioTrackId: trackId,
-								audioTimelineTrackId: timelineTrackId,
-								currentBeat: currentBeat.toFixed(2),
-								effectTimeRange: startBeat.toFixed(2) + '-' + endBeat.toFixed(2)
-							}
-						});
 					}
 				}
 			}

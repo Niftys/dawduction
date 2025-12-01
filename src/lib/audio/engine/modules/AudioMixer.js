@@ -70,195 +70,194 @@ class AudioMixer {
 		
 		const hasSoloedTrack = this.trackStateManager.hasAnySoloedTrack();
 		
-		for (const [trackId, synth] of synths.entries()) {
-			if (synth.process) {
-				// Early mute check - skip expensive lookups if already muted (pattern view only)
-				const isMuted = this.trackStateManager.isMuted(trackId);
-				if (isMuted && !isArrangementView) {
-					continue; // Skip muted tracks in pattern view
+		for (const [trackId, synthOrVoices] of synths.entries()) {
+			// Handle voice pools (polyphonic) vs single synth (monophonic)
+			const isVoicePool = Array.isArray(synthOrVoices);
+			const voices = isVoicePool ? synthOrVoices : [synthOrVoices];
+			
+			// Early mute check - skip expensive lookups if already muted (pattern view only)
+			const isMuted = this.trackStateManager.isMuted(trackId);
+			if (isMuted && !isArrangementView) {
+				continue; // Skip muted tracks in pattern view
+			}
+			
+			// Mix all voices for this track
+			let trackSample = 0;
+			for (const synth of voices) {
+				if (synth && synth.process) {
+					trackSample += synth.process();
 				}
+			}
+			
+			// Skip if no active voices
+			if (trackSample === 0 && voices.every(v => !v || !v.isActive)) {
+				continue;
+			}
+			
+			// Use cached timeline tracks lookup
+			const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
 				
-				// Use cached timeline tracks lookup
-				const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
+			// Check timeline track mute/solo state (for arrangement view)
+			// For mute: Check if there's at least one active clip on a non-muted timeline track
+			// For solo: Check if there's at least one active clip on a soloed timeline track
+			let isTimelineMuted = false;
+			let isTimelineSoloed = false;
+			if (isArrangementView && timelineTracks.length > 0) {
+				// Use cached pattern ID
+				const patternId = this._trackToPatternId.get(trackId);
 				
-				// Check timeline track mute/solo state (for arrangement view)
-				// For mute: Check if there's at least one active clip on a non-muted timeline track
-				// For solo: Check if there's at least one active clip on a soloed timeline track
-				let isTimelineMuted = false;
-				let isTimelineSoloed = false;
-				if (isArrangementView && timelineTracks.length > 0) {
-					// Use cached pattern ID
-					const patternId = this._trackToPatternId.get(trackId);
+				// Cache timeline reference to avoid repeated property access
+				const timeline = this.processor?.projectManager?.timeline;
+				const timelineTracksArray = timeline?.tracks;
+				
+				// Use cached active clips (updated periodically)
+				let activeClips = [];
+				if (patternId) {
+					const cached = this._activeClipsCache.get(patternId);
+					if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+						activeClips = cached.clips;
+					} else if (timeline?.clips) {
+						// Fallback: calculate if cache is stale
+						activeClips = timeline.clips.filter((clip) => {
+							return clip.patternId === patternId &&
+							       currentBeat >= clip.startBeat &&
+							       currentBeat < clip.startBeat + clip.duration;
+						});
+					}
 					
-					// Cache timeline reference to avoid repeated property access
-					const timeline = this.processor?.projectManager?.timeline;
-					const timelineTracksArray = timeline?.tracks;
-					
-					// Use cached active clips (updated periodically)
-					let activeClips = [];
-					if (patternId) {
-						const cached = this._activeClipsCache.get(patternId);
-						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
-							activeClips = cached.clips;
-						} else if (timeline?.clips) {
-							// Fallback: calculate if cache is stale
-							activeClips = timeline.clips.filter((clip) => {
-								return clip.patternId === patternId &&
-								       currentBeat >= clip.startBeat &&
-								       currentBeat < clip.startBeat + clip.duration;
+					if (activeClips.length > 0 && timelineTracksArray) {
+						// Check if all active clips are on muted timeline tracks
+						const allClipsMuted = activeClips.every((clip) => {
+							const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+							return clipTrack?.mute === true;
+						});
+						
+						// If any timeline track is soloed, play if ANY active clip is on a soloed track
+						// This allows soloed tracks to play even if other non-soloed clips are active
+						if (hasSoloedTimelineTrack) {
+							// Solo mode: play if ANY active clip is on a soloed track
+							const hasSoloedClip = activeClips.some((clip) => {
+								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+								return clipTrack?.solo === true;
 							});
+							isTimelineSoloed = hasSoloedClip;
+						} else {
+							// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
+							const hasSoloedClip = activeClips.some((clip) => {
+								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+								return clipTrack?.solo === true;
+							});
+							isTimelineSoloed = hasSoloedClip;
 						}
 						
-						if (activeClips.length > 0 && timelineTracksArray) {
-							// Check if all active clips are on muted timeline tracks
-							const allClipsMuted = activeClips.every((clip) => {
-								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-								return clipTrack?.mute === true;
+						isTimelineMuted = allClipsMuted;
+						
+						// Debug: Log mute/solo decision for this track (track-specific, throttled)
+						const debugKey = `${trackId}_${patternId}`;
+						const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
+						const stateChanged = !lastDebugState || 
+						                    lastDebugState.muted !== isTimelineMuted || 
+						                    lastDebugState.soloed !== isTimelineSoloed ||
+						                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
+						
+						if (stateChanged) {
+							if (!this._lastDebugStates) {
+								this._lastDebugStates = new Map();
+							}
+							this._lastDebugStates.set(debugKey, {
+								muted: isTimelineMuted,
+								soloed: isTimelineSoloed,
+								beat: currentBeat
 							});
 							
-							// If any timeline track is soloed, play if ANY active clip is on a soloed track
-							// This allows soloed tracks to play even if other non-soloed clips are active
-							if (hasSoloedTimelineTrack) {
-								// Solo mode: play if ANY active clip is on a soloed track
-								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-									return clipTrack?.solo === true;
-								});
-								isTimelineSoloed = hasSoloedClip;
-							} else {
-								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
-								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-									return clipTrack?.solo === true;
-								});
-								isTimelineSoloed = hasSoloedClip;
-							}
+							const clipInfo = activeClips.map((clip) => {
+								const clipTrack = timelineTracksArray?.find((t) => t.id === clip.trackId);
+								return {
+									clipId: clip.id,
+									trackId: clip.trackId,
+									trackName: clipTrack?.name || 'unknown',
+									mute: clipTrack?.mute || false,
+									solo: clipTrack?.solo || false,
+									startBeat: clip.startBeat,
+									duration: clip.duration,
+									clipEndBeat: clip.startBeat + clip.duration
+								};
+							});
 							
-							isTimelineMuted = allClipsMuted;
-							
-							// Debug: Log mute/solo decision for this track (track-specific, throttled)
-							const debugKey = `${trackId}_${patternId}`;
-							const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
-							const stateChanged = !lastDebugState || 
-							                    lastDebugState.muted !== isTimelineMuted || 
-							                    lastDebugState.soloed !== isTimelineSoloed ||
-							                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
-							
-							if (stateChanged) {
-								if (!this._lastDebugStates) {
-									this._lastDebugStates = new Map();
-								}
-								this._lastDebugStates.set(debugKey, {
-									muted: isTimelineMuted,
-									soloed: isTimelineSoloed,
-									beat: currentBeat
-								});
-								
-								const clipInfo = activeClips.map((clip) => {
-									const clipTrack = timelineTracksArray?.find((t) => t.id === clip.trackId);
-									return {
-										clipId: clip.id,
-										trackId: clip.trackId,
-										trackName: clipTrack?.name || 'unknown',
-										mute: clipTrack?.mute || false,
-										solo: clipTrack?.solo || false,
-										startBeat: clip.startBeat,
-										duration: clip.duration,
-										clipEndBeat: clip.startBeat + clip.duration
-									};
-								});
-								
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'AudioMixer: Mute/Solo Check',
-									data: {
-										currentBeat: currentBeat.toFixed(3),
-										trackId,
-										patternId,
-										activeClips: clipInfo,
-										activeClipsCount: activeClips.length,
-										allClipsMuted,
-										isTimelineMuted,
-										isTimelineSoloed,
-										hasSoloedTimelineTrack,
-										willSkip: isTimelineMuted || (hasSoloedTimelineTrack && !isTimelineSoloed),
-										skipReason: isTimelineMuted ? 'muted' : (hasSoloedTimelineTrack && !isTimelineSoloed ? 'not-soloed' : 'none')
-									}
-								});
-							}
-						} else {
-							// No active clips - mute this audio track
-							isTimelineMuted = true;
 						}
 					} else {
-						// Fallback: If any timeline track is muted, mute this audio track
-						isTimelineMuted = timelineTracks.some((t) => t.mute === true);
-						// If any timeline track is soloed, this audio track is soloed
-						isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
+						// No active clips - mute this audio track
+						isTimelineMuted = true;
 					}
+				} else {
+					// Fallback: If any timeline track is muted, mute this audio track
+					isTimelineMuted = timelineTracks.some((t) => t.mute === true);
+					// If any timeline track is soloed, this audio track is soloed
+					isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
 				}
-				
-				// Get solo state (isMuted already declared above)
-				const isSoloed = this.trackStateManager.isSoloed(trackId);
-				
-				// Combine mute states: muted if audio track is muted OR any timeline track is muted
-				const shouldMute = isMuted || isTimelineMuted;
-				
-				// Skip if muted
-				if (shouldMute) continue;
-				
-				// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
-				// Otherwise, use audio track solo state
-				if (isArrangementView && hasSoloedTimelineTrack) {
-					if (!isTimelineSoloed) continue;
-				} else if (hasSoloedTrack && !isSoloed) {
-					continue;
-				}
-				
-				// Get base track volume and pan
-				let trackVolume = this.trackStateManager.getVolume(trackId);
-				let trackPan = this.trackStateManager.getPan(trackId);
-				
-				// Apply cached timeline track volume
-				const timelineVolume = this._trackToTimelineVolume.get(trackId);
-				if (timelineVolume !== undefined) {
-					trackVolume *= timelineVolume;
-				}
-				
-				// Use cached pattern ID
-				let patternId = this._trackToPatternId.get(trackId);
-				// Fallback: check if synth has a stored patternId (from event)
-				if (!patternId && synth._patternId) {
-					patternId = synth._patternId;
-				}
-				
-				// Get envelope values for this track at current position
-				// Initialize with default values
-				let envelopeValues = {
-					volume: 1.0,
-					filter: 1.0,
-					pitch: 1.0,
-					pan: 0.0
-				};
-				
-				if (this.envelopesProcessor) {
-					envelopeValues = this.envelopesProcessor.getActiveEnvelopeValues(
-						trackId,
-						currentBeat,
-						isArrangementView
-					);
+			}
+			
+			// Get solo state (isMuted already declared above)
+			const isSoloed = this.trackStateManager.isSoloed(trackId);
+			
+			// Combine mute states: muted if audio track is muted OR any timeline track is muted
+			const shouldMute = isMuted || isTimelineMuted;
+			
+			// Skip if muted
+			if (shouldMute) continue;
+			
+			// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
+			// Otherwise, use audio track solo state
+			if (isArrangementView && hasSoloedTimelineTrack) {
+				if (!isTimelineSoloed) continue;
+			} else if (hasSoloedTrack && !isSoloed) {
+				continue;
+			}
+			
+			// Get base track volume and pan
+			let trackVolume = this.trackStateManager.getVolume(trackId);
+			let trackPan = this.trackStateManager.getPan(trackId);
+			
+			// Apply cached timeline track volume
+			const timelineVolume = this._trackToTimelineVolume.get(trackId);
+			if (timelineVolume !== undefined) {
+				trackVolume *= timelineVolume;
+			}
+			
+			// Use cached pattern ID
+			let patternId = this._trackToPatternId.get(trackId);
+			// Fallback: check if first voice has a stored patternId (from event)
+			if (!patternId && voices[0] && voices[0]._patternId) {
+				patternId = voices[0]._patternId;
+			}
+			
+			// Get envelope values for this track at current position
+			// Initialize with default values
+			let envelopeValues = {
+				volume: 1.0,
+				filter: 1.0,
+				pitch: 1.0,
+				pan: 0.0
+			};
+			
+			if (this.envelopesProcessor) {
+				envelopeValues = this.envelopesProcessor.getActiveEnvelopeValues(
+					trackId,
+					currentBeat,
+					isArrangementView
+				);
 
-					// Apply envelope values
-					trackVolume *= envelopeValues.volume;
-					trackPan += envelopeValues.pan;
-					trackPan = Math.max(-1, Math.min(1, trackPan)); // Clamp pan
-				}
-				
-				// Get synth sample
-				let synthSample = synth.process();
-				
-				// Apply filter envelope (if active)
-				if (envelopeValues.filter !== 1.0) {
+				// Apply envelope values
+				trackVolume *= envelopeValues.volume;
+				trackPan += envelopeValues.pan;
+				trackPan = Math.max(-1, Math.min(1, trackPan)); // Clamp pan
+			}
+			
+			// Use the mixed track sample (already calculated above)
+			let synthSample = trackSample;
+			
+			// Apply filter envelope (if active)
+			if (envelopeValues.filter !== 1.0) {
 					// Filter envelope modulates filter cutoff
 					// envelopeValues.filter is 0-1, map to cutoff frequency
 					// Lower filter value = lower cutoff (darker sound)
@@ -274,114 +273,53 @@ class AudioMixer {
 					// Apply simple lowpass filter
 					synthSample = this.applyLowpassFilter(synthSample, cutoff, 0.5, filterState, trackId);
 					
-					// Debug: Log filter envelope application (occasionally)
-					if (this.processor && this.processor.port && (!this._lastFilterLog || (currentBeat - this._lastFilterLog) > 4)) {
-						this._lastFilterLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Filter envelope being applied',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								filterValue: envelopeValues.filter.toFixed(3),
-								cutoff: cutoff.toFixed(0)
-							}
-						});
-					}
 				}
-				
-				// Apply pitch envelope (if active)
-				if (envelopeValues.pitch !== 1.0) {
+			
+			// Apply pitch envelope (if active)
+			if (envelopeValues.pitch !== 1.0) {
 					// Pitch envelope modulates pitch
 					// envelopeValues.pitch is a multiplier (0.5 = down octave, 2.0 = up octave)
 					// Apply as simple frequency modulation
 					synthSample = this.applyPitchShift(synthSample, envelopeValues.pitch, trackId);
 					
-					// Debug: Log pitch envelope application (occasionally)
-					if (this.processor && this.processor.port && (!this._lastPitchLog || (currentBeat - this._lastPitchLog) > 4)) {
-						this._lastPitchLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Pitch envelope being applied',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								pitchMultiplier: envelopeValues.pitch.toFixed(3)
-							}
-						});
-					}
 				}
+			
+			// Apply effects to this track's audio
+			if (this.effectsProcessor) {
 				
-				// Apply effects to this track's audio
-				if (this.effectsProcessor) {
-					// Debug: Log that we're checking for effects (occasionally)
-					if (this.processor && this.processor.port && (!this._lastEffectCheckLog || (currentBeat - this._lastEffectCheckLog) > 4)) {
-						this._lastEffectCheckLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Checking for effects',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								isArrangementView
-							}
-						});
-					}
-					
-					const activeEffects = this.effectsProcessor.getActiveEffects(
-						trackId,
-						currentBeat,
-						isArrangementView
-					);
-					
-					// Debug: Log when effects are found (occasionally to avoid spam)
-					if (activeEffects && activeEffects.length > 0 && this.processor && this.processor.port) {
-						// Only log occasionally to avoid console spam
-						if (!this._lastEffectLogTime || (currentBeat - this._lastEffectLogTime) > 4) {
-							this._lastEffectLogTime = currentBeat;
-							this.processor.port.postMessage({
-								type: 'debug',
-								message: 'Effects being applied',
-								data: {
-									trackId,
-									currentBeat: currentBeat.toFixed(2),
-									activeEffectsCount: activeEffects.length,
-									effectTypes: activeEffects.map(e => e.type)
-								}
-							});
-						}
-					}
-					
-					synthSample = this.effectsProcessor.processSample(synthSample, activeEffects);
-				}
+				const activeEffects = this.effectsProcessor.getActiveEffects(
+					trackId,
+					currentBeat,
+					isArrangementView
+				);
 				
-				// Apply track volume
-				synthSample *= trackVolume;
 				
-				// Pan calculation using constant power panning
-				// -1 = full left, 0 = center, 1 = full right
-				// This maintains constant perceived volume across the pan range
-				// Cache pan calculations per track to avoid recalculating every sample
-				let panGains = this._panGainsCache?.get(trackId);
-				if (!this._panGainsCache) {
-					this._panGainsCache = new Map();
-				}
-				if (!panGains || panGains.pan !== trackPan) {
-					const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
-					panGains = {
-						pan: trackPan,
-						leftGain: Math.cos(panRadians),
-						rightGain: Math.sin(panRadians)
-					};
-					this._panGainsCache.set(trackId, panGains);
-				}
-				
-				leftSample += synthSample * panGains.leftGain;
-				rightSample += synthSample * panGains.rightGain;
+				synthSample = this.effectsProcessor.processSample(synthSample, activeEffects);
 			}
+				
+			// Apply track volume
+			synthSample *= trackVolume;
+			
+			// Pan calculation using constant power panning
+			// -1 = full left, 0 = center, 1 = full right
+			// This maintains constant perceived volume across the pan range
+			// Cache pan calculations per track to avoid recalculating every sample
+			let panGains = this._panGainsCache?.get(trackId);
+			if (!this._panGainsCache) {
+				this._panGainsCache = new Map();
+			}
+			if (!panGains || panGains.pan !== trackPan) {
+				const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
+				panGains = {
+					pan: trackPan,
+					leftGain: Math.cos(panRadians),
+					rightGain: Math.sin(panRadians)
+				};
+				this._panGainsCache.set(trackId, panGains);
+			}
+			
+			leftSample += synthSample * panGains.leftGain;
+			rightSample += synthSample * panGains.rightGain;
 		}
 
 		return {

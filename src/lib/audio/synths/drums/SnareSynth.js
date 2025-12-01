@@ -13,7 +13,7 @@ class SnareSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		this.noiseBuffer = new Float32Array(44100);
+				this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
 		}
@@ -39,7 +39,7 @@ class SnareSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
-		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+				this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -52,7 +52,12 @@ class SnareSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.15) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Snare = rimshot structure + strong snare wire rattle
 		
@@ -105,6 +110,7 @@ class SnareSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		if (this.envelopePhase < attack) {
 			// Very fast attack for sharp transient
 			const attackPhase = this.envelopePhase / attack;
@@ -145,14 +151,14 @@ class SnareSynth {
 		mainEnvelope = Math.max(0, Math.min(1, mainEnvelope));
 
 		// Apply separate envelopes - body decays much faster
+		// Apply choke fade-out to both envelopes
 		const bodyComponent = body * bodyEnvelope;
-		const otherComponents = (ping + snareWireNoise + filteredNoise) * mainEnvelope;
+		const otherComponents = (ping + snareWireNoise + filteredNoise) * mainEnvelope ;
 		let sample = bodyComponent + otherComponents;
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * this.velocity * 0.7;
+				let output = sample * this.velocity * 0.7;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {

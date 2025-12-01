@@ -4,6 +4,7 @@
  * Perfect for ambient textures, evolving pads, and atmospheric soundscapes
  */
 
+
 class PadSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -87,7 +88,10 @@ class PadSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const numOscillators = this.settings.numOscillators || 8;
@@ -169,6 +173,7 @@ class PadSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			// Slow, smooth attack
@@ -195,6 +200,7 @@ class PadSynth {
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
+		this.triggerTime++;
 		
 		let output = sample * envelope * this.velocity * 0.25; // Lower gain for pads
 		

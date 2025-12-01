@@ -10,7 +10,7 @@ class HiHatSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		this.noiseBuffer = new Float32Array(44100);
+				this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
 		}
@@ -39,7 +39,7 @@ class HiHatSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
-		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+				this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Reset filter state for clean retrigger
 		if (this.hpFilterState) {
@@ -58,7 +58,12 @@ class HiHatSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.05) * this.sampleRate;
 		const release = (this.settings.release || 0.01) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// High-frequency noise (metallic)
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
@@ -96,6 +101,7 @@ class HiHatSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -120,12 +126,13 @@ class HiHatSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {

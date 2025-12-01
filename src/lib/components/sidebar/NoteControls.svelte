@@ -131,6 +131,7 @@ import NumericInput from './NumericInput.svelte';
 			updateEnginePatternTreeFromSelection();
 		}, 0);
 	}
+
 </script>
 
 {#if isMultiSelect}
@@ -140,7 +141,7 @@ import NumericInput from './NumericInput.svelte';
 			<button 
 				class="mode-btn" 
 				class:active={editorMode === 'pitch'}
-				on:click={() => editorModeStore.setMode('pitch')}
+				onclick={() => editorModeStore.setMode('pitch')}
 				title="Pitch Editor"
 			>
 				Pitch Editor
@@ -148,7 +149,7 @@ import NumericInput from './NumericInput.svelte';
 			<button 
 				class="mode-btn" 
 				class:active={editorMode === 'velocity'}
-				on:click={() => editorModeStore.setMode('velocity')}
+				onclick={() => editorModeStore.setMode('velocity')}
 				title="Velocity Editor"
 			>
 				Velocity Editor
@@ -158,10 +159,10 @@ import NumericInput from './NumericInput.svelte';
 			<div class="transpose-controls">
 				<span class="transpose-label">Transpose:</span>
 				<div class="transpose-buttons" role="group" aria-label="Transpose selected notes">
-					<button class="transpose-btn" on:click={() => transposeSelectedNodes(-12)} title="Transpose down 1 octave">-12</button>
-					<button class="transpose-btn" on:click={() => transposeSelectedNodes(-1)} title="Transpose down 1 semitone">-1</button>
-					<button class="transpose-btn" on:click={() => transposeSelectedNodes(1)} title="Transpose up 1 semitone">+1</button>
-					<button class="transpose-btn" on:click={() => transposeSelectedNodes(12)} title="Transpose up 1 octave">+12</button>
+					<button class="transpose-btn" onclick={() => transposeSelectedNodes(-12)} title="Transpose down 1 octave">-12</button>
+					<button class="transpose-btn" onclick={() => transposeSelectedNodes(-1)} title="Transpose down 1 semitone">-1</button>
+					<button class="transpose-btn" onclick={() => transposeSelectedNodes(1)} title="Transpose up 1 semitone">+1</button>
+					<button class="transpose-btn" onclick={() => transposeSelectedNodes(12)} title="Transpose up 1 octave">+12</button>
 				</div>
 			</div>
 		{/if}
@@ -172,7 +173,7 @@ import NumericInput from './NumericInput.svelte';
 	<div class="section">
 		<div class="param-header">
 			<label for="pitch-range">Pitch {isMultiSelect ? `(all ${selectedNodes.length} nodes)` : ''}</label>
-			<button class="reset-btn" on:click={() => updateNodePitch(defaultPitch)}>Reset</button>
+			<button class="reset-btn" onclick={() => updateNodePitch(defaultPitch)}>Reset</button>
 		</div>
 		<div class="param-controls">
 			<input
@@ -182,7 +183,7 @@ import NumericInput from './NumericInput.svelte';
 				max="127"
 				step="1"
 				value={currentPitch}
-				on:input={(e) => updateNodePitch(Number(getInputValue(e)))}
+				oninput={(e) => updateNodePitch(Number(getInputValue(e)))}
 			/>
 			<div class="pitch-input-group">
 				<input
@@ -190,14 +191,14 @@ import NumericInput from './NumericInput.svelte';
 					id="pitch-note"
 					type="text"
 					value={midiToNoteName(currentPitch)}
-					on:focus={() => isTypingNote = true}
-					on:blur={() => {
+					onfocus={() => isTypingNote = true}
+					onblur={() => {
 						isTypingNote = false;
 						if (pitchNoteInput) {
 							pitchNoteInput.value = midiToNoteName(currentPitch);
 						}
 					}}
-					on:input={(e) => {
+					oninput={(e) => {
 						const midi = noteNameToMidi(getInputValue(e));
 						if (midi !== null) {
 							updateNodePitch(midi);
@@ -226,7 +227,7 @@ import NumericInput from './NumericInput.svelte';
 	<div class="section">
 		<div class="param-header">
 			<label for="velocity-range">Velocity {isMultiSelect ? `(all ${selectedNodes.length} nodes)` : ''}</label>
-			<button class="reset-btn" on:click={() => updateNodeVelocity(1.0)}>Reset</button>
+			<button class="reset-btn" onclick={() => updateNodeVelocity(1.0)}>Reset</button>
 		</div>
 		<div class="param-controls">
 			<input
@@ -236,7 +237,7 @@ import NumericInput from './NumericInput.svelte';
 				max="1"
 				step="0.01"
 				value={currentVelocity}
-				on:input={(e) => updateNodeVelocity(Number(getInputValue(e)))}
+				oninput={(e) => updateNodeVelocity(Number(getInputValue(e)))}
 			/>
 			<NumericInput
 				id="velocity-number"

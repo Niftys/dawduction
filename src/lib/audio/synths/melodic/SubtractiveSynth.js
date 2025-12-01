@@ -3,6 +3,7 @@
  * Two oscillators with detune, low-pass filter, and ADSR envelope
  */
 
+
 class SubtractiveSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -32,6 +33,9 @@ class SubtractiveSynth {
 			this.phase1 = 0;
 			this.phase2 = 0;
 		}
+		
+		// Always reset envelope phase for new note
+		// Overlap is handled by voice pools in SynthManager, not here
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
@@ -71,7 +75,10 @@ class SubtractiveSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const osc1Type = this.settings.osc1Type || 'saw';
@@ -91,6 +98,7 @@ class SubtractiveSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));

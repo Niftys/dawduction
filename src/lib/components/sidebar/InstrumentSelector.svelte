@@ -18,6 +18,7 @@
 	import type { StandaloneInstrument, Pattern, Instrument } from '$lib/types/pattern';
 	import { projectStore } from '$lib/stores/projectStore';
 	import { engineStore } from '$lib/stores/engineStore';
+	import { selectionStore } from '$lib/stores/selectionStore';
 	import type { EngineWorklet } from '$lib/audio/engine/EngineWorklet';
 
 	const {
@@ -35,7 +36,20 @@
 	} = $props();
 	
 	let engine: EngineWorklet | null = null;
-	engineStore.subscribe((e) => (engine = e));
+	let project: any = $state(null);
+	let selection: any = $state(null);
+	
+	$effect(() => {
+		const unsubscribeEngine = engineStore.subscribe((e) => (engine = e));
+		const unsubscribeProject = projectStore.subscribe((p) => (project = p));
+		const unsubscribeSelection = selectionStore.subscribe((s) => (selection = s));
+		
+		return () => {
+			unsubscribeEngine();
+			unsubscribeProject();
+			unsubscribeSelection();
+		};
+	});
 
 	const nonMelodicInstruments = [
 		{ value: 'kick', label: 'Kick', color: '#00ffff' },
@@ -79,37 +93,103 @@
 	};
 
 	// Get the active item (selected instrument from pattern, or standalone instrument)
-	// When root node is selected, use the selected instrument, not the pattern
-	const activeItem = $derived(selectedInstrument || selectedTrack);
+	// Use $state with $effect to ensure proper reactivity when store updates
+	let activeItem: any = $state(selectedInstrument || selectedTrack);
+	
+	$effect(() => {
+		// Force reactivity by accessing project and selection
+		if (!project || !selection) {
+			const fallback = selectedInstrument || selectedTrack;
+			if (activeItem?.id !== fallback?.id || activeItem?.instrumentType !== fallback?.instrumentType) {
+				activeItem = fallback;
+			}
+			return;
+		}
+		
+		// If we have a selected instrument in a pattern, get it from the project
+		if (selectedPattern && selection.selectedInstrumentId) {
+			const patterns = project.patterns;
+			if (patterns) {
+				const pattern = patterns.find((p: any) => p.id === selectedPattern.id);
+				if (pattern) {
+					const instruments = pattern.instruments && Array.isArray(pattern.instruments) && pattern.instruments.length > 0
+						? pattern.instruments
+						: (pattern.instrumentType && pattern.patternTree ? [{
+							id: pattern.id,
+							instrumentType: pattern.instrumentType,
+							patternTree: pattern.patternTree,
+							settings: pattern.settings || {},
+							instrumentSettings: pattern.instrumentSettings,
+							color: pattern.color || '#7ab8ff',
+							volume: pattern.volume ?? 1.0,
+							pan: pattern.pan ?? 0.0,
+							mute: pattern.mute,
+							solo: pattern.solo
+						}] : []);
+					const instrument = instruments.find((inst: any) => inst.id === selection.selectedInstrumentId) || instruments[0];
+					if (instrument) {
+						// Only update if the instrument type or ID actually changed
+						if (activeItem?.id !== instrument.id || activeItem?.instrumentType !== instrument.instrumentType) {
+							activeItem = instrument; // Use the instrument directly, not a copy
+						}
+						return;
+					}
+				}
+			}
+		}
+		
+		// If we have a selected track, get it from the project
+		if (selectedTrack && selection.selectedTrackId) {
+			const standaloneInstruments = project.standaloneInstruments;
+			if (standaloneInstruments) {
+				const track = standaloneInstruments.find((t: any) => t.id === selection.selectedTrackId);
+				if (track) {
+					// Only update if the track type or ID actually changed
+					if (activeItem?.id !== track.id || activeItem?.instrumentType !== track.instrumentType) {
+						activeItem = track; // Use the track directly, not a copy
+					}
+					return;
+				}
+			}
+		}
+		
+		// Fallback to props
+		const fallback = selectedInstrument || selectedTrack;
+		if (activeItem?.id !== fallback?.id || activeItem?.instrumentType !== fallback?.instrumentType) {
+			activeItem = fallback;
+		}
+	});
 	
 	async function updateInstrumentType(type: string) {
-		if (!activeItem) return;
-		
 		const defaults = instrumentDefaults[type as keyof typeof instrumentDefaults];
 		if (!defaults) return;
 		
 		// If a root node is selected, switch the instrument type (preserving settings)
 		if (isRootNode) {
 			// If a pattern instrument is selected, switch that instrument's type
-			if (selectedPattern && selectedInstrumentId) {
+			if (selectedPattern && selectedInstrumentId && project) {
+				// Get the latest pattern from the project store to ensure we have the most up-to-date data
+				const latestPattern = project.patterns?.find((p: any) => p.id === selectedPattern.id);
+				if (!latestPattern) return;
+				
 				// Get all instruments from pattern
-				const patternInstruments = selectedPattern.instruments && Array.isArray(selectedPattern.instruments) && selectedPattern.instruments.length > 0
-					? selectedPattern.instruments
-					: (selectedPattern.instrumentType && selectedPattern.patternTree ? [{
-						id: selectedPattern.id,
-						instrumentType: selectedPattern.instrumentType,
-						patternTree: selectedPattern.patternTree,
-						settings: selectedPattern.settings || {},
-						instrumentSettings: selectedPattern.instrumentSettings,
-						color: selectedPattern.color || '#7ab8ff',
-						volume: selectedPattern.volume ?? 1.0,
-						pan: selectedPattern.pan ?? 0.0,
-						mute: selectedPattern.mute,
-						solo: selectedPattern.solo
+				const patternInstruments = latestPattern.instruments && Array.isArray(latestPattern.instruments) && latestPattern.instruments.length > 0
+					? latestPattern.instruments
+					: (latestPattern.instrumentType && latestPattern.patternTree ? [{
+						id: latestPattern.id,
+						instrumentType: latestPattern.instrumentType,
+						patternTree: latestPattern.patternTree,
+						settings: latestPattern.settings || {},
+						instrumentSettings: latestPattern.instrumentSettings,
+						color: latestPattern.color || '#7ab8ff',
+						volume: latestPattern.volume ?? 1.0,
+						pan: latestPattern.pan ?? 0.0,
+						mute: latestPattern.mute,
+						solo: latestPattern.solo
 					}] : []);
 				
 				// Find the selected instrument
-				const instrument = patternInstruments.find(inst => inst.id === selectedInstrumentId);
+				const instrument = patternInstruments.find((inst: any) => inst.id === selectedInstrumentId);
 				if (instrument) {
 					// Initialize instrumentSettings if it doesn't exist
 					const instrumentSettings = instrument.instrumentSettings || {};
@@ -132,67 +212,64 @@
 						instrumentSettings: instrumentSettings
 					});
 					
-					// Update the engine directly using updateTrack to avoid resetting playback position
-					// Use a small delay to ensure store update completes and we get the latest pattern tree
-					setTimeout(() => {
-						if (engine) {
-							// Get the updated instrument from the store
-							let currentProject: any = null;
-							projectStore.subscribe((p) => (currentProject = p))();
-							if (!currentProject) return;
-							
-							const updatedPattern = currentProject.patterns?.find((p: Pattern) => p.id === selectedPattern.id);
-							if (!updatedPattern) return;
-							
-							const updatedInstruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
-								? updatedPattern.instruments
-								: (updatedPattern.instrumentType && updatedPattern.patternTree ? [{
-									id: updatedPattern.id,
-									instrumentType: updatedPattern.instrumentType,
-									patternTree: updatedPattern.patternTree,
-									settings: updatedPattern.settings || {},
-									instrumentSettings: updatedPattern.instrumentSettings,
-									color: updatedPattern.color || '#7ab8ff',
-									volume: updatedPattern.volume ?? 1.0,
-									pan: updatedPattern.pan ?? 0.0,
-									mute: updatedPattern.mute,
-									solo: updatedPattern.solo
-								}] : []);
-							
-							const updatedInstrument = updatedInstruments.find((inst: Instrument) => inst.id === selectedInstrumentId);
-							if (!updatedInstrument) return;
-							
-							const patternTrackId = `__pattern_${selectedPattern.id}_${selectedInstrumentId}`;
-							const trackForEngine = {
-								id: patternTrackId,
-								projectId: selectedPattern.projectId,
-								instrumentType: type, // Use the new type directly
-								patternTree: updatedInstrument.patternTree, // Use updated pattern tree from store
-								settings: newSettings,
-								instrumentSettings: instrumentSettings,
-								volume: updatedInstrument.volume ?? 1.0,
-								pan: updatedInstrument.pan ?? 0.0,
-								color: defaults.color,
-								mute: updatedInstrument.mute ?? false,
-								solo: updatedInstrument.solo ?? false
-							};
-							
-							// Update just this track - this will recreate the synth without resetting playback
-							engine.updateTrack(patternTrackId, trackForEngine);
-						}
-					}, 0);
+					// Update the engine immediately - call engine directly for instant update
+					if (!engine) {
+						console.error('❌ Engine is null, cannot update');
+						return;
+					}
+					
+					const patternTrackId = `__pattern_${selectedPattern.id}_${selectedInstrumentId}`;
+					
+					// Get updated instrument from store (store update is synchronous, so this should have the new data)
+					let currentProject: any = null;
+					projectStore.subscribe((p: any) => (currentProject = p))();
+					
+					if (!currentProject) return;
+					
+					const updatedPattern = currentProject.patterns?.find((p: any) => p.id === selectedPattern.id);
+					if (!updatedPattern) return;
+					
+					const instruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
+						? updatedPattern.instruments
+						: [];
+					const updatedInstrument = instruments.find((inst: any) => inst.id === selectedInstrumentId);
+					
+					if (!updatedInstrument) return;
+					
+					const trackForEngine = {
+						id: patternTrackId,
+						projectId: selectedPattern.projectId,
+						instrumentType: type,
+						patternTree: updatedInstrument.patternTree,
+						settings: newSettings,
+						instrumentSettings: instrumentSettings,
+						volume: updatedInstrument.volume ?? 1.0,
+						pan: updatedInstrument.pan ?? 0.0,
+						color: defaults.color,
+						mute: updatedInstrument.mute ?? false,
+						solo: updatedInstrument.solo ?? false
+					};
+					
+					// Call engine.updateTrack directly for immediate synchronous update
+					if (engine) {
+						engine.updateTrack(patternTrackId, trackForEngine);
+					}
 					return;
 				}
 			}
 			
 			// If a track is selected, update that track's instrument type
-			if (selectedTrack) {
+			if (selectedTrack && project) {
+				// Get the latest track from the project store to ensure we have the most up-to-date data
+				const latestTrack = project.standaloneInstruments?.find((t: any) => t.id === selectedTrack.id);
+				if (!latestTrack) return;
+				
 				// Initialize instrumentSettings if it doesn't exist
-				const instrumentSettings = activeItem.instrumentSettings || {};
+				const instrumentSettings = latestTrack.instrumentSettings || {};
 				
 				// Save current settings for the current instrument type before switching
-				if (activeItem.instrumentType && activeItem.settings) {
-					instrumentSettings[activeItem.instrumentType] = { ...activeItem.settings };
+				if (latestTrack.instrumentType && latestTrack.settings) {
+					instrumentSettings[latestTrack.instrumentType] = { ...latestTrack.settings };
 				}
 				
 				// Restore previously saved settings for the new instrument type, or use defaults
@@ -208,20 +285,35 @@
 					instrumentSettings: instrumentSettings
 				});
 				
-				// Update the engine directly using updateTrack to avoid resetting playback position
+				// Update the engine immediately - call engine directly for instant update
+				if (!engine) return;
+				
+				// Get updated track from store (store update is synchronous, so this should have the new data)
+				let currentProject: any = null;
+				projectStore.subscribe((p: any) => (currentProject = p))();
+				
+				if (!currentProject) return;
+				
+				const updatedTrack = currentProject.standaloneInstruments?.find((t: any) => t.id === selectedTrack.id);
+				
+				if (!updatedTrack) return;
+				
+				const trackForEngine = {
+					id: selectedTrack.id,
+					projectId: updatedTrack.projectId,
+					instrumentType: type,
+					patternTree: updatedTrack.patternTree,
+					settings: newSettings,
+					instrumentSettings: instrumentSettings,
+					volume: updatedTrack.volume ?? 1.0,
+					pan: updatedTrack.pan ?? 0.0,
+					color: defaults.color,
+					mute: updatedTrack.mute ?? false,
+					solo: updatedTrack.solo ?? false
+				};
+				
+				// Call engine.updateTrack directly for immediate synchronous update
 				if (engine) {
-					const trackForEngine: any = {
-						...selectedTrack,
-						instrumentType: type, // Use the new type directly
-						color: defaults.color,
-						settings: newSettings,
-						instrumentSettings: instrumentSettings,
-						// Ensure patternTree is included for seamless updates
-						patternTree: selectedTrack.patternTree
-					};
-					
-					// Update just this track - this will recreate the synth without resetting playback
-					// The pattern tree is already included in trackForEngine, so updateTrack will update it
 					engine.updateTrack(selectedTrack.id, trackForEngine);
 				}
 				return;
@@ -263,18 +355,18 @@
 			setTimeout(() => {
 				if (engine) {
 					// Get the updated instrument from the store to ensure we have the latest data
-					let currentProject = null;
-					projectStore.subscribe((p) => (currentProject = p))();
+					let currentProject: any = null;
+					projectStore.subscribe((p: any) => (currentProject = p))();
 					if (!currentProject) return;
 					
-					const updatedPattern = currentProject.patterns?.find((p) => p.id === selectedPattern.id);
+					const updatedPattern = currentProject.patterns?.find((p: any) => p.id === selectedPattern.id);
 					if (!updatedPattern) return;
 					
 					const updatedInstruments = updatedPattern.instruments && Array.isArray(updatedPattern.instruments) && updatedPattern.instruments.length > 0
 						? updatedPattern.instruments
 						: [];
 					
-					const updatedInstrument = updatedInstruments.find((inst) => inst.id === newInstrument.id);
+					const updatedInstrument = updatedInstruments.find((inst: any) => inst.id === newInstrument.id);
 					if (!updatedInstrument) return;
 					
 					const patternTrackId = `__pattern_${selectedPattern.id}_${newInstrument.id}`;
@@ -308,11 +400,12 @@
 		<h4 class="instrument-group-title">Drums</h4>
 		<div class="instrument-grid">
 			{#each nonMelodicInstruments as inst}
+				{@const isActive = activeItem?.instrumentType === inst.value}
 				<button
 					class="instrument-btn"
-					class:active={activeItem?.instrumentType === inst.value}
+					class:active={isActive}
 					style="border-color: {inst.color};"
-					on:click={() => updateInstrumentType(inst.value)}
+					onclick={() => updateInstrumentType(inst.value)}
 				>
 					{inst.label}
 				</button>
@@ -324,11 +417,12 @@
 		<h4 class="instrument-group-title">Melodic</h4>
 		<div class="instrument-grid">
 			{#each melodicInstrumentsList as inst}
+				{@const isActive = activeItem?.instrumentType === inst.value}
 				<button
 					class="instrument-btn"
-					class:active={activeItem?.instrumentType === inst.value}
+					class:active={isActive}
 					style="border-color: {inst.color};"
-					on:click={() => updateInstrumentType(inst.value)}
+					onclick={() => updateInstrumentType(inst.value)}
 				>
 					{inst.label}
 				</button>

@@ -10,6 +10,7 @@ class PluckSynth {
 		this.settings = settings || {};
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.delayLine = null;
 		this.delayIndex = 0;
 		this.delayLength = 0;
@@ -34,6 +35,7 @@ class PluckSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// Calculate delay line length based on pitch
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
@@ -85,7 +87,10 @@ class PluckSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Karplus-Strong: read from delay line, filter, and feed back
 		const readIndex = this.delayIndex;
@@ -116,6 +121,7 @@ class PluckSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			// Very quick attack for pluck character
@@ -145,8 +151,7 @@ class PluckSynth {
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		// Reduced output gain for safer levels, clamp to prevent clipping
+				// Reduced output gain for safer levels, clamp to prevent clipping
 		let output = sample * envelope * this.velocity * 0.25;
 		output = Math.max(-0.95, Math.min(0.95, output)); // Soft clipping
 		

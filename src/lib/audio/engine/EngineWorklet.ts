@@ -70,7 +70,7 @@ export class EngineWorklet {
 		}
 	}
 
-	private handleMessage(message: { type: string; time?: number; eventIds?: string[]; duration?: number }) {
+	private handleMessage(message: { type: string; time?: number; eventIds?: string[]; duration?: number; message?: string; data?: any }) {
 		// Handle messages from worklet to UI
 		if (message.type === 'playbackUpdate' || message.type === 'playbackPosition') {
 			// message.time is in beats
@@ -83,6 +83,9 @@ export class EngineWorklet {
 					duration: message.duration
 				}
 			}));
+		} else if (message.type === 'debug') {
+			// Log debug messages from worklet
+			console.log(`🔧 [Worklet] ${message.message || 'Debug'}:`, message.data || {});
 		}
 	}
 

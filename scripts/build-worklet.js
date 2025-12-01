@@ -67,6 +67,7 @@ const melodicSynthFiles = [
 
 // Shared synth files (samples, etc.)
 const sharedSynthFiles = [
+	'shared/choke.js', // Include choke utility first
 	'shared/SampleSynth.js'
 ];
 
@@ -131,7 +132,13 @@ function buildWorklet() {
 		const synthPath = path.join(synthsDir, synthFile);
 		if (fs.existsSync(synthPath)) {
 			console.log(`  Adding drum synth: ${synthFile}...`);
-			const synthCode = fs.readFileSync(synthPath, 'utf8');
+			let synthCode = fs.readFileSync(synthPath, 'utf8');
+			// Remove import statements for shared modules (they'll be included separately)
+			// Match import statements with any whitespace
+			synthCode = synthCode.replace(/^import\s+.*?from\s+['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
+			synthCode = synthCode.replace(/^import\s*\{[^}]*\}\s*from\s*['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
+			// Also handle imports with calculateChokeFadeOut specifically
+			synthCode = synthCode.replace(/^import\s*\{\s*calculateChokeFadeOut\s*\}\s*from\s*['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
 			drumSynthsCode += synthCode + '\n\n';
 		} else {
 			console.warn(`  Warning: ${synthFile} not found, skipping...`);
@@ -148,7 +155,13 @@ function buildWorklet() {
 		const synthPath = path.join(synthsDir, synthFile);
 		if (fs.existsSync(synthPath)) {
 			console.log(`  Adding melodic synth: ${synthFile}...`);
-			const synthCode = fs.readFileSync(synthPath, 'utf8');
+			let synthCode = fs.readFileSync(synthPath, 'utf8');
+			// Remove import statements for shared modules (they'll be included separately)
+			// Match import statements with any whitespace
+			synthCode = synthCode.replace(/^import\s+.*?from\s+['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
+			synthCode = synthCode.replace(/^import\s*\{[^}]*\}\s*from\s*['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
+			// Also handle imports with calculateChokeFadeOut specifically
+			synthCode = synthCode.replace(/^import\s*\{\s*calculateChokeFadeOut\s*\}\s*from\s*['"]\.\.\/shared\/choke\.js['"];?\s*$/gm, '');
 			melodicSynthsCode += synthCode + '\n\n';
 		} else {
 			console.warn(`  Warning: ${synthFile} not found, skipping...`);
@@ -165,7 +178,20 @@ function buildWorklet() {
 		const synthPath = path.join(synthsDir, synthFile);
 		if (fs.existsSync(synthPath)) {
 			console.log(`  Adding shared synth: ${synthFile}...`);
-			const synthCode = fs.readFileSync(synthPath, 'utf8');
+			let synthCode = fs.readFileSync(synthPath, 'utf8');
+			// Remove import statements for shared modules (they'll be included separately)
+			// But keep the export statement for choke.js
+			if (synthFile === 'shared/choke.js') {
+				// For choke.js, remove export and make it a regular function declaration
+				synthCode = synthCode.replace(/^export\s+function\s+calculateChokeFadeOut/, 'function calculateChokeFadeOut');
+			} else {
+				// For other shared files, remove import statements
+				// Match import statements with any whitespace
+				synthCode = synthCode.replace(/^import\s+.*?from\s+['"]\.\/choke\.js['"];?\s*$/gm, '');
+				synthCode = synthCode.replace(/^import\s*\{[^}]*\}\s*from\s*['"]\.\/choke\.js['"];?\s*$/gm, '');
+				// Also handle imports with calculateChokeFadeOut specifically
+				synthCode = synthCode.replace(/^import\s*\{\s*calculateChokeFadeOut\s*\}\s*from\s*['"]\.\/choke\.js['"];?\s*$/gm, '');
+			}
 			sharedSynthsCode += synthCode + '\n\n';
 		} else {
 			console.warn(`  Warning: ${synthFile} not found, skipping...`);

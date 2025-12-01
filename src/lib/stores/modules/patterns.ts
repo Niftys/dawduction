@@ -685,6 +685,44 @@ export function createPatternsModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 				};
 			});
 		},
+		updatePatternNodeChoke: (patternId: string, nodeId: string, choke: number | null, instrumentId?: string | null) => {
+			updateFn((project) => {
+				if (!project) return project;
+				return {
+					...project,
+					patterns: (project.patterns || []).map((pattern) => {
+						if (pattern.id !== patternId) return pattern;
+						
+						const updateNode = (node: PatternNode): PatternNode => {
+							if (node.id === nodeId) {
+								return { ...node, choke };
+							}
+							return {
+								...node,
+								children: node.children.map(updateNode)
+							};
+						};
+						
+						// If instrumentId is provided, update that instrument's tree
+						if (instrumentId && pattern.instruments && Array.isArray(pattern.instruments)) {
+							const instruments = pattern.instruments.map(inst =>
+								inst.id === instrumentId 
+									? { ...inst, patternTree: updateNode(inst.patternTree) }
+									: inst
+							);
+							return { ...pattern, instruments, updatedAt: Date.now() };
+						}
+						
+						// Legacy: update pattern directly
+						return {
+							...pattern,
+							patternTree: updateNode(pattern.patternTree || { id: crypto.randomUUID(), division: 4, children: [] }),
+							updatedAt: Date.now()
+						};
+					})
+				};
+			});
+		},
 		addPatternChildNode: (patternId: string, parentNodeId: string, division: number = 1, instrumentId?: string | null) => {
 			updateFn((project) => {
 				if (!project) return project;
@@ -704,7 +742,8 @@ export function createPatternsModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 									y: 0, // Will be calculated below
 									children: [],
 									velocity: node.velocity !== undefined ? node.velocity : 1.0, // Inherit from parent or default to 100%
-									pitch: node.pitch !== undefined ? node.pitch : 60 // Inherit from parent or default to Middle C
+									pitch: node.pitch !== undefined ? node.pitch : 60, // Inherit from parent or default to Middle C
+									choke: node.choke !== undefined ? node.choke : 1.0 // Inherit from parent or default to full length
 								};
 								
 								// Now we have all children (existing + new)

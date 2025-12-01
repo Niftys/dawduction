@@ -11,6 +11,7 @@ class SupersawSynth {
 		this.phase = []; // Array of phases for each oscillator
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.lfoPhase = 0;
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
@@ -55,6 +56,7 @@ class SupersawSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Start retrigger fade if was already active
@@ -85,7 +87,10 @@ class SupersawSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const numOscillators = this.settings.numOscillators || 7;
@@ -137,6 +142,7 @@ class SupersawSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
@@ -159,11 +165,12 @@ class SupersawSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {

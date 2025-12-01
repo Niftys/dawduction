@@ -7,6 +7,7 @@
  * - Natural compression/saturation characteristics
  */
 
+
 class KickSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -62,7 +63,11 @@ class KickSynth {
 		const decay = (this.settings.decay || 0.4) * this.sampleRate;
 		const sustain = this.settings.sustain || 0.0;
 		const release = (this.settings.release || 0.15) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope (still used for envelope phases)
+		const totalNoteLength = attack + decay + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Calculate pitch multiplier (base pitch is C4 = MIDI 60, matching default)
 		const basePitch = 60;
@@ -159,6 +164,7 @@ class KickSynth {
 		
 		// ADSR envelope for clean tonal body
 		// Use smoother curves to prevent clicks
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = sustain;
 		
@@ -187,12 +193,13 @@ class KickSynth {
 		} else {
 			envelope = 0;
 		}
-
+		
 		// Ensure envelope is never negative and clamp to [0, 1]
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		// Phase accumulation is done above when calculating sine waves
 		this.envelopePhase++;
+		this.triggerTime++;
 		
 		// Apply envelope to clean tonal body
 		// Increased gain to match other drums' volume levels

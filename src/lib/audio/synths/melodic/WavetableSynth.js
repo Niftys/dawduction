@@ -10,6 +10,7 @@ class WavetableSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		// Simple wavetable (sine wave)
 		this.wavetable = new Float32Array(2048);
 		for (let i = 0; i < this.wavetable.length; i++) {
@@ -38,6 +39,7 @@ class WavetableSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -67,7 +69,11 @@ class WavetableSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const tableIndex = (this.phase % (2 * Math.PI)) / (2 * Math.PI) * this.wavetable.length;
@@ -80,6 +86,7 @@ class WavetableSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		
 		if (this.envelopePhase < attack) {
@@ -103,12 +110,13 @@ class WavetableSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase += (freq / this.sampleRate) * 2 * Math.PI;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.4;
+				let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {

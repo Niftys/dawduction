@@ -893,8 +893,37 @@ class PlaybackController {
 	}
 
 	setTransport(state, position = 0) {
+		const wasPlaying = this.isPlaying;
 		this.isPlaying = state === 'play';
-		this.processor.currentTime = position * this.samplesPerBeat;
+		const newPosition = position * this.samplesPerBeat;
+		const isStartingFromBeginning = newPosition === 0 || newPosition < this.samplesPerBeat * 0.1;
+		
+		// When starting playback from the beginning (not resuming), stop all synths for a clean start
+		// This ensures no lingering sounds interfere with the first notes
+		if (state === 'play' && !wasPlaying && isStartingFromBeginning && this.processor.synthManager) {
+			// Only stop regular synths, not voice pools (polyphonic with overlap)
+			// Voice pools will naturally stop when their notes finish, and we want to preserve them for overlap
+			for (const synth of this.processor.synthManager.synths.values()) {
+				if (synth && synth.isActive !== undefined) {
+					synth.isActive = false;
+				}
+			}
+		}
+		
+		this.processor.currentTime = newPosition;
+		
+		// When starting playback, force immediate scheduling of events at the start position
+		// This ensures events at time 0 (or the start position) are scheduled before the first buffer is processed
+		if (state === 'play' && !wasPlaying && this.processor.eventScheduler) {
+			// Reset scheduling state to force immediate scheduling
+			this.processor.eventScheduler._lastScheduledBeat = -1;
+			// Clear any old scheduled events to start fresh
+			this.processor.eventScheduler.scheduledEvents.clear();
+			this.processor.eventScheduler._scheduledEventKeys.clear();
+			this.processor.eventScheduler._lastCheckedEventIndex = -1;
+			// Schedule events immediately for the start position
+			this.processor.eventScheduler.scheduleEvents();
+		}
 	}
 
 	getCurrentBeat() {
@@ -939,13 +968,21 @@ class EventScheduler {
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
 		const currentSampleTime = this.processor.currentTime;
 		
+		const epsilon = 0.0001;
+		const isAtStart = currentBeat < epsilon;
+		
 		// If playback looped backwards, allow scheduling immediately
 		if (this._lastScheduledBeat > currentBeat) {
 			this._lastScheduledBeat = -1;
 		}
 		
 		// Clean up old scheduled events that have already passed
-		this._cleanupOldEvents(currentSampleTime);
+		// But do this AFTER we check if we need to schedule, to avoid cleaning up events we're about to schedule
+		// Only clean up if we're not at the very start of playback
+		const isAtStartForCleanup = currentBeat < 0.01; // Within first 0.01 beats
+		if (!isAtStartForCleanup) {
+			this._cleanupOldEvents(currentSampleTime);
+		}
 		
 		// Adaptive scheduling interval based on event density
 		const events = this.processor.projectManager.events;
@@ -964,12 +1001,14 @@ class EventScheduler {
 		}
 		
 		// Only schedule if we've moved forward enough (optimization)
-		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval) {
-			return; // Skip scheduling if we haven't moved forward enough
+		// But always schedule if we're at the start (currentBeat < epsilon) to ensure events at time 0 are scheduled
+		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval && currentBeat >= epsilon) {
+			return; // Skip scheduling if we haven't moved forward enough (unless we're at the start)
 		}
 		this._lastScheduledBeat = currentBeat;
 		
-		const lookaheadTime = 0.15; // 150ms
+		// Use longer lookahead when starting from the beginning to ensure early events are scheduled
+		const lookaheadTime = isAtStart ? 0.5 : 0.15; // 500ms at start, 150ms otherwise
 		const lookaheadBeat = currentBeat + lookaheadTime * this.processor.playbackController.beatsPerSecond;
 		
 		// Get pattern length for looping
@@ -1044,9 +1083,26 @@ class EventScheduler {
 			// Use extended lookahead for arrangement view to schedule events further ahead
 			const checkLookahead = isTimelineMode ? extendedLookahead : lookaheadBeat;
 			// Use <= for lookahead to include events at the exact lookahead boundary
-			// Also handle events at time 0.0 specially to ensure they're scheduled
-			if (eventTime >= currentBeat && eventTime <= checkLookahead) {
-				const eventSampleTime = Math.floor(eventTime * this.processor.playbackController.samplesPerBeat);
+			// Also handle events at the start specially to ensure they're scheduled when currentBeat is near 0
+			// isAtStart is already defined above
+			// If we're at the start, schedule all events from 0 up to lookahead (not just time 0)
+			// Otherwise, use normal lookahead window
+			// Use a small tolerance to handle floating point precision
+			// Check if event is in the scheduling window
+			// When at start, schedule all events from 0 up to lookahead
+			// Otherwise, use normal lookahead window with tolerance for floating point precision
+			let eventInWindow = false;
+			if (isAtStart) {
+				// At start: schedule all events from 0 (with small negative tolerance) up to lookahead
+				eventInWindow = eventTime >= -epsilon && eventTime <= checkLookahead + epsilon;
+			} else {
+				// Normal: schedule events in lookahead window from currentBeat
+				eventInWindow = eventTime >= currentBeat - epsilon && eventTime <= checkLookahead + epsilon;
+			}
+			
+			if (eventInWindow) {
+				// Convert event time to sample time, ensuring we don't get negative sample times
+				const eventSampleTime = Math.max(0, Math.floor(eventTime * this.processor.playbackController.samplesPerBeat));
 				const eventKey = `${eventIndex}_${eventSampleTime}`;
 				
 				// Skip if already scheduled
@@ -1116,8 +1172,12 @@ class EventScheduler {
 		const keysToDelete = [];
 		
 		// Find all sample times that are too old
+		// But don't clean up events at time 0 or very early times when we're just starting playback
+		// This ensures events at the start of playback aren't accidentally removed
+		const isNearStart = currentSampleTime < this.processor.playbackController.samplesPerBeat * 0.1; // Within first 0.1 beats
 		for (const sampleTime of this.scheduledEvents.keys()) {
-			if (sampleTime < cleanupThreshold) {
+			// Only clean up if it's old AND we're not near the start of playback
+			if (sampleTime < cleanupThreshold && (!isNearStart || sampleTime < -this._cleanupThresholdSamples)) {
 				keysToDelete.push(sampleTime);
 			}
 		}
@@ -1215,10 +1275,10 @@ class EventScheduler {
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			} else {
-				// Pattern mode: reset to 0 and stop all synths for clean restart
-				// This ensures patterns always start from the beginning without lingering sounds
-				this.processor.synthManager.stopAllSynths();
+				// Pattern mode: reset to 0 but let notes ring out naturally
+				// Don't stop all synths - let them finish their release phase for smooth looping
 				this.processor.currentTime = 0;
+				// Reset _lastScheduledBeat to -1 to force immediate scheduling of events at time 0
 				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
 					// Reset playback update timers so visual updates keep firing after loop
@@ -1230,7 +1290,8 @@ class EventScheduler {
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();
 				this._lastCheckedEventIndex = -1;
-				// Re-schedule events for next loop
+				// Re-schedule events for next loop immediately
+				// This ensures events at time 0 are scheduled before the next buffer is processed
 				this.scheduleEvents();
 			}
 		}
@@ -1300,22 +1361,6 @@ class EffectsProcessor {
 		// Build automation lookup map for fast access
 		this._buildAutomationMap();
 		
-		// Debug: Log initialization
-		if (this.processor && this.processor.port) {
-			const automationKeys = automation ? Object.keys(automation) : [];
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EffectsProcessor initialized',
-				data: {
-					effectsCount: this.effects.length,
-					timelineEffectsCount: this.timelineEffects.length,
-					timelineTrackMappingSize: this.timelineTrackToAudioTracks.size,
-					automationLoaded: !!automation,
-					automationKeysCount: automationKeys.length,
-					automationKeys: automationKeys.slice(0, 5) // First 5 keys for debugging
-				}
-			});
-		}
 	}
 
 	/**
@@ -1645,31 +1690,6 @@ class EffectsProcessor {
 					matchStatus
 				};
 			});
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'Effect matching debug',
-				data: {
-					trackId,
-					timelineTrackId,
-					currentBeat: currentBeat.toFixed(2),
-					timelineEffectsCount: this.timelineEffects.length,
-					timelineEffects: matchingDetails,
-					timelineTrackMapping: (function() {
-						const result = [];
-						const entries = this.timelineTrackToAudioTracks.entries();
-						for (let entry = entries.next(); !entry.done; entry = entries.next()) {
-							const tid = entry.value[0];
-							const aids = entry.value[1];
-							result.push({
-								timelineTrackId: tid,
-								audioTrackIds: aids,
-								includesCurrentTrack: aids.includes(trackId)
-							});
-						}
-						return result;
-					}.call(this))
-				}
-			});
 		}
 
 		// Find timeline effects that are active at this position
@@ -1697,18 +1717,6 @@ class EffectsProcessor {
 						}
 					} else {
 						// Timeline track not found - this shouldn't happen but handle gracefully
-						// Debug: Log this case
-						if (this.processor && this.processor.port && Math.random() < 0.1) {
-							this.processor.port.postMessage({
-								type: 'debug',
-								message: 'Timeline track not found for effect',
-								data: {
-									effectTrackId: timelineEffect.trackId,
-									availableTrackIds: this.timelineTracks.map(t => t.id),
-									timelineTracksCount: this.timelineTracks.length
-								}
-							});
-						}
 						matchReason = 'trackId mismatch: effect=' + timelineEffect.trackId + ' (track not found), audioTrack=' + timelineTrackId;
 					}
 				} else if (timelineEffect.targetTrackId) {
@@ -1754,35 +1762,8 @@ class EffectsProcessor {
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
 								this._missingEffectLogTimes[lastLogKey] = currentBeat;
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'Effect definition not found',
-									data: { 
-										effectId: timelineEffect.effectId, 
-										availableIds: this.effects.map(e => e.id),
-										matchReason
-									}
-								});
 							}
 						}
-					}
-				} else {
-					// Debug: Log why effect didn't match (occasionally)
-					if (this.processor && this.processor.port && Math.random() < 0.1) {
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Effect not matching',
-							data: {
-								effectId: timelineEffect.effectId,
-								matchReason,
-								effectTrackId: timelineEffect.trackId,
-								targetTrackId: timelineEffect.targetTrackId,
-								audioTrackId: trackId,
-								audioTimelineTrackId: timelineTrackId,
-								currentBeat: currentBeat.toFixed(2),
-								effectTimeRange: startBeat.toFixed(2) + '-' + endBeat.toFixed(2)
-							}
-						});
 					}
 				}
 			}
@@ -2070,19 +2051,6 @@ class EnvelopesProcessor {
 		// Clear caches when reinitializing
 		this.clearCaches();
 		
-		// Debug: Log initialization
-		if (this.processor && this.processor.port) {
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EnvelopesProcessor initialized',
-				data: {
-					envelopesCount: this.envelopes.length,
-					timelineEnvelopesCount: this.timelineEnvelopes.length,
-					envelopeIds: this.envelopes.map(e => e.id),
-					timelineEnvelopeIds: this.timelineEnvelopes.map(te => te.envelopeId)
-				}
-			});
-		}
 	}
 
 	/**
@@ -2219,16 +2187,6 @@ class EnvelopesProcessor {
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
 								this._missingEnvelopeLogTimes[lastLogKey] = currentBeat;
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'Envelope definition not found',
-									data: { 
-										envelopeId: timelineEnvelope.envelopeId, 
-										availableIds: this.envelopes.map(e => e.id),
-										timelineEnvelopeTrackId: timelineEnvelope.trackId,
-									targetTrackId: timelineEnvelope.targetTrackId
-									}
-								});
 							}
 						}
 					}
@@ -2431,22 +2389,6 @@ class ProjectManager {
 				this.timelineTrackToAudioTracks.set(timelineTrackId, audioTrackIds);
 			}
 		}
-		
-		// Debug: Log project load
-		this.processor.port.postMessage({
-			type: 'debug',
-			message: 'ProjectManager.loadProject',
-			data: {
-				viewMode,
-				isArrangementView: this.isArrangementView,
-				tracksCount: (tracks && tracks.length) ? tracks.length : 0,
-				eventsCount: this.events.length,
-				timelineLength: (timelineData && timelineData.totalLength) ? timelineData.totalLength : 0,
-				clipsCount: (timelineData && timelineData.clips && timelineData.clips.length) ? timelineData.clips.length : 0,
-				firstEvent: this.events[0] || null,
-				firstTrack: (tracks && tracks.length > 0) ? tracks[0] : null
-			}
-		});
 		
 		// Set base meter track (defaults to first track if not specified)
 		this.baseMeterTrackId = baseMeterTrackId || ((tracks && tracks.length > 0 && tracks[0] && tracks[0].id) ? tracks[0].id : null);
@@ -2779,6 +2721,34 @@ class SynthManager {
 		this.processor = processor;
 		this.synths = new Map();
 		this.sampleBuffers = new Map(); // Store sample buffers by trackId
+		this.voicePools = new Map(); // Map of trackId -> array of synth voices for polyphony
+		this.maxVoices = 8; // Maximum number of simultaneous voices per track
+	}
+	
+	/**
+	 * Get base meter for a track
+	 * @param {string} trackId - The track ID
+	 * @returns {number} Base meter (default: 4)
+	 */
+	getBaseMeterForTrack(trackId) {
+		const track = this.processor.projectManager.getTrack(trackId);
+		if (!track) return 4;
+		
+		// Check if this is a pattern instrument (ID starts with __pattern_)
+		if (track.id && track.id.startsWith('__pattern_')) {
+			const lastUnderscore = track.id.lastIndexOf('_');
+			if (lastUnderscore > '__pattern_'.length) {
+				const patternId = track.id.substring('__pattern_'.length, lastUnderscore);
+				const patterns = this.processor.projectManager.patterns;
+				const pattern = (patterns) ? patterns.find(p => p.id === patternId) : null;
+				if (pattern) {
+					return pattern.baseMeter || 4;
+				}
+			}
+		}
+		
+		// Default fallback
+		return 4;
 	}
 
 	/**
@@ -2827,45 +2797,7 @@ class SynthManager {
 					if (storedBuffer && synth.setAudioBuffer) {
 						synth.setAudioBuffer(storedBuffer);
 					}
-					// Debug: Log synth creation
-					this.processor.port.postMessage({
-						type: 'debug',
-						message: 'SynthManager: Created synth',
-						data: {
-							trackId,
-							patternId: patternId || 'none',
-							instrumentType: instrumentType,
-							totalSynths: this.synths.size,
-							hasSampleBuffer: !!storedBuffer
-						}
-					});
-				} else {
-					// Debug: Log synth creation failure
-					this.processor.port.postMessage({
-						type: 'debug',
-						message: 'SynthManager: Failed to create synth',
-						data: {
-							trackId,
-							patternId: patternId || 'none',
-							instrumentType: instrumentType,
-							settings: settings,
-							trackInstrumentType: track.instrumentType,
-							trackSettings: track.settings,
-							trackInstrumentSettings: track.instrumentSettings
-						}
-					});
 				}
-			} else {
-				// Debug: Log track not found
-				this.processor.port.postMessage({
-					type: 'debug',
-					message: 'SynthManager: Track not found',
-					data: {
-						trackId,
-						patternId: patternId || 'none',
-						availableTracks: (this.processor.projectManager.tracks) ? this.processor.projectManager.tracks.map(t => ({ id: t.id, instrumentType: t.instrumentType })) : []
-					}
-				});
 			}
 		} else if (patternId && !synth._patternId) {
 			// Update patternId if not set
@@ -2888,6 +2820,31 @@ class SynthManager {
 	 * @param {string} trackId - The track ID
 	 */
 	removeSynth(trackId) {
+		// Stop all active voices before removing (if using voice pool)
+		if (this.voicePools.has(trackId)) {
+			const voicePool = this.voicePools.get(trackId);
+			for (const voice of voicePool) {
+				if (voice && voice.release) {
+					voice.release();
+				} else if (voice && voice.stop) {
+					voice.stop();
+				}
+			}
+			this.voicePools.delete(trackId);
+		}
+		
+		// Stop the main synth if it exists
+		const synth = this.synths.get(trackId);
+		if (synth) {
+			if (synth.release) {
+				synth.release();
+			} else if (synth.stop) {
+				synth.stop();
+			} else if (synth.stopAllVoices) {
+				synth.stopAllVoices();
+			}
+		}
+		
 		this.synths.delete(trackId);
 	}
 
@@ -2904,9 +2861,28 @@ class SynthManager {
 	 * @param {Object} settings - Settings to update
 	 */
 	updateSynthSettings(trackId, settings) {
+		// Add BPM to settings if available
+		if (this.processor.playbackController) {
+			const bpm = this.processor.playbackController.getBPM();
+			if (bpm) {
+				settings.bpm = bpm;
+			}
+		}
+		
+		// Update main synth if it exists
 		const synth = this.synths.get(trackId);
 		if (synth && synth.updateSettings) {
 			synth.updateSettings(settings);
+		}
+		
+		// Also update all voices in the voice pool (for polyphonic synths with overlap)
+		if (this.voicePools.has(trackId)) {
+			const voicePool = this.voicePools.get(trackId);
+			for (const voice of voicePool) {
+				if (voice && voice.updateSettings) {
+					voice.updateSettings(settings);
+				}
+			}
 		}
 	}
 
@@ -2917,43 +2893,98 @@ class SynthManager {
 	 * @param {number} pitch - Note pitch
 	 * @param {string} patternId - Optional pattern ID from event
 	 * @param {number} duration - Optional note duration in beats
+	 * @param {number|null} eventChoke - DEPRECATED: Choke functionality removed
 	 */
-	triggerNote(trackId, velocity, pitch, patternId = null, duration = null) {
-		const synth = this.getOrCreateSynth(trackId, patternId);
-		if (synth && synth.trigger) {
-			// Update synth settings with current BPM if available
-			if (this.processor.playbackController) {
-				const bpm = this.processor.playbackController.getBPM();
-				if (bpm && synth.updateSettings) {
-					synth.updateSettings({ bpm });
+	triggerNote(trackId, velocity, pitch, patternId = null, duration = null, eventChoke = null) {
+		const track = this.processor.projectManager.getTrack(trackId);
+		if (!track) {
+			return;
+		}
+		
+		// Always use polyphonic voices (overlap always enabled)
+		{
+			// Get or create voice pool for this track
+			if (!this.voicePools.has(trackId)) {
+				this.voicePools.set(trackId, []);
+			}
+			const voicePool = this.voicePools.get(trackId);
+			
+			// Find an inactive voice or create a new one
+			let voice = voicePool.find(v => !v.isActive);
+			
+			if (!voice && voicePool.length < this.maxVoices) {
+				// Create a new voice
+				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
+				if (this.processor.playbackController) {
+					const bpm = this.processor.playbackController.getBPM();
+					if (bpm) {
+						settings.bpm = bpm;
+					}
+				}
+				voice = this.processor.synthFactory.create(track.instrumentType, settings);
+				if (voice) {
+					// Set sample buffer if available
+					const storedBuffer = this.sampleBuffers.get(trackId);
+					if (storedBuffer && voice.setAudioBuffer) {
+						voice.setAudioBuffer(storedBuffer);
+					}
+					voicePool.push(voice);
 				}
 			}
 			
-			// Debug: Log synth trigger (disabled for cleaner logs)
-			// this.processor.port.postMessage({
-			// 	type: 'debug',
-			// 	message: 'SynthManager: Triggering note',
-			// 	data: {
-			// 		trackId,
-			// 		patternId: patternId || 'none',
-			// 		velocity,
-			// 		pitch,
-			// 		duration,
-			// 		synthExists: !!synth,
-			// 		hasTrigger: !!synth.trigger,
-			// 		totalSynths: this.synths.size
-			// 	}
-			// });
-			synth.trigger(velocity, pitch, duration);
+			// If no voice available, use the oldest active voice (steal it)
+			// OR if pool is empty and we couldn't create one, try to create one anyway (shouldn't happen, but safety check)
+			if (!voice) {
+				if (voicePool.length > 0) {
+					voice = voicePool[0]; // Use first voice (oldest)
+				} else {
+					// Pool is empty and we couldn't create one - try one more time
+					// This shouldn't happen, but ensures we always have a voice if possible
+					const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
+					if (this.processor.playbackController) {
+						const bpm = this.processor.playbackController.getBPM();
+						if (bpm) {
+							settings.bpm = bpm;
+						}
+					}
+					voice = this.processor.synthFactory.create(track.instrumentType, settings);
+					if (voice) {
+						const storedBuffer = this.sampleBuffers.get(trackId);
+						if (storedBuffer && voice.setAudioBuffer) {
+							voice.setAudioBuffer(storedBuffer);
+						}
+						voicePool.push(voice);
+					}
+				}
+			}
+			
+			if (voice && voice.trigger) {
+				// Update settings with current BPM
+				if (this.processor.playbackController) {
+					const bpm = this.processor.playbackController.getBPM();
+					if (bpm && voice.updateSettings) {
+						voice.updateSettings({ bpm });
+					}
+				}
+				voice.trigger(velocity, pitch, duration);
+			}
 		}
 	}
 
 	/**
 	 * Get all synths (for mixing)
-	 * @returns {Map} Map of trackId -> synth instance
+	 * @returns {Map} Map of trackId -> synth instance or array of voices
 	 */
 	getAllSynths() {
-		return this.synths;
+		const allSynths = new Map();
+		
+		// Always use voice pools (polyphonic with overlap)
+		for (const [trackId, voicePool] of this.voicePools.entries()) {
+			// Mix all active voices together
+			allSynths.set(trackId, voicePool);
+		}
+		
+		return allSynths;
 	}
 
 	/**
@@ -2961,9 +2992,18 @@ class SynthManager {
 	 * Useful for pattern editor mode where we want to stop all sounds when stopping playback
 	 */
 	stopAllSynths() {
+		// Stop regular synths
 		for (const synth of this.synths.values()) {
 			if (synth && synth.isActive !== undefined) {
 				synth.isActive = false;
+			}
+		}
+		// Stop all voices in voice pools
+		for (const voicePool of this.voicePools.values()) {
+			for (const voice of voicePool) {
+				if (voice && voice.isActive !== undefined) {
+					voice.isActive = false;
+				}
 			}
 		}
 	}
@@ -2973,9 +3013,18 @@ class SynthManager {
 	 * @returns {boolean} True if any synth is active
 	 */
 	hasActiveSynths() {
+		// Check regular synths
 		for (const synth of this.synths.values()) {
 			if (synth && synth.isActive === true) {
 				return true;
+			}
+		}
+		// Check voice pools
+		for (const voicePool of this.voicePools.values()) {
+			for (const voice of voicePool) {
+				if (voice && voice.isActive === true) {
+					return true;
+				}
 			}
 		}
 		return false;
@@ -3073,195 +3122,194 @@ class AudioMixer {
 		
 		const hasSoloedTrack = this.trackStateManager.hasAnySoloedTrack();
 		
-		for (const [trackId, synth] of synths.entries()) {
-			if (synth.process) {
-				// Early mute check - skip expensive lookups if already muted (pattern view only)
-				const isMuted = this.trackStateManager.isMuted(trackId);
-				if (isMuted && !isArrangementView) {
-					continue; // Skip muted tracks in pattern view
+		for (const [trackId, synthOrVoices] of synths.entries()) {
+			// Handle voice pools (polyphonic) vs single synth (monophonic)
+			const isVoicePool = Array.isArray(synthOrVoices);
+			const voices = isVoicePool ? synthOrVoices : [synthOrVoices];
+			
+			// Early mute check - skip expensive lookups if already muted (pattern view only)
+			const isMuted = this.trackStateManager.isMuted(trackId);
+			if (isMuted && !isArrangementView) {
+				continue; // Skip muted tracks in pattern view
+			}
+			
+			// Mix all voices for this track
+			let trackSample = 0;
+			for (const synth of voices) {
+				if (synth && synth.process) {
+					trackSample += synth.process();
 				}
+			}
+			
+			// Skip if no active voices
+			if (trackSample === 0 && voices.every(v => !v || !v.isActive)) {
+				continue;
+			}
+			
+			// Use cached timeline tracks lookup
+			const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
 				
-				// Use cached timeline tracks lookup
-				const timelineTracks = this._trackToTimelineTracks.get(trackId) || [];
+			// Check timeline track mute/solo state (for arrangement view)
+			// For mute: Check if there's at least one active clip on a non-muted timeline track
+			// For solo: Check if there's at least one active clip on a soloed timeline track
+			let isTimelineMuted = false;
+			let isTimelineSoloed = false;
+			if (isArrangementView && timelineTracks.length > 0) {
+				// Use cached pattern ID
+				const patternId = this._trackToPatternId.get(trackId);
 				
-				// Check timeline track mute/solo state (for arrangement view)
-				// For mute: Check if there's at least one active clip on a non-muted timeline track
-				// For solo: Check if there's at least one active clip on a soloed timeline track
-				let isTimelineMuted = false;
-				let isTimelineSoloed = false;
-				if (isArrangementView && timelineTracks.length > 0) {
-					// Use cached pattern ID
-					const patternId = this._trackToPatternId.get(trackId);
+				// Cache timeline reference to avoid repeated property access
+				const timeline = this.processor?.projectManager?.timeline;
+				const timelineTracksArray = timeline?.tracks;
+				
+				// Use cached active clips (updated periodically)
+				let activeClips = [];
+				if (patternId) {
+					const cached = this._activeClipsCache.get(patternId);
+					if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
+						activeClips = cached.clips;
+					} else if (timeline?.clips) {
+						// Fallback: calculate if cache is stale
+						activeClips = timeline.clips.filter((clip) => {
+							return clip.patternId === patternId &&
+							       currentBeat >= clip.startBeat &&
+							       currentBeat < clip.startBeat + clip.duration;
+						});
+					}
 					
-					// Cache timeline reference to avoid repeated property access
-					const timeline = this.processor?.projectManager?.timeline;
-					const timelineTracksArray = timeline?.tracks;
-					
-					// Use cached active clips (updated periodically)
-					let activeClips = [];
-					if (patternId) {
-						const cached = this._activeClipsCache.get(patternId);
-						if (cached && Math.abs(currentBeat - cached.beat) < this._cacheUpdateInterval * 2) {
-							activeClips = cached.clips;
-						} else if (timeline?.clips) {
-							// Fallback: calculate if cache is stale
-							activeClips = timeline.clips.filter((clip) => {
-								return clip.patternId === patternId &&
-								       currentBeat >= clip.startBeat &&
-								       currentBeat < clip.startBeat + clip.duration;
+					if (activeClips.length > 0 && timelineTracksArray) {
+						// Check if all active clips are on muted timeline tracks
+						const allClipsMuted = activeClips.every((clip) => {
+							const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+							return clipTrack?.mute === true;
+						});
+						
+						// If any timeline track is soloed, play if ANY active clip is on a soloed track
+						// This allows soloed tracks to play even if other non-soloed clips are active
+						if (hasSoloedTimelineTrack) {
+							// Solo mode: play if ANY active clip is on a soloed track
+							const hasSoloedClip = activeClips.some((clip) => {
+								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+								return clipTrack?.solo === true;
 							});
+							isTimelineSoloed = hasSoloedClip;
+						} else {
+							// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
+							const hasSoloedClip = activeClips.some((clip) => {
+								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
+								return clipTrack?.solo === true;
+							});
+							isTimelineSoloed = hasSoloedClip;
 						}
 						
-						if (activeClips.length > 0 && timelineTracksArray) {
-							// Check if all active clips are on muted timeline tracks
-							const allClipsMuted = activeClips.every((clip) => {
-								const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-								return clipTrack?.mute === true;
+						isTimelineMuted = allClipsMuted;
+						
+						// Debug: Log mute/solo decision for this track (track-specific, throttled)
+						const debugKey = `${trackId}_${patternId}`;
+						const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
+						const stateChanged = !lastDebugState || 
+						                    lastDebugState.muted !== isTimelineMuted || 
+						                    lastDebugState.soloed !== isTimelineSoloed ||
+						                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
+						
+						if (stateChanged) {
+							if (!this._lastDebugStates) {
+								this._lastDebugStates = new Map();
+							}
+							this._lastDebugStates.set(debugKey, {
+								muted: isTimelineMuted,
+								soloed: isTimelineSoloed,
+								beat: currentBeat
 							});
 							
-							// If any timeline track is soloed, play if ANY active clip is on a soloed track
-							// This allows soloed tracks to play even if other non-soloed clips are active
-							if (hasSoloedTimelineTrack) {
-								// Solo mode: play if ANY active clip is on a soloed track
-								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-									return clipTrack?.solo === true;
-								});
-								isTimelineSoloed = hasSoloedClip;
-							} else {
-								// No solo mode: check if any active clip is on a soloed timeline track (shouldn't happen, but for safety)
-								const hasSoloedClip = activeClips.some((clip) => {
-									const clipTrack = timelineTracksArray.find((t) => t.id === clip.trackId);
-									return clipTrack?.solo === true;
-								});
-								isTimelineSoloed = hasSoloedClip;
-							}
+							const clipInfo = activeClips.map((clip) => {
+								const clipTrack = timelineTracksArray?.find((t) => t.id === clip.trackId);
+								return {
+									clipId: clip.id,
+									trackId: clip.trackId,
+									trackName: clipTrack?.name || 'unknown',
+									mute: clipTrack?.mute || false,
+									solo: clipTrack?.solo || false,
+									startBeat: clip.startBeat,
+									duration: clip.duration,
+									clipEndBeat: clip.startBeat + clip.duration
+								};
+							});
 							
-							isTimelineMuted = allClipsMuted;
-							
-							// Debug: Log mute/solo decision for this track (track-specific, throttled)
-							const debugKey = `${trackId}_${patternId}`;
-							const lastDebugState = (this._lastDebugStates) ? this._lastDebugStates.get(debugKey) : null;
-							const stateChanged = !lastDebugState || 
-							                    lastDebugState.muted !== isTimelineMuted || 
-							                    lastDebugState.soloed !== isTimelineSoloed ||
-							                    (currentBeat - lastDebugState.beat) > 1.0; // Log at most once per beat per track
-							
-							if (stateChanged) {
-								if (!this._lastDebugStates) {
-									this._lastDebugStates = new Map();
-								}
-								this._lastDebugStates.set(debugKey, {
-									muted: isTimelineMuted,
-									soloed: isTimelineSoloed,
-									beat: currentBeat
-								});
-								
-								const clipInfo = activeClips.map((clip) => {
-									const clipTrack = timelineTracksArray?.find((t) => t.id === clip.trackId);
-									return {
-										clipId: clip.id,
-										trackId: clip.trackId,
-										trackName: clipTrack?.name || 'unknown',
-										mute: clipTrack?.mute || false,
-										solo: clipTrack?.solo || false,
-										startBeat: clip.startBeat,
-										duration: clip.duration,
-										clipEndBeat: clip.startBeat + clip.duration
-									};
-								});
-								
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'AudioMixer: Mute/Solo Check',
-									data: {
-										currentBeat: currentBeat.toFixed(3),
-										trackId,
-										patternId,
-										activeClips: clipInfo,
-										activeClipsCount: activeClips.length,
-										allClipsMuted,
-										isTimelineMuted,
-										isTimelineSoloed,
-										hasSoloedTimelineTrack,
-										willSkip: isTimelineMuted || (hasSoloedTimelineTrack && !isTimelineSoloed),
-										skipReason: isTimelineMuted ? 'muted' : (hasSoloedTimelineTrack && !isTimelineSoloed ? 'not-soloed' : 'none')
-									}
-								});
-							}
-						} else {
-							// No active clips - mute this audio track
-							isTimelineMuted = true;
 						}
 					} else {
-						// Fallback: If any timeline track is muted, mute this audio track
-						isTimelineMuted = timelineTracks.some((t) => t.mute === true);
-						// If any timeline track is soloed, this audio track is soloed
-						isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
+						// No active clips - mute this audio track
+						isTimelineMuted = true;
 					}
+				} else {
+					// Fallback: If any timeline track is muted, mute this audio track
+					isTimelineMuted = timelineTracks.some((t) => t.mute === true);
+					// If any timeline track is soloed, this audio track is soloed
+					isTimelineSoloed = timelineTracks.some((t) => t.solo === true);
 				}
-				
-				// Get solo state (isMuted already declared above)
-				const isSoloed = this.trackStateManager.isSoloed(trackId);
-				
-				// Combine mute states: muted if audio track is muted OR any timeline track is muted
-				const shouldMute = isMuted || isTimelineMuted;
-				
-				// Skip if muted
-				if (shouldMute) continue;
-				
-				// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
-				// Otherwise, use audio track solo state
-				if (isArrangementView && hasSoloedTimelineTrack) {
-					if (!isTimelineSoloed) continue;
-				} else if (hasSoloedTrack && !isSoloed) {
-					continue;
-				}
-				
-				// Get base track volume and pan
-				let trackVolume = this.trackStateManager.getVolume(trackId);
-				let trackPan = this.trackStateManager.getPan(trackId);
-				
-				// Apply cached timeline track volume
-				const timelineVolume = this._trackToTimelineVolume.get(trackId);
-				if (timelineVolume !== undefined) {
-					trackVolume *= timelineVolume;
-				}
-				
-				// Use cached pattern ID
-				let patternId = this._trackToPatternId.get(trackId);
-				// Fallback: check if synth has a stored patternId (from event)
-				if (!patternId && synth._patternId) {
-					patternId = synth._patternId;
-				}
-				
-				// Get envelope values for this track at current position
-				// Initialize with default values
-				let envelopeValues = {
-					volume: 1.0,
-					filter: 1.0,
-					pitch: 1.0,
-					pan: 0.0
-				};
-				
-				if (this.envelopesProcessor) {
-					envelopeValues = this.envelopesProcessor.getActiveEnvelopeValues(
-						trackId,
-						currentBeat,
-						isArrangementView
-					);
+			}
+			
+			// Get solo state (isMuted already declared above)
+			const isSoloed = this.trackStateManager.isSoloed(trackId);
+			
+			// Combine mute states: muted if audio track is muted OR any timeline track is muted
+			const shouldMute = isMuted || isTimelineMuted;
+			
+			// Skip if muted
+			if (shouldMute) continue;
+			
+			// Solo logic: if any timeline track is soloed, only play if this audio track belongs to a soloed timeline track
+			// Otherwise, use audio track solo state
+			if (isArrangementView && hasSoloedTimelineTrack) {
+				if (!isTimelineSoloed) continue;
+			} else if (hasSoloedTrack && !isSoloed) {
+				continue;
+			}
+			
+			// Get base track volume and pan
+			let trackVolume = this.trackStateManager.getVolume(trackId);
+			let trackPan = this.trackStateManager.getPan(trackId);
+			
+			// Apply cached timeline track volume
+			const timelineVolume = this._trackToTimelineVolume.get(trackId);
+			if (timelineVolume !== undefined) {
+				trackVolume *= timelineVolume;
+			}
+			
+			// Use cached pattern ID
+			let patternId = this._trackToPatternId.get(trackId);
+			// Fallback: check if first voice has a stored patternId (from event)
+			if (!patternId && voices[0] && voices[0]._patternId) {
+				patternId = voices[0]._patternId;
+			}
+			
+			// Get envelope values for this track at current position
+			// Initialize with default values
+			let envelopeValues = {
+				volume: 1.0,
+				filter: 1.0,
+				pitch: 1.0,
+				pan: 0.0
+			};
+			
+			if (this.envelopesProcessor) {
+				envelopeValues = this.envelopesProcessor.getActiveEnvelopeValues(
+					trackId,
+					currentBeat,
+					isArrangementView
+				);
 
-					// Apply envelope values
-					trackVolume *= envelopeValues.volume;
-					trackPan += envelopeValues.pan;
-					trackPan = Math.max(-1, Math.min(1, trackPan)); // Clamp pan
-				}
-				
-				// Get synth sample
-				let synthSample = synth.process();
-				
-				// Apply filter envelope (if active)
-				if (envelopeValues.filter !== 1.0) {
+				// Apply envelope values
+				trackVolume *= envelopeValues.volume;
+				trackPan += envelopeValues.pan;
+				trackPan = Math.max(-1, Math.min(1, trackPan)); // Clamp pan
+			}
+			
+			// Use the mixed track sample (already calculated above)
+			let synthSample = trackSample;
+			
+			// Apply filter envelope (if active)
+			if (envelopeValues.filter !== 1.0) {
 					// Filter envelope modulates filter cutoff
 					// envelopeValues.filter is 0-1, map to cutoff frequency
 					// Lower filter value = lower cutoff (darker sound)
@@ -3277,114 +3325,53 @@ class AudioMixer {
 					// Apply simple lowpass filter
 					synthSample = this.applyLowpassFilter(synthSample, cutoff, 0.5, filterState, trackId);
 					
-					// Debug: Log filter envelope application (occasionally)
-					if (this.processor && this.processor.port && (!this._lastFilterLog || (currentBeat - this._lastFilterLog) > 4)) {
-						this._lastFilterLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Filter envelope being applied',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								filterValue: envelopeValues.filter.toFixed(3),
-								cutoff: cutoff.toFixed(0)
-							}
-						});
-					}
 				}
-				
-				// Apply pitch envelope (if active)
-				if (envelopeValues.pitch !== 1.0) {
+			
+			// Apply pitch envelope (if active)
+			if (envelopeValues.pitch !== 1.0) {
 					// Pitch envelope modulates pitch
 					// envelopeValues.pitch is a multiplier (0.5 = down octave, 2.0 = up octave)
 					// Apply as simple frequency modulation
 					synthSample = this.applyPitchShift(synthSample, envelopeValues.pitch, trackId);
 					
-					// Debug: Log pitch envelope application (occasionally)
-					if (this.processor && this.processor.port && (!this._lastPitchLog || (currentBeat - this._lastPitchLog) > 4)) {
-						this._lastPitchLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Pitch envelope being applied',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								pitchMultiplier: envelopeValues.pitch.toFixed(3)
-							}
-						});
-					}
 				}
+			
+			// Apply effects to this track's audio
+			if (this.effectsProcessor) {
 				
-				// Apply effects to this track's audio
-				if (this.effectsProcessor) {
-					// Debug: Log that we're checking for effects (occasionally)
-					if (this.processor && this.processor.port && (!this._lastEffectCheckLog || (currentBeat - this._lastEffectCheckLog) > 4)) {
-						this._lastEffectCheckLog = currentBeat;
-						this.processor.port.postMessage({
-							type: 'debug',
-							message: 'Checking for effects',
-							data: {
-								trackId,
-								patternId,
-								currentBeat: currentBeat.toFixed(2),
-								isArrangementView
-							}
-						});
-					}
-					
-					const activeEffects = this.effectsProcessor.getActiveEffects(
-						trackId,
-						currentBeat,
-						isArrangementView
-					);
-					
-					// Debug: Log when effects are found (occasionally to avoid spam)
-					if (activeEffects && activeEffects.length > 0 && this.processor && this.processor.port) {
-						// Only log occasionally to avoid console spam
-						if (!this._lastEffectLogTime || (currentBeat - this._lastEffectLogTime) > 4) {
-							this._lastEffectLogTime = currentBeat;
-							this.processor.port.postMessage({
-								type: 'debug',
-								message: 'Effects being applied',
-								data: {
-									trackId,
-									currentBeat: currentBeat.toFixed(2),
-									activeEffectsCount: activeEffects.length,
-									effectTypes: activeEffects.map(e => e.type)
-								}
-							});
-						}
-					}
-					
-					synthSample = this.effectsProcessor.processSample(synthSample, activeEffects);
-				}
+				const activeEffects = this.effectsProcessor.getActiveEffects(
+					trackId,
+					currentBeat,
+					isArrangementView
+				);
 				
-				// Apply track volume
-				synthSample *= trackVolume;
 				
-				// Pan calculation using constant power panning
-				// -1 = full left, 0 = center, 1 = full right
-				// This maintains constant perceived volume across the pan range
-				// Cache pan calculations per track to avoid recalculating every sample
-				let panGains = this._panGainsCache?.get(trackId);
-				if (!this._panGainsCache) {
-					this._panGainsCache = new Map();
-				}
-				if (!panGains || panGains.pan !== trackPan) {
-					const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
-					panGains = {
-						pan: trackPan,
-						leftGain: Math.cos(panRadians),
-						rightGain: Math.sin(panRadians)
-					};
-					this._panGainsCache.set(trackId, panGains);
-				}
-				
-				leftSample += synthSample * panGains.leftGain;
-				rightSample += synthSample * panGains.rightGain;
+				synthSample = this.effectsProcessor.processSample(synthSample, activeEffects);
 			}
+				
+			// Apply track volume
+			synthSample *= trackVolume;
+			
+			// Pan calculation using constant power panning
+			// -1 = full left, 0 = center, 1 = full right
+			// This maintains constant perceived volume across the pan range
+			// Cache pan calculations per track to avoid recalculating every sample
+			let panGains = this._panGainsCache?.get(trackId);
+			if (!this._panGainsCache) {
+				this._panGainsCache = new Map();
+			}
+			if (!panGains || panGains.pan !== trackPan) {
+				const panRadians = (trackPan + 1) * (Math.PI / 4); // Map -1..1 to 0..π/2
+				panGains = {
+					pan: trackPan,
+					leftGain: Math.cos(panRadians),
+					rightGain: Math.sin(panRadians)
+				};
+				this._panGainsCache.set(trackId, panGains);
+			}
+			
+			leftSample += synthSample * panGains.leftGain;
+			rightSample += synthSample * panGains.rightGain;
 		}
 
 		return {
@@ -3694,15 +3681,17 @@ class AudioProcessor {
 		const output = outputs[0];
 		const bufferLength = output[0].length;
 
-		// Schedule events ahead of time
-		this.processor.eventScheduler.scheduleEvents();
-
 		// Pre-calculate samples per beat for efficiency
 		const samplesPerBeat = this.processor.playbackController.samplesPerBeat;
 		const startTime = this.processor.currentTime;
 		
+		// Schedule events ahead of time (do this AFTER getting startTime to ensure we schedule for the current position)
+		// This ensures events are scheduled before we process the buffer
+		this.processor.eventScheduler.scheduleEvents();
+		
 		// Process audio
 		for (let i = 0; i < bufferLength; i++) {
+			// Use Math.floor to match how events are scheduled (eventSampleTime = Math.floor(...))
 			const sampleTime = Math.floor(startTime + i);
 			// Calculate currentBeat more efficiently (avoid division every sample)
 			const currentBeat = (startTime + i) / samplesPerBeat;
@@ -3710,6 +3699,7 @@ class AudioProcessor {
 			// Check for events at this sample time
 			const eventsAtTime = this.processor.eventScheduler.getEventsAtTime(sampleTime);
 			if (eventsAtTime) {
+				
 				// Get pattern length once for all events in this batch
 				const patternLength = this.processor.eventScheduler.getPatternLength();
 				for (const event of eventsAtTime) {
@@ -4093,7 +4083,10 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	}
 
 	updateTrackSettings(trackId, settings) {
+		// Update track settings in project manager
 		this.projectManager.updateTrackSettings(trackId, settings);
+		
+		// Update synth settings - this will update both main synth and voice pools
 		this.synthManager.updateSynthSettings(trackId, settings);
 	}
 
@@ -4103,8 +4096,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			// Update track state
 			this.trackState.updateTrack(trackId, updatedTrack);
 			
-		// If instrument type changed, create new synth to replace old one seamlessly
-		if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
+			// If instrument type changed, create new synth to replace old one seamlessly
+			if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
 			// Extract patternId from trackId if it's a pattern track
 			// Format: __pattern_{patternId}_{instrumentId}
 			let patternId = null;
@@ -4301,7 +4294,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		// Extract patternId from event if available (for effects/envelopes)
 		const patternId = event.patternId || null;
 		const duration = event.duration || null;
-		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration);
+		
+		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration, null);
 	}
 }
 
@@ -4316,6 +4310,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
  * - Realistic pitch envelope (quick drop like real drum head)
  * - Natural compression/saturation characteristics
  */
+
 
 class KickSynth {
 	constructor(settings, sampleRate) {
@@ -4372,7 +4367,11 @@ class KickSynth {
 		const decay = (this.settings.decay || 0.4) * this.sampleRate;
 		const sustain = this.settings.sustain || 0.0;
 		const release = (this.settings.release || 0.15) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope (still used for envelope phases)
+		const totalNoteLength = attack + decay + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Calculate pitch multiplier (base pitch is C4 = MIDI 60, matching default)
 		const basePitch = 60;
@@ -4469,6 +4468,7 @@ class KickSynth {
 		
 		// ADSR envelope for clean tonal body
 		// Use smoother curves to prevent clicks
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = sustain;
 		
@@ -4497,12 +4497,13 @@ class KickSynth {
 		} else {
 			envelope = 0;
 		}
-
+		
 		// Ensure envelope is never negative and clamp to [0, 1]
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		// Phase accumulation is done above when calculating sine waves
 		this.envelopePhase++;
+		this.triggerTime++;
 		
 		// Apply envelope to clean tonal body
 		// Increased gain to match other drums' volume levels
@@ -4588,7 +4589,7 @@ class SnareSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		this.noiseBuffer = new Float32Array(44100);
+				this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
 		}
@@ -4614,7 +4615,7 @@ class SnareSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
-		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+				this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -4627,7 +4628,12 @@ class SnareSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.15) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Snare = rimshot structure + strong snare wire rattle
 		
@@ -4680,6 +4686,7 @@ class SnareSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		if (this.envelopePhase < attack) {
 			// Very fast attack for sharp transient
 			const attackPhase = this.envelopePhase / attack;
@@ -4720,14 +4727,14 @@ class SnareSynth {
 		mainEnvelope = Math.max(0, Math.min(1, mainEnvelope));
 
 		// Apply separate envelopes - body decays much faster
+		// Apply choke fade-out to both envelopes
 		const bodyComponent = body * bodyEnvelope;
-		const otherComponents = (ping + snareWireNoise + filteredNoise) * mainEnvelope;
+		const otherComponents = (ping + snareWireNoise + filteredNoise) * mainEnvelope ;
 		let sample = bodyComponent + otherComponents;
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * this.velocity * 0.7;
+				let output = sample * this.velocity * 0.7;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -4767,7 +4774,7 @@ class HiHatSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		this.noiseBuffer = new Float32Array(44100);
+				this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
 		}
@@ -4796,7 +4803,7 @@ class HiHatSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
-		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+				this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Reset filter state for clean retrigger
 		if (this.hpFilterState) {
@@ -4815,7 +4822,12 @@ class HiHatSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.05) * this.sampleRate;
 		const release = (this.settings.release || 0.01) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// High-frequency noise (metallic)
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
@@ -4853,6 +4865,7 @@ class HiHatSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -4877,12 +4890,13 @@ class HiHatSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -4925,6 +4939,7 @@ class ClapSynth {
 		this.settings = settings || {};
 		this.bursts = [];
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		// Pre-generated noise buffer for consistent sound
 		this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
@@ -4949,6 +4964,7 @@ class ClapSynth {
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.bursts = [];
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// 2-3 percussive impacts very close together (like hands clapping)
 		// Use tight timing to create that characteristic clap sound
@@ -4979,7 +4995,12 @@ class ClapSynth {
 		const attack = (this.settings.attack || 0.0005) * this.sampleRate; // Even faster attack
 		const decay = (this.settings.decay || 0.02) * this.sampleRate; // Much shorter decay for sharp clap
 		const release = (this.settings.release || 0.01) * this.sampleRate; // Very short release
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 		const fadeOutSamples = Math.max(0.005 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
@@ -5010,6 +5031,7 @@ class ClapSynth {
 			}
 			
 			// Sharp, percussive ADSR envelope
+			// Calculate envelope normally based on actual envelope phase (not affected by choke)
 			let envelope = 0;
 			let decayEndValue = 0;
 			
@@ -5040,7 +5062,9 @@ class ClapSynth {
 				envelope = fadeStartValue * Math.exp(-fadePhase * 15);
 			}
 			
-			envelope = Math.max(0, Math.min(1, envelope));
+			// Apply choke fade-out if choke time has elapsed
+			// Choke cuts off the note at a specific time point, regardless of envelope phase
+						envelope = Math.max(0, Math.min(1, envelope));
 			
 			// Bandpass filtering for clap character (emphasize mid-high frequencies)
 			// Initialize filter states for this burst if needed
@@ -5092,7 +5116,8 @@ class ClapSynth {
 			burst.phase++;
 		}
 		
-		// Remove finished bursts
+		// Increment global trigger time for choke calculation
+				// Remove finished bursts
 		this.bursts = this.bursts.filter(b => b.envelopePhase < extendedDuration);
 		if (this.bursts.length === 0) {
 			this.isActive = false;
@@ -5135,7 +5160,7 @@ class TomSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		// Retrigger fade state
+				// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
@@ -5156,7 +5181,7 @@ class TomSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 50;
-		
+				
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
 			this.retriggerFadePhase = 0;
@@ -5168,7 +5193,12 @@ class TomSynth {
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.4) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Calculate pitch multiplier (base pitch is D3 = MIDI 50)
 		const basePitch = 50;
@@ -5185,7 +5215,7 @@ class TomSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.3); // 100ms minimum fade-out
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
-		// ADSR envelope - FIXED: Release fades from end-of-decay value
+		// ADSR envelope - calculate normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -5211,12 +5241,13 @@ class TomSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.4;
+				let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -5257,6 +5288,7 @@ class CymbalSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
@@ -5286,6 +5318,7 @@ class CymbalSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Reset filter state for clean retrigger
@@ -5305,7 +5338,11 @@ class CymbalSynth {
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.25) * this.sampleRate; // Tighter decay
 		const release = (this.settings.release || 0.2) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Clean noise source
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
@@ -5343,6 +5380,7 @@ class CymbalSynth {
 		const fadeOutSamples = Math.max(0.04 * this.sampleRate, release * 0.25);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -5371,8 +5409,7 @@ class CymbalSynth {
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		// Output gain (gain compensation already applied to sample)
+				// Output gain (gain compensation already applied to sample)
 		let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
@@ -5406,6 +5443,7 @@ class CymbalSynth {
  * Shaker Synth
  * Transient-shaped noise for shaker/rattle character
  */
+
 
 class ShakerSynth {
 	constructor(settings, sampleRate) {
@@ -5462,7 +5500,11 @@ class ShakerSynth {
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.3) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Transient-shaped noise
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
@@ -5499,6 +5541,7 @@ class ShakerSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -5569,6 +5612,7 @@ class RimshotSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
@@ -5598,6 +5642,7 @@ class RimshotSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Reset filter state for clean retrigger
@@ -5617,7 +5662,12 @@ class RimshotSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.08) * this.sampleRate;
 		const release = (this.settings.release || 0.05) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Rimshot = sharp transient + bright tonal component + filtered noise
 		
@@ -5666,6 +5716,7 @@ class RimshotSynth {
 		let sample = ping + body + filteredNoise;
 
 		// ADSR envelope - very quick attack and decay for snappy character
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.5);
@@ -5694,12 +5745,13 @@ class RimshotSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.6;
+				let output = sample * envelope * this.velocity * 0.6;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -5737,6 +5789,7 @@ class RimshotSynth {
  * Two oscillators with detune, low-pass filter, and ADSR envelope
  */
 
+
 class SubtractiveSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -5766,6 +5819,9 @@ class SubtractiveSynth {
 			this.phase1 = 0;
 			this.phase2 = 0;
 		}
+		
+		// Always reset envelope phase for new note
+		// Overlap is handled by voice pools in SynthManager, not here
 		this.envelopePhase = 0;
 		this.isActive = true;
 		this.velocity = velocity;
@@ -5805,7 +5861,10 @@ class SubtractiveSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const osc1Type = this.settings.osc1Type || 'saw';
@@ -5825,6 +5884,7 @@ class SubtractiveSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
@@ -5929,6 +5989,7 @@ class FMSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
@@ -5952,6 +6013,7 @@ class FMSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -5981,7 +6043,11 @@ class FMSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const op = (this.settings.operators && this.settings.operators.length > 0) ? this.settings.operators[0] : { frequency: 1, amplitude: 1, waveform: 'sine' };
@@ -5995,6 +6061,7 @@ class FMSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		
 		if (this.envelopePhase < attack) {
@@ -6018,12 +6085,13 @@ class FMSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase += (freq / this.sampleRate) * 2 * Math.PI;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -6080,6 +6148,7 @@ class WavetableSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		// Simple wavetable (sine wave)
 		this.wavetable = new Float32Array(2048);
 		for (let i = 0; i < this.wavetable.length; i++) {
@@ -6108,6 +6177,7 @@ class WavetableSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -6137,7 +6207,11 @@ class WavetableSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const tableIndex = (this.phase % (2 * Math.PI)) / (2 * Math.PI) * this.wavetable.length;
@@ -6150,6 +6224,7 @@ class WavetableSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		
 		if (this.envelopePhase < attack) {
@@ -6173,12 +6248,13 @@ class WavetableSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase += (freq / this.sampleRate) * 2 * Math.PI;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.4;
+				let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -6220,6 +6296,7 @@ class SupersawSynth {
 		this.phase = []; // Array of phases for each oscillator
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.lfoPhase = 0;
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
@@ -6264,6 +6341,7 @@ class SupersawSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Start retrigger fade if was already active
@@ -6294,7 +6372,10 @@ class SupersawSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const numOscillators = this.settings.numOscillators || 7;
@@ -6346,6 +6427,7 @@ class SupersawSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
@@ -6368,11 +6450,12 @@ class SupersawSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -6432,6 +6515,7 @@ class PluckSynth {
 		this.settings = settings || {};
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.delayLine = null;
 		this.delayIndex = 0;
 		this.delayLength = 0;
@@ -6456,6 +6540,7 @@ class PluckSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// Calculate delay line length based on pitch
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
@@ -6507,7 +6592,10 @@ class PluckSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Karplus-Strong: read from delay line, filter, and feed back
 		const readIndex = this.delayIndex;
@@ -6538,6 +6626,7 @@ class PluckSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			// Very quick attack for pluck character
@@ -6567,8 +6656,7 @@ class PluckSynth {
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		// Reduced output gain for safer levels, clamp to prevent clipping
+				// Reduced output gain for safer levels, clamp to prevent clipping
 		let output = sample * envelope * this.velocity * 0.25;
 		output = Math.max(-0.95, Math.min(0.95, output)); // Soft clipping
 		
@@ -6645,6 +6733,7 @@ class BassSynth {
 		this.phase2 = 0; // Sub oscillator (one octave down)
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		// Retrigger fade state
 		this.wasActive = false;
@@ -6682,6 +6771,7 @@ class BassSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Store when this note was triggered (for choke calculation)
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Pre-calculate frequency and phase increments (performance optimization)
@@ -6725,7 +6815,11 @@ class BassSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Use cached frequency (calculated in trigger) - performance optimization
 		const freq = this.cachedFreq || (440 * Math.pow(2, (this.pitch - 69) / 12));
@@ -6745,6 +6839,7 @@ class BassSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
@@ -6767,7 +6862,9 @@ class BassSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 		
 		// Early exit optimization: if envelope is effectively zero, skip expensive processing
 		// This prevents unnecessary filter/oscillator work during long release tails
@@ -6942,6 +7039,7 @@ class BassSynth {
  * Perfect for ambient textures, evolving pads, and atmospheric soundscapes
  */
 
+
 class PadSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -7025,7 +7123,10 @@ class PadSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const numOscillators = this.settings.numOscillators || 8;
@@ -7107,6 +7208,7 @@ class PadSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			// Slow, smooth attack
@@ -7133,6 +7235,7 @@ class PadSynth {
 		envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
+		this.triggerTime++;
 		
 		let output = sample * envelope * this.velocity * 0.25; // Lower gain for pads
 		
@@ -7199,6 +7302,7 @@ class OrganSynth {
 		this.phase = []; // Array of phases for each harmonic
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.rotaryPhase = 0; // Rotary speaker LFO phase
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
@@ -7236,6 +7340,7 @@ class OrganSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Start retrigger fade if was already active
@@ -7266,7 +7371,10 @@ class OrganSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		const totalDuration = totalNoteLength;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		
@@ -7323,6 +7431,7 @@ class OrganSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			// Fast attack for organ
@@ -7346,11 +7455,12 @@ class OrganSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.3;
+				let output = sample * envelope * this.velocity * 0.3;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
@@ -7413,6 +7523,7 @@ class OrganSynth {
  * Unlike procedural synths, this loads audio buffers and plays them back.
  * Audio buffers are transferred from the main thread via MessagePort.
  */
+
 
 class SampleSynth {
 	constructor(settings, sampleRate) {
@@ -7512,6 +7623,16 @@ class SampleSynth {
 		if (!this.isActive || !this.audioBuffer || this.audioBuffer.length === 0) {
 			return 0;
 		}
+		
+		// Calculate total note length from sample buffer and settings
+		// For samples, the note length is determined by the buffer length and any trimming
+		const startPoint = this.settings.startPoint || 0;
+		const endPoint = this.settings.endPoint !== undefined && this.settings.endPoint !== null 
+			? this.settings.endPoint 
+			: (this.audioBuffer ? this.audioBuffer.length : 0);
+		const effectiveBufferLength = Math.max(0, endPoint - startPoint);
+		const totalNoteLength = effectiveBufferLength; // In samples
+		
 		
 		// Calculate effective buffer bounds
 		const effectiveStart = this.startPoint;

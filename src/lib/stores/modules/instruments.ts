@@ -45,7 +45,8 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 					y: childY,
 					children: [],
 					velocity: 1.0, // Default velocity for child nodes (100%)
-					pitch: 60 // Default pitch (Middle C)
+					pitch: 60, // Default pitch (Middle C)
+					choke: 1.0 // Default choke (full length)
 				};
 				
 				// Each beat has 4 subdivisions (16th notes), equally spaced within that beat
@@ -63,7 +64,8 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 						y: grandchildY,
 						children: [],
 						velocity: childNode.velocity !== undefined ? childNode.velocity : 1.0, // Inherit from parent or default
-						pitch: childNode.pitch !== undefined ? childNode.pitch : 60 // Inherit from parent or default
+						pitch: childNode.pitch !== undefined ? childNode.pitch : 60, // Inherit from parent or default
+						choke: childNode.choke !== undefined ? childNode.choke : 1.0 // Inherit from parent or default to full length
 					});
 				}
 				
@@ -436,6 +438,33 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 									children: n.children.map(updateChildren)
 								});
 								return updateChildren(node);
+							}
+							return {
+								...node,
+								children: node.children.map(updateNode)
+							};
+						};
+						
+						return {
+							...instrument,
+							patternTree: updateNode(instrument.patternTree)
+						};
+					})
+				};
+			});
+		},
+		// Update node choke
+		updateNodeChoke: (instrumentId: string, nodeId: string, choke: number | null) => {
+			updateFn((project) => {
+				if (!project) return project;
+				return {
+					...project,
+					standaloneInstruments: project.standaloneInstruments.map((instrument) => {
+						if (instrument.id !== instrumentId) return instrument;
+						
+						const updateNode = (node: PatternNode): PatternNode => {
+							if (node.id === nodeId) {
+								return { ...node, choke };
 							}
 							return {
 								...node,

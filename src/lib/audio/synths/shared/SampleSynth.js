@@ -6,6 +6,7 @@
  * Audio buffers are transferred from the main thread via MessagePort.
  */
 
+
 class SampleSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -104,6 +105,16 @@ class SampleSynth {
 		if (!this.isActive || !this.audioBuffer || this.audioBuffer.length === 0) {
 			return 0;
 		}
+		
+		// Calculate total note length from sample buffer and settings
+		// For samples, the note length is determined by the buffer length and any trimming
+		const startPoint = this.settings.startPoint || 0;
+		const endPoint = this.settings.endPoint !== undefined && this.settings.endPoint !== null 
+			? this.settings.endPoint 
+			: (this.audioBuffer ? this.audioBuffer.length : 0);
+		const effectiveBufferLength = Math.max(0, endPoint - startPoint);
+		const totalNoteLength = effectiveBufferLength; // In samples
+		
 		
 		// Calculate effective buffer bounds
 		const effectiveStart = this.startPoint;

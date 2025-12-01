@@ -11,6 +11,7 @@ export interface PatternNode {
 	children: PatternNode[]; // Recursive children
 	velocity?: number; // 0-1, leaf nodes only
 	pitch?: number; // MIDI number (0-127), leaf nodes only
+	choke?: number | null; // Choke fraction (0-1): 1.0 = full length, 0 = zero length, null = overlap enabled (backward compatibility), leaf nodes only
 }
 
 /**
@@ -22,6 +23,7 @@ export interface AudioEvent {
 	pitch: number; // MIDI number (0-127)
 	instrumentId: string; // Instrument ID (the generated synth that plays this event)
 	duration?: number; // Note duration in beats (time until next note starts, or pattern length if last note)
+	choke?: number | null; // Choke fraction (0-1): 1.0 = full length, 0 = zero length, null = overlap enabled (backward compatibility)
 }
 
 /**

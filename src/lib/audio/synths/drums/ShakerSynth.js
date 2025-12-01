@@ -3,6 +3,7 @@
  * Transient-shaped noise for shaker/rattle character
  */
 
+
 class ShakerSynth {
 	constructor(settings, sampleRate) {
 		this.sampleRate = sampleRate;
@@ -58,7 +59,11 @@ class ShakerSynth {
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.3) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		const totalDuration = totalNoteLength;
 
 		// Transient-shaped noise
 		const noise = this.noiseBuffer[this.noiseIndex % this.noiseBuffer.length];
@@ -95,6 +100,7 @@ class ShakerSynth {
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		

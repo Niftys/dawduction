@@ -30,19 +30,6 @@ class EnvelopesProcessor {
 		// Clear caches when reinitializing
 		this.clearCaches();
 		
-		// Debug: Log initialization
-		if (this.processor && this.processor.port) {
-			this.processor.port.postMessage({
-				type: 'debug',
-				message: 'EnvelopesProcessor initialized',
-				data: {
-					envelopesCount: this.envelopes.length,
-					timelineEnvelopesCount: this.timelineEnvelopes.length,
-					envelopeIds: this.envelopes.map(e => e.id),
-					timelineEnvelopeIds: this.timelineEnvelopes.map(te => te.envelopeId)
-				}
-			});
-		}
 	}
 
 	/**
@@ -179,16 +166,6 @@ class EnvelopesProcessor {
 							// Only log once every 4 beats to avoid infinite loops
 							if (currentBeat - lastLogTime > 4) {
 								this._missingEnvelopeLogTimes[lastLogKey] = currentBeat;
-								this.processor.port.postMessage({
-									type: 'debug',
-									message: 'Envelope definition not found',
-									data: { 
-										envelopeId: timelineEnvelope.envelopeId, 
-										availableIds: this.envelopes.map(e => e.id),
-										timelineEnvelopeTrackId: timelineEnvelope.trackId,
-									targetTrackId: timelineEnvelope.targetTrackId
-									}
-								});
 							}
 						}
 					}

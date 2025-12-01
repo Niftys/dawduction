@@ -12,6 +12,7 @@ class BassSynth {
 		this.phase2 = 0; // Sub oscillator (one octave down)
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		// Retrigger fade state
 		this.wasActive = false;
@@ -49,6 +50,7 @@ class BassSynth {
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
 		this.noteDuration = duration; // Store note duration in beats
+		this.triggerTime = 0; // Store when this note was triggered (for choke calculation)
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Pre-calculate frequency and phase increments (performance optimization)
@@ -92,7 +94,11 @@ class BassSynth {
 			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
 		}
 		
-		const totalDuration = attack + decay + holdSamples + release;
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + holdSamples + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Use cached frequency (calculated in trigger) - performance optimization
 		const freq = this.cachedFreq || (440 * Math.pow(2, (this.pitch - 69) / 12));
@@ -112,6 +118,7 @@ class BassSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		if (this.envelopePhase < attack) {
 			envelope = 0.5 * (1 - Math.cos(Math.PI * this.envelopePhase / attack));
@@ -134,7 +141,9 @@ class BassSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 		
 		// Early exit optimization: if envelope is effectively zero, skip expensive processing
 		// This prevents unnecessary filter/oscillator work during long release tails

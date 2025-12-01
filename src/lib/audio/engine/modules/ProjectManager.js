@@ -47,22 +47,6 @@ class ProjectManager {
 			}
 		}
 		
-		// Debug: Log project load
-		this.processor.port.postMessage({
-			type: 'debug',
-			message: 'ProjectManager.loadProject',
-			data: {
-				viewMode,
-				isArrangementView: this.isArrangementView,
-				tracksCount: (tracks && tracks.length) ? tracks.length : 0,
-				eventsCount: this.events.length,
-				timelineLength: (timelineData && timelineData.totalLength) ? timelineData.totalLength : 0,
-				clipsCount: (timelineData && timelineData.clips && timelineData.clips.length) ? timelineData.clips.length : 0,
-				firstEvent: this.events[0] || null,
-				firstTrack: (tracks && tracks.length > 0) ? tracks[0] : null
-			}
-		});
-		
 		// Set base meter track (defaults to first track if not specified)
 		this.baseMeterTrackId = baseMeterTrackId || ((tracks && tracks.length > 0 && tracks[0] && tracks[0].id) ? tracks[0].id : null);
 		

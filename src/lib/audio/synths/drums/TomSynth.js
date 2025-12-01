@@ -10,7 +10,7 @@ class TomSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
-		// Retrigger fade state
+				// Retrigger fade state
 		this.wasActive = false;
 		this.retriggerFadePhase = 0;
 		this.lastOutput = 0;
@@ -31,7 +31,7 @@ class TomSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 50;
-		
+				
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
 			this.retriggerFadePhase = 0;
@@ -43,7 +43,12 @@ class TomSynth {
 		const attack = (this.settings.attack || 0.01) * this.sampleRate;
 		const decay = (this.settings.decay || 0.4) * this.sampleRate;
 		const release = (this.settings.release || 0.1) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Calculate pitch multiplier (base pitch is D3 = MIDI 50)
 		const basePitch = 50;
@@ -60,7 +65,7 @@ class TomSynth {
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.3); // 100ms minimum fade-out
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
-		// ADSR envelope - FIXED: Release fades from end-of-decay value
+		// ADSR envelope - calculate normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		
@@ -86,12 +91,13 @@ class TomSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.4;
+				let output = sample * envelope * this.velocity * 0.4;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {

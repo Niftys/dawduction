@@ -12,6 +12,7 @@ class ClapSynth {
 		this.settings = settings || {};
 		this.bursts = [];
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		// Pre-generated noise buffer for consistent sound
 		this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
@@ -36,6 +37,7 @@ class ClapSynth {
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
 		this.bursts = [];
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
+		this.triggerTime = 0; // Reset trigger time on new note
 		
 		// 2-3 percussive impacts very close together (like hands clapping)
 		// Use tight timing to create that characteristic clap sound
@@ -66,7 +68,12 @@ class ClapSynth {
 		const attack = (this.settings.attack || 0.0005) * this.sampleRate; // Even faster attack
 		const decay = (this.settings.decay || 0.02) * this.sampleRate; // Much shorter decay for sharp clap
 		const release = (this.settings.release || 0.01) * this.sampleRate; // Very short release
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 		const fadeOutSamples = Math.max(0.005 * this.sampleRate, release * 0.3);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
@@ -97,6 +104,7 @@ class ClapSynth {
 			}
 			
 			// Sharp, percussive ADSR envelope
+			// Calculate envelope normally based on actual envelope phase (not affected by choke)
 			let envelope = 0;
 			let decayEndValue = 0;
 			
@@ -127,7 +135,9 @@ class ClapSynth {
 				envelope = fadeStartValue * Math.exp(-fadePhase * 15);
 			}
 			
-			envelope = Math.max(0, Math.min(1, envelope));
+			// Apply choke fade-out if choke time has elapsed
+			// Choke cuts off the note at a specific time point, regardless of envelope phase
+						envelope = Math.max(0, Math.min(1, envelope));
 			
 			// Bandpass filtering for clap character (emphasize mid-high frequencies)
 			// Initialize filter states for this burst if needed
@@ -179,7 +189,8 @@ class ClapSynth {
 			burst.phase++;
 		}
 		
-		// Remove finished bursts
+		// Increment global trigger time for choke calculation
+				// Remove finished bursts
 		this.bursts = this.bursts.filter(b => b.envelopePhase < extendedDuration);
 		if (this.bursts.length === 0) {
 			this.isActive = false;

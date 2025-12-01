@@ -23,7 +23,7 @@
 		selectedTrack = undefined,
 		selectedPattern = undefined,
 		selectedInstrument = undefined,
-		trackSettings
+		trackSettings: trackSettingsProp
 	}: {
 		selectedTrack?: StandaloneInstrument | undefined;
 		selectedPattern?: Pattern | undefined;
@@ -33,6 +33,10 @@
 	
 	// Get the active item (selected instrument from pattern, or standalone instrument)
 	const activeItem = $derived(selectedInstrument || selectedTrack);
+	
+	// Use the prop if provided (it's reactive from parent), otherwise derive from activeItem
+	// This ensures we get updates when the parent's trackSettings changes
+	const trackSettings = $derived(trackSettingsProp || activeItem?.settings || {});
 	
 	let engine: EngineWorklet | null = null;
 	engineStore.subscribe((e) => (engine = e));

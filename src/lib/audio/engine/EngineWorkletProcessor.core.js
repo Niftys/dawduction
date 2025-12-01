@@ -120,7 +120,10 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	}
 
 	updateTrackSettings(trackId, settings) {
+		// Update track settings in project manager
 		this.projectManager.updateTrackSettings(trackId, settings);
+		
+		// Update synth settings - this will update both main synth and voice pools
 		this.synthManager.updateSynthSettings(trackId, settings);
 	}
 
@@ -130,8 +133,8 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 			// Update track state
 			this.trackState.updateTrack(trackId, updatedTrack);
 			
-		// If instrument type changed, create new synth to replace old one seamlessly
-		if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
+			// If instrument type changed, create new synth to replace old one seamlessly
+			if (oldTrack.instrumentType !== updatedTrack.instrumentType) {
 			// Extract patternId from trackId if it's a pattern track
 			// Format: __pattern_{patternId}_{instrumentId}
 			let patternId = null;
@@ -328,6 +331,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		// Extract patternId from event if available (for effects/envelopes)
 		const patternId = event.patternId || null;
 		const duration = event.duration || null;
-		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration);
+		
+		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration, null);
 	}
 }

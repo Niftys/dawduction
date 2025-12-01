@@ -25,13 +25,21 @@ class EventScheduler {
 		const currentBeat = this.processor.currentTime / this.processor.playbackController.samplesPerBeat;
 		const currentSampleTime = this.processor.currentTime;
 		
+		const epsilon = 0.0001;
+		const isAtStart = currentBeat < epsilon;
+		
 		// If playback looped backwards, allow scheduling immediately
 		if (this._lastScheduledBeat > currentBeat) {
 			this._lastScheduledBeat = -1;
 		}
 		
 		// Clean up old scheduled events that have already passed
-		this._cleanupOldEvents(currentSampleTime);
+		// But do this AFTER we check if we need to schedule, to avoid cleaning up events we're about to schedule
+		// Only clean up if we're not at the very start of playback
+		const isAtStartForCleanup = currentBeat < 0.01; // Within first 0.01 beats
+		if (!isAtStartForCleanup) {
+			this._cleanupOldEvents(currentSampleTime);
+		}
 		
 		// Adaptive scheduling interval based on event density
 		const events = this.processor.projectManager.events;
@@ -50,12 +58,14 @@ class EventScheduler {
 		}
 		
 		// Only schedule if we've moved forward enough (optimization)
-		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval) {
-			return; // Skip scheduling if we haven't moved forward enough
+		// But always schedule if we're at the start (currentBeat < epsilon) to ensure events at time 0 are scheduled
+		if (this._lastScheduledBeat >= 0 && (currentBeat - this._lastScheduledBeat) < this._scheduleInterval && currentBeat >= epsilon) {
+			return; // Skip scheduling if we haven't moved forward enough (unless we're at the start)
 		}
 		this._lastScheduledBeat = currentBeat;
 		
-		const lookaheadTime = 0.15; // 150ms
+		// Use longer lookahead when starting from the beginning to ensure early events are scheduled
+		const lookaheadTime = isAtStart ? 0.5 : 0.15; // 500ms at start, 150ms otherwise
 		const lookaheadBeat = currentBeat + lookaheadTime * this.processor.playbackController.beatsPerSecond;
 		
 		// Get pattern length for looping
@@ -130,9 +140,26 @@ class EventScheduler {
 			// Use extended lookahead for arrangement view to schedule events further ahead
 			const checkLookahead = isTimelineMode ? extendedLookahead : lookaheadBeat;
 			// Use <= for lookahead to include events at the exact lookahead boundary
-			// Also handle events at time 0.0 specially to ensure they're scheduled
-			if (eventTime >= currentBeat && eventTime <= checkLookahead) {
-				const eventSampleTime = Math.floor(eventTime * this.processor.playbackController.samplesPerBeat);
+			// Also handle events at the start specially to ensure they're scheduled when currentBeat is near 0
+			// isAtStart is already defined above
+			// If we're at the start, schedule all events from 0 up to lookahead (not just time 0)
+			// Otherwise, use normal lookahead window
+			// Use a small tolerance to handle floating point precision
+			// Check if event is in the scheduling window
+			// When at start, schedule all events from 0 up to lookahead
+			// Otherwise, use normal lookahead window with tolerance for floating point precision
+			let eventInWindow = false;
+			if (isAtStart) {
+				// At start: schedule all events from 0 (with small negative tolerance) up to lookahead
+				eventInWindow = eventTime >= -epsilon && eventTime <= checkLookahead + epsilon;
+			} else {
+				// Normal: schedule events in lookahead window from currentBeat
+				eventInWindow = eventTime >= currentBeat - epsilon && eventTime <= checkLookahead + epsilon;
+			}
+			
+			if (eventInWindow) {
+				// Convert event time to sample time, ensuring we don't get negative sample times
+				const eventSampleTime = Math.max(0, Math.floor(eventTime * this.processor.playbackController.samplesPerBeat));
 				const eventKey = `${eventIndex}_${eventSampleTime}`;
 				
 				// Skip if already scheduled
@@ -202,8 +229,12 @@ class EventScheduler {
 		const keysToDelete = [];
 		
 		// Find all sample times that are too old
+		// But don't clean up events at time 0 or very early times when we're just starting playback
+		// This ensures events at the start of playback aren't accidentally removed
+		const isNearStart = currentSampleTime < this.processor.playbackController.samplesPerBeat * 0.1; // Within first 0.1 beats
 		for (const sampleTime of this.scheduledEvents.keys()) {
-			if (sampleTime < cleanupThreshold) {
+			// Only clean up if it's old AND we're not near the start of playback
+			if (sampleTime < cleanupThreshold && (!isNearStart || sampleTime < -this._cleanupThresholdSamples)) {
 				keysToDelete.push(sampleTime);
 			}
 		}
@@ -301,10 +332,10 @@ class EventScheduler {
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			} else {
-				// Pattern mode: reset to 0 and stop all synths for clean restart
-				// This ensures patterns always start from the beginning without lingering sounds
-				this.processor.synthManager.stopAllSynths();
+				// Pattern mode: reset to 0 but let notes ring out naturally
+				// Don't stop all synths - let them finish their release phase for smooth looping
 				this.processor.currentTime = 0;
+				// Reset _lastScheduledBeat to -1 to force immediate scheduling of events at time 0
 				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {
 					// Reset playback update timers so visual updates keep firing after loop
@@ -316,7 +347,8 @@ class EventScheduler {
 				this.scheduledEvents.clear();
 				this._scheduledEventKeys.clear();
 				this._lastCheckedEventIndex = -1;
-				// Re-schedule events for next loop
+				// Re-schedule events for next loop immediately
+				// This ensures events at time 0 are scheduled before the next buffer is processed
 				this.scheduleEvents();
 			}
 		}

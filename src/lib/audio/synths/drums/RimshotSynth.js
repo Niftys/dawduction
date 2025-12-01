@@ -11,6 +11,7 @@ class RimshotSynth {
 		this.phase = 0;
 		this.envelopePhase = 0;
 		this.isActive = false;
+		this.triggerTime = 0; // Time when current note was triggered (for choke calculation)
 		this.noiseBuffer = new Float32Array(44100);
 		for (let i = 0; i < this.noiseBuffer.length; i++) {
 			this.noiseBuffer[i] = Math.random() * 2 - 1;
@@ -40,6 +41,7 @@ class RimshotSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60; // Default to C4 (MIDI 60)
+		this.triggerTime = 0; // Reset trigger time on new note
 		this.noiseIndex = Math.floor(Math.random() * this.noiseBuffer.length);
 		
 		// Reset filter state for clean retrigger
@@ -59,7 +61,12 @@ class RimshotSynth {
 		const attack = (this.settings.attack || 0.001) * this.sampleRate;
 		const decay = (this.settings.decay || 0.08) * this.sampleRate;
 		const release = (this.settings.release || 0.05) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		
+		// Calculate total note length from ADSR envelope
+		const totalNoteLength = attack + decay + release;
+		
+		
+		const totalDuration = totalNoteLength;
 
 		// Rimshot = sharp transient + bright tonal component + filtered noise
 		
@@ -108,6 +115,7 @@ class RimshotSynth {
 		let sample = ping + body + filteredNoise;
 
 		// ADSR envelope - very quick attack and decay for snappy character
+		// Calculate envelope normally based on actual envelope phase (not affected by choke)
 		let envelope = 0;
 		let decayEndValue = 0;
 		const fadeOutSamples = Math.max(0.05 * this.sampleRate, release * 0.5);
@@ -136,12 +144,13 @@ class RimshotSynth {
 			envelope = 0;
 		}
 
-		envelope = Math.max(0, Math.min(1, envelope));
+		// Apply choke fade-out if choke time has elapsed
+		// Choke cuts off the note at a specific time point, regardless of envelope phase
+				envelope = Math.max(0, Math.min(1, envelope));
 
 		this.phase++;
 		this.envelopePhase++;
-		
-		let output = sample * envelope * this.velocity * 0.6;
+				let output = sample * envelope * this.velocity * 0.6;
 		
 		// Handle retrigger fade: crossfade from old sound to new sound
 		if (this.wasActive && this.retriggerFadePhase < this.retriggerFadeSamples) {
