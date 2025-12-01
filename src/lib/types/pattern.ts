@@ -12,6 +12,10 @@ export interface PatternNode {
 	velocity?: number; // 0-1, leaf nodes only
 	pitch?: number; // MIDI number (0-127), leaf nodes only
 	choke?: number | null; // Choke fraction (0-1): 1.0 = full length, 0 = zero length, null = overlap enabled (backward compatibility), leaf nodes only
+	attack?: number; // Attack time in seconds, leaf nodes only
+	decay?: number; // Decay time in seconds, leaf nodes only
+	sustain?: number; // Sustain level (0-1), leaf nodes only
+	release?: number; // Release time in seconds, leaf nodes only
 }
 
 /**
@@ -24,6 +28,10 @@ export interface AudioEvent {
 	instrumentId: string; // Instrument ID (the generated synth that plays this event)
 	duration?: number; // Note duration in beats (time until next note starts, or pattern length if last note)
 	choke?: number | null; // Choke fraction (0-1): 1.0 = full length, 0 = zero length, null = overlap enabled (backward compatibility)
+	attack?: number; // Attack time in seconds
+	decay?: number; // Decay time in seconds
+	sustain?: number; // Sustain level (0-1)
+	release?: number; // Release time in seconds
 }
 
 /**

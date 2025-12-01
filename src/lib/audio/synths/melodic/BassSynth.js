@@ -30,13 +30,76 @@ class BassSynth {
 		this.cachedSubFreq = null;
 		this.phase1Increment = 0;
 		this.phase2Increment = 0;
+		
+		// Per-note ADSR parameters (stored as absolute values)
+		/** @type {{attack: number, decay: number, sustain: number, release: number}|null} */
+		this.perNoteADSR = null;
+		// Root ADSR values at trigger time (for relative updates)
+		/** @type {{attack: number, decay: number, sustain: number, release: number}|null} */
+		this.rootADSRAtTrigger = null;
 	}
 
+	/**
+	 * @param {Object} settings - Settings object
+	 * @param {number} [settings.attack] - Attack time in seconds
+	 * @param {number} [settings.decay] - Decay time in seconds
+	 * @param {number} [settings.sustain] - Sustain level (0-1)
+	 * @param {number} [settings.release] - Release time in seconds
+	 */
 	updateSettings(settings) {
+		const oldSettings = { ...this.settings };
 		this.settings = { ...this.settings, ...settings };
+		
+		// If per-note ADSR exists and root ADSR changed, update per-note values relative to root
+		if (this.perNoteADSR && this.rootADSRAtTrigger && this.isActive) {
+			/** @type {{attack: number, decay: number, sustain: number, release: number}} */
+			const newRootADSR = {
+				attack: /** @type {number|undefined} */ (this.settings.attack) || 0.05,
+				decay: /** @type {number|undefined} */ (this.settings.decay) || 0.2,
+				sustain: /** @type {number|undefined} */ (this.settings.sustain) !== undefined ? /** @type {number} */ (this.settings.sustain) : 0.8,
+				release: /** @type {number|undefined} */ (this.settings.release) || 0.3
+			};
+			
+			/** @type {{attack: number, decay: number, sustain: number, release: number}} */
+			const oldRootADSR = this.rootADSRAtTrigger;
+			
+			// Calculate ratios and apply to per-note values
+			if (oldRootADSR.attack > 0) {
+				const ratio = newRootADSR.attack / oldRootADSR.attack;
+				this.perNoteADSR.attack = this.perNoteADSR.attack * ratio;
+			}
+			if (oldRootADSR.decay > 0) {
+				const ratio = newRootADSR.decay / oldRootADSR.decay;
+				this.perNoteADSR.decay = this.perNoteADSR.decay * ratio;
+			}
+			if (oldRootADSR.sustain !== undefined && oldRootADSR.sustain !== newRootADSR.sustain) {
+				// For sustain, maintain the offset from root
+				const oldOffset = this.perNoteADSR.sustain - oldRootADSR.sustain;
+				this.perNoteADSR.sustain = newRootADSR.sustain + oldOffset;
+				// Clamp sustain to valid range [0, 1]
+				this.perNoteADSR.sustain = Math.max(0, Math.min(1, this.perNoteADSR.sustain));
+			}
+			if (oldRootADSR.release > 0) {
+				const ratio = newRootADSR.release / oldRootADSR.release;
+				this.perNoteADSR.release = this.perNoteADSR.release * ratio;
+			}
+			
+			// Update root ADSR reference for future relative updates
+			this.rootADSRAtTrigger = newRootADSR;
+		}
 	}
 
-	trigger(velocity, pitch, duration = null) {
+	/**
+	 * @param {number} velocity
+	 * @param {number} pitch
+	 * @param {Object|number|null} adsrParamsOrDuration - Optional per-note ADSR parameters (object) or duration (number, for backward compatibility)
+	 * @param {Object} [adsrParamsOrDuration] - Optional per-note ADSR parameters
+	 * @param {number} [adsrParamsOrDuration.attack] - Attack time in seconds
+	 * @param {number} [adsrParamsOrDuration.decay] - Decay time in seconds
+	 * @param {number} [adsrParamsOrDuration.sustain] - Sustain level (0-1)
+	 * @param {number} [adsrParamsOrDuration.release] - Release time in seconds
+	 */
+	trigger(velocity, pitch, adsrParamsOrDuration = null) {
 		// Check if we're retriggering while still active
 		this.wasActive = this.isActive;
 		
@@ -49,7 +112,14 @@ class BassSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
-		this.noteDuration = duration; // Store note duration in beats
+		
+		// Handle duration parameter (for backward compatibility) or ADSR params
+		if (typeof adsrParamsOrDuration === 'number') {
+			this.noteDuration = adsrParamsOrDuration;
+		} else {
+			this.noteDuration = null;
+		}
+		
 		this.triggerTime = 0; // Store when this note was triggered (for choke calculation)
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
@@ -64,6 +134,33 @@ class BassSynth {
 		this.filterCoeffs = null;
 		this.cachedCutoff = null;
 		this.cachedResonance = null;
+		
+		// Store root ADSR values at trigger time (for relative updates)
+		/** @type {{attack: number, decay: number, sustain: number, release: number}} */
+		const rootADSR = {
+			attack: /** @type {number|undefined} */ (this.settings.attack) || 0.05,
+			decay: /** @type {number|undefined} */ (this.settings.decay) || 0.2,
+			sustain: /** @type {number|undefined} */ (this.settings.sustain) !== undefined ? /** @type {number} */ (this.settings.sustain) : 0.8,
+			release: /** @type {number|undefined} */ (this.settings.release) || 0.3
+		};
+		this.rootADSRAtTrigger = rootADSR;
+		
+		// Store per-note ADSR parameters if provided
+		if (adsrParamsOrDuration && typeof adsrParamsOrDuration === 'object' && adsrParamsOrDuration !== null) {
+			/** @type {{attack: number, decay: number, sustain: number, release: number}} */
+			const root = this.rootADSRAtTrigger;
+			/** @type {any} */
+			const params = adsrParamsOrDuration;
+			this.perNoteADSR = {
+				attack: params.attack !== undefined ? params.attack : root.attack,
+				decay: params.decay !== undefined ? params.decay : root.decay,
+				sustain: params.sustain !== undefined ? params.sustain : root.sustain,
+				release: params.release !== undefined ? params.release : root.release
+			};
+		} else {
+			// No per-note ADSR, use root values
+			this.perNoteADSR = null;
+		}
 		
 		// Start retrigger fade if was already active
 		if (this.wasActive) {
@@ -82,10 +179,21 @@ class BassSynth {
 		// Scale envelope parameters with BPM (slower BPM = longer envelope times)
 		const bpmScale = 120 / bpm;
 		
-		const attack = (this.settings.attack || 0.05) * this.sampleRate * bpmScale;
-		const decay = (this.settings.decay || 0.2) * this.sampleRate * bpmScale;
-		const sustain = this.settings.sustain || 0.8;
-		const release = (this.settings.release || 0.3) * this.sampleRate * bpmScale;
+		// Use per-note ADSR if available, otherwise use root settings
+		let attack, decay, sustain, release;
+		if (this.perNoteADSR) {
+			/** @type {{attack: number, decay: number, sustain: number, release: number}} */
+			const perNote = this.perNoteADSR;
+			attack = perNote.attack * this.sampleRate * bpmScale;
+			decay = perNote.decay * this.sampleRate * bpmScale;
+			sustain = perNote.sustain;
+			release = perNote.release * this.sampleRate * bpmScale;
+		} else {
+			attack = (/** @type {number|undefined} */ (this.settings.attack) || 0.05) * this.sampleRate * bpmScale;
+			decay = (/** @type {number|undefined} */ (this.settings.decay) || 0.2) * this.sampleRate * bpmScale;
+			sustain = /** @type {number|undefined} */ (this.settings.sustain) !== undefined ? /** @type {number} */ (this.settings.sustain) : 0.8;
+			release = (/** @type {number|undefined} */ (this.settings.release) || 0.3) * this.sampleRate * bpmScale;
+		}
 		
 		// Calculate hold phase duration: note duration minus attack and decay
 		let holdSamples = 0;

@@ -39,7 +39,11 @@ export function flattenTree(
 			velocity: node.velocity ?? 1.0,
 			pitch: node.pitch ?? 60, // Middle C default
 			instrumentId,
-			choke: node.choke // Pass choke from node (can be undefined, null, or number)
+			choke: node.choke, // Pass choke from node (can be undefined, null, or number)
+			attack: node.attack, // Pass ADSR from node
+			decay: node.decay,
+			sustain: node.sustain,
+			release: node.release
 		}];
 	}
 	

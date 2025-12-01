@@ -332,6 +332,16 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		const patternId = event.patternId || null;
 		const duration = event.duration || null;
 		
-		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration, null);
+		// Extract ADSR parameters if they exist
+		const adsrParams = (event.attack !== undefined || event.decay !== undefined || event.sustain !== undefined || event.release !== undefined)
+			? {
+				attack: event.attack,
+				decay: event.decay,
+				sustain: event.sustain,
+				release: event.release
+			}
+			: null;
+		
+		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration, null, adsrParams);
 	}
 }

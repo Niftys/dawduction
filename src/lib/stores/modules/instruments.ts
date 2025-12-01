@@ -479,6 +479,39 @@ export function createInstrumentsModule(updateFn: UpdateFn, getCurrent: GetCurre
 					})
 				};
 			});
+		},
+		// Update node ADSR parameters
+		updateNodeADSR: (instrumentId: string, nodeId: string, adsr: { attack?: number; decay?: number; sustain?: number; release?: number }) => {
+			updateFn((project) => {
+				if (!project) return project;
+				return {
+					...project,
+					standaloneInstruments: project.standaloneInstruments.map((instrument) => {
+						if (instrument.id !== instrumentId) return instrument;
+						
+						const updateNode = (node: PatternNode): PatternNode => {
+							if (node.id === nodeId) {
+								return { 
+									...node, 
+									attack: adsr.attack !== undefined ? adsr.attack : node.attack,
+									decay: adsr.decay !== undefined ? adsr.decay : node.decay,
+									sustain: adsr.sustain !== undefined ? adsr.sustain : node.sustain,
+									release: adsr.release !== undefined ? adsr.release : node.release
+								};
+							}
+							return {
+								...node,
+								children: node.children.map(updateNode)
+							};
+						};
+						
+						return {
+							...instrument,
+							patternTree: updateNode(instrument.patternTree)
+						};
+					})
+				};
+			});
 		}
 	};
 }

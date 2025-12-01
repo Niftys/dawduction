@@ -402,6 +402,25 @@
 	align-items: center;
 }
 
+.adsr-grid {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 16px;
+	margin-top: 12px;
+}
+
+.adsr-param {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.adsr-param label {
+	font-size: 12px;
+	color: rgba(255, 255, 255, 0.7);
+	font-weight: 500;
+}
+
 .param-controls input[type="range"] {
 	flex: 1;
 	width: 100%;

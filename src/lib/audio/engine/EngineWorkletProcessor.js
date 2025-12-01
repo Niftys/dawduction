@@ -180,7 +180,16 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 		}
 
 		if (synth && synth.trigger) {
-			synth.trigger(event.velocity, event.pitch);
+			// Pass ADSR parameters if they exist in the event
+			const adsrParams = (event.attack !== undefined || event.decay !== undefined || event.sustain !== undefined || event.release !== undefined)
+				? {
+					attack: event.attack,
+					decay: event.decay,
+					sustain: event.sustain,
+					release: event.release
+				}
+				: null;
+			synth.trigger(event.velocity, event.pitch, adsrParams);
 		}
 	}
 

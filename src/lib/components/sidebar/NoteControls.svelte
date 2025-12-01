@@ -48,6 +48,23 @@ import NumericInput from './NumericInput.svelte';
 	const currentPitch = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.pitch, defaultPitch) : defaultPitch);
 	const currentVelocity = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.velocity, 1.0) : 1.0);
 	const currentDivision = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.division, 1) : 1);
+	
+	// Get default ADSR values from instrument settings
+	const defaultADSR = $derived(() => {
+		if (!activeItem) return { attack: 0.01, decay: 0.3, sustain: 0, release: 0.1 };
+		const settings = activeItem.settings || {};
+		return {
+			attack: settings.attack ?? 0.01,
+			decay: settings.decay ?? 0.3,
+			sustain: settings.sustain ?? 0,
+			release: settings.release ?? 0.1
+		};
+	});
+	
+	const currentAttack = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.attack, defaultADSR().attack) : defaultADSR().attack);
+	const currentDecay = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.decay, defaultADSR().decay) : defaultADSR().decay);
+	const currentSustain = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.sustain, defaultADSR().sustain) : defaultADSR().sustain);
+	const currentRelease = $derived(selectedNodes.length > 0 ? getCommonValue((n) => n.release, defaultADSR().release) : defaultADSR().release);
 
 	// Update note input when pitch changes (if not currently typing)
 	$effect(() => {
@@ -130,6 +147,34 @@ import NumericInput from './NumericInput.svelte';
 		setTimeout(() => {
 			updateEnginePatternTreeFromSelection();
 		}, 0);
+	}
+	
+	function updateNodeADSR(adsr: { attack?: number; decay?: number; sustain?: number; release?: number }) {
+		if (selectedNodes.length === 0) return;
+		
+		// Clamp values to valid ranges
+		const clampedADSR: { attack?: number; decay?: number; sustain?: number; release?: number } = {};
+		if (adsr.attack !== undefined) {
+			clampedADSR.attack = Math.max(0, Math.min(10, adsr.attack));
+		}
+		if (adsr.decay !== undefined) {
+			clampedADSR.decay = Math.max(0, Math.min(10, adsr.decay));
+		}
+		if (adsr.sustain !== undefined) {
+			clampedADSR.sustain = Math.max(0, Math.min(1, adsr.sustain));
+		}
+		if (adsr.release !== undefined) {
+			clampedADSR.release = Math.max(0, Math.min(10, adsr.release));
+		}
+		
+		for (const { node, pattern, track, instrumentId } of selectedNodes) {
+			if (pattern) {
+				projectStore.updatePatternNodeADSR(pattern.id, node.id, clampedADSR, instrumentId);
+			} else if (track) {
+				projectStore.updateNodeADSR(track.id, node.id, clampedADSR);
+			}
+		}
+		updateEnginePatternTreeFromSelection();
 	}
 
 </script>
@@ -274,6 +319,111 @@ import NumericInput from './NumericInput.svelte';
 				}
 			}}
 		/>
+	</div>
+</div>
+
+<div class="section">
+	<div class="param-header">
+		<label>Envelope (ADSR) {isMultiSelect ? `(all ${selectedNodes.length} nodes)` : ''}</label>
+		<button class="reset-btn" onclick={() => updateNodeADSR(defaultADSR())}>Reset</button>
+	</div>
+	
+	<div class="adsr-grid">
+		<div class="adsr-param">
+			<label for="attack-range">Attack</label>
+			<div class="param-controls">
+				<input
+					id="attack-range"
+					type="range"
+					min="0"
+					max="1"
+					step="0.001"
+					value={currentAttack}
+					oninput={(e) => updateNodeADSR({ attack: Number(getInputValue(e)) })}
+				/>
+				<NumericInput
+					id="attack-number"
+					min={0}
+					max={1}
+					step={0.001}
+					value={currentAttack}
+					placeholder={isMultiSelect && hasMixedValues((n) => n.attack, defaultADSR().attack) ? 'Mixed' : ''}
+					onInput={(val) => updateNodeADSR({ attack: val })}
+				/>
+			</div>
+		</div>
+		
+		<div class="adsr-param">
+			<label for="decay-range">Decay</label>
+			<div class="param-controls">
+				<input
+					id="decay-range"
+					type="range"
+					min="0"
+					max="1"
+					step="0.001"
+					value={currentDecay}
+					oninput={(e) => updateNodeADSR({ decay: Number(getInputValue(e)) })}
+				/>
+				<NumericInput
+					id="decay-number"
+					min={0}
+					max={1}
+					step={0.001}
+					value={currentDecay}
+					placeholder={isMultiSelect && hasMixedValues((n) => n.decay, defaultADSR().decay) ? 'Mixed' : ''}
+					onInput={(val) => updateNodeADSR({ decay: val })}
+				/>
+			</div>
+		</div>
+		
+		<div class="adsr-param">
+			<label for="sustain-range">Sustain</label>
+			<div class="param-controls">
+				<input
+					id="sustain-range"
+					type="range"
+					min="0"
+					max="1"
+					step="0.01"
+					value={currentSustain}
+					oninput={(e) => updateNodeADSR({ sustain: Number(getInputValue(e)) })}
+				/>
+				<NumericInput
+					id="sustain-number"
+					min={0}
+					max={1}
+					step={0.01}
+					value={currentSustain}
+					placeholder={isMultiSelect && hasMixedValues((n) => n.sustain, defaultADSR().sustain) ? 'Mixed' : ''}
+					onInput={(val) => updateNodeADSR({ sustain: val })}
+				/>
+			</div>
+		</div>
+		
+		<div class="adsr-param">
+			<label for="release-range">Release</label>
+			<div class="param-controls">
+				<input
+					id="release-range"
+					type="range"
+					min="0"
+					max="1"
+					step="0.001"
+					value={currentRelease}
+					oninput={(e) => updateNodeADSR({ release: Number(getInputValue(e)) })}
+				/>
+				<NumericInput
+					id="release-number"
+					min={0}
+					max={1}
+					step={0.001}
+					value={currentRelease}
+					placeholder={isMultiSelect && hasMixedValues((n) => n.release, defaultADSR().release) ? 'Mixed' : ''}
+					onInput={(val) => updateNodeADSR({ release: val })}
+				/>
+			</div>
+		</div>
 	</div>
 </div>
 

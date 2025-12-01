@@ -120,7 +120,11 @@ class ProjectManager {
 					time: startTime,
 					velocity: node.velocity !== undefined ? node.velocity : 1.0,
 					pitch: node.pitch !== undefined ? node.pitch : 60,
-					instrumentId
+					instrumentId,
+					attack: node.attack,
+					decay: node.decay,
+					sustain: node.sustain,
+					release: node.release
 				}];
 			}
 			

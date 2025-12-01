@@ -187,8 +187,9 @@ class SynthManager {
 	 * @param {string} patternId - Optional pattern ID from event
 	 * @param {number} duration - Optional note duration in beats
 	 * @param {number|null} eventChoke - DEPRECATED: Choke functionality removed
+	 * @param {Object|null} adsrParams - Optional per-note ADSR parameters
 	 */
-	triggerNote(trackId, velocity, pitch, patternId = null, duration = null, eventChoke = null) {
+	triggerNote(trackId, velocity, pitch, patternId = null, duration = null, eventChoke = null, adsrParams = null) {
 		const track = this.processor.projectManager.getTrack(trackId);
 		if (!track) {
 			return;
@@ -259,7 +260,8 @@ class SynthManager {
 						voice.updateSettings({ bpm });
 					}
 				}
-				voice.trigger(velocity, pitch, duration);
+				// Pass ADSR params if provided, otherwise pass duration (for backward compatibility)
+				voice.trigger(velocity, pitch, adsrParams || duration);
 			}
 		}
 	}

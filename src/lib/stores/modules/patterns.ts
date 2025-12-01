@@ -723,6 +723,50 @@ export function createPatternsModule(updateFn: UpdateFn, getCurrent: GetCurrent)
 				};
 			});
 		},
+		updatePatternNodeADSR: (patternId: string, nodeId: string, adsr: { attack?: number; decay?: number; sustain?: number; release?: number }, instrumentId?: string | null) => {
+			updateFn((project) => {
+				if (!project) return project;
+				return {
+					...project,
+					patterns: (project.patterns || []).map((pattern) => {
+						if (pattern.id !== patternId) return pattern;
+						
+						const updateNode = (node: PatternNode): PatternNode => {
+							if (node.id === nodeId) {
+								return { 
+									...node, 
+									attack: adsr.attack !== undefined ? adsr.attack : node.attack,
+									decay: adsr.decay !== undefined ? adsr.decay : node.decay,
+									sustain: adsr.sustain !== undefined ? adsr.sustain : node.sustain,
+									release: adsr.release !== undefined ? adsr.release : node.release
+								};
+							}
+							return {
+								...node,
+								children: node.children.map(updateNode)
+							};
+						};
+						
+						// If instrumentId is provided, update that instrument's tree
+						if (instrumentId && pattern.instruments && Array.isArray(pattern.instruments)) {
+							const instruments = pattern.instruments.map(inst =>
+								inst.id === instrumentId 
+									? { ...inst, patternTree: updateNode(inst.patternTree) }
+									: inst
+							);
+							return { ...pattern, instruments, updatedAt: Date.now() };
+						}
+						
+						// Legacy: update pattern directly
+						return {
+							...pattern,
+							patternTree: updateNode(pattern.patternTree || { id: crypto.randomUUID(), division: 4, children: [] }),
+							updatedAt: Date.now()
+						};
+					})
+				};
+			});
+		},
 		addPatternChildNode: (patternId: string, parentNodeId: string, division: number = 1, instrumentId?: string | null) => {
 			updateFn((project) => {
 				if (!project) return project;
