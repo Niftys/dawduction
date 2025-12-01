@@ -21,6 +21,7 @@ export interface AudioEvent {
 	velocity: number; // 0-1
 	pitch: number; // MIDI number (0-127)
 	instrumentId: string; // Instrument ID (the generated synth that plays this event)
+	duration?: number; // Note duration in beats (time until next note starts, or pattern length if last note)
 }
 
 /**

@@ -32,7 +32,8 @@
 	// Performance monitoring for automatic reload
 	let periodicReloadInterval: ReturnType<typeof setInterval> | null = null;
 	let lastReloadBeat = 0;
-	const RELOAD_INTERVAL_BEATS = 8; // Fallback: Reload every 8 beats if quiet periods aren't detected
+	// Adaptive reload interval based on BPM (will be calculated dynamically)
+	let adaptiveReloadIntervalBeats = 16; // Start with 16 beats, will adapt based on BPM
 	let pendingReloadScheduled = false;
 	let lastReloadTime = 0;
 	
@@ -309,13 +310,18 @@
 				return;
 			}
 			
+			// Adaptive minimum reload interval based on BPM
+			// Slower songs need longer intervals to avoid interrupting long notes
+			const currentBpm = project.bpm ?? 120;
+			const bpmScale = Math.max(1, 120 / currentBpm); // Scale up for slower BPM
+			const minReloadInterval = Math.max(5000, 3000 * bpmScale); // Minimum 5 seconds, scales up for slow songs
+			
 			// Check if enough time has passed since last reload
 			const timeSinceLastReload = Date.now() - lastReloadTime;
-			const minReloadInterval = 3000; // Minimum 3 seconds between reloads
 			
 			if (!pendingReloadScheduled && timeSinceLastReload >= minReloadInterval) {
 				// Schedule reload immediately during quiet period
-				// The quiet period detection already found a good moment
+				// The quiet period detection already found a good moment (no active synths + low volume)
 				const quietTime = e.detail.time || 0;
 				scheduleReloadAtBeatBoundary();
 				lastReloadBeat = Math.floor(quietTime);
@@ -345,6 +351,11 @@
 					return;
 				}
 				
+				// Calculate adaptive reload interval based on BPM
+				const currentBpm = project.bpm ?? 120;
+				// Slower songs need longer intervals: at 60 BPM, reload every 32 beats; at 120 BPM, every 16 beats
+				adaptiveReloadIntervalBeats = Math.max(16, Math.ceil(32 * (120 / Math.max(60, currentBpm))));
+				
 				// Get current playback position
 				let currentPosition = 0;
 				playbackStore.subscribe((state) => {
@@ -354,21 +365,27 @@
 				const currentBeat = Math.floor(currentPosition);
 				const beatsSinceLastReload = currentBeat - lastReloadBeat;
 				
-				// Fallback: Reload every RELOAD_INTERVAL_BEATS beats if no quiet periods detected
+				// Fallback: Reload every adaptiveReloadIntervalBeats beats if no quiet periods detected
 				// This ensures we still reload even if quiet period detection fails
-				if (beatsSinceLastReload >= RELOAD_INTERVAL_BEATS * 2) {
+				// Use longer interval for slow songs to avoid interrupting long notes
+				if (beatsSinceLastReload >= adaptiveReloadIntervalBeats) {
 					// Check if we're at or very close to a beat boundary (within 0.1 beats)
 					const fractionalBeat = currentPosition - currentBeat;
 					if (fractionalBeat < 0.1) {
 						// Schedule reload at this beat boundary (fallback only)
-						if (!pendingReloadScheduled) {
+						// Only reload if enough time has passed (adaptive based on BPM)
+						const bpmScale = Math.max(1, 120 / currentBpm);
+						const minTimeSinceReload = Math.max(10000, 5000 * bpmScale); // Minimum 10 seconds, scales up for slow songs
+						const timeSinceLastReload = Date.now() - lastReloadTime;
+						
+						if (!pendingReloadScheduled && timeSinceLastReload >= minTimeSinceReload) {
 							scheduleReloadAtBeatBoundary();
 							lastReloadBeat = currentBeat;
 							lastReloadTime = Date.now();
 						}
 					}
 				}
-			}, 200); // Check less frequently since quiet period detection is primary
+			}, 500); // Check less frequently (500ms) since quiet period detection is primary
 		};
 		
 		// Start periodic reload when playing in arrangement view
@@ -532,25 +549,43 @@
 		isPlaying = !isPlaying;
 		transportState = isPlaying ? 'play' : 'stop';
 
-		// Stop playback but preserve the current position
+		// Stop playback
 		if (!isPlaying) {
+			// Check if we're in pattern editor mode vs arrangement editor mode
+			// Pattern editor: URL contains /pattern/[patternId]
+			// Arrangement editor: viewMode is 'arrangement' and not on a pattern editor page
+			const currentPath = window.location.pathname;
+			const patternMatch = currentPath.match(/\/project\/[^/]+\/pattern\/([^/]+)/);
+			const isPatternEditor = patternMatch !== null;
+			
 			// Get current position before clearing playing state
 			let currentPosition = 0;
 			playbackStore.subscribe((state) => {
 				currentPosition = state.currentTime || 0;
 			})();
 			
-			// Stop transport at current position (don't reset to 0)
-			engine.setTransport('stop', currentPosition);
-			
-			// Clear playing nodes but preserve currentTime
-			playbackStore.update((state) => ({
-				...state,
-				playingNodes: new Set(),
-				playedNodes: new Set(),
-				isLoopStart: false
-				// Keep currentTime as-is
-			}));
+			// In pattern editor mode, reset to 0 and stop all synths
+			// In arrangement editor mode, preserve position for pause/resume
+			if (isPatternEditor) {
+				engine.setTransport('stop', 0);
+				// Clear playback store completely for pattern editor
+				playbackStore.update((state) => ({
+					currentTime: 0,
+					playingNodes: new Set(),
+					playedNodes: new Set(),
+					isLoopStart: false
+				}));
+			} else {
+				// Arrangement editor: preserve position for pause/resume
+				engine.setTransport('stop', currentPosition);
+				playbackStore.update((state) => ({
+					...state,
+					playingNodes: new Set(),
+					playedNodes: new Set(),
+					isLoopStart: false
+					// Keep currentTime as-is for arrangement editor
+				}));
+			}
 			return; // Early return when stopping
 		}
 
@@ -626,37 +661,46 @@
 							const allTracks = [...(project.standaloneInstruments || []), ...patternTracks];
 							
 							await engine.loadProject(allTracks, currentBpm, patternTracks[0]?.id || project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
-							// Get current playback position from store
-							let currentPosition = 0;
-							playbackStore.subscribe((state) => {
-								currentPosition = state.currentTime || 0;
-							})();
+							// Pattern editor: always start from position 0
 							transportState = 'play';
 							isPlaying = true;
-							engine.setTransport('play', currentPosition);
+							engine.setTransport('play', 0);
+							// Reset playback store to start fresh
+							playbackStore.update((state) => ({
+								currentTime: 0,
+								playingNodes: new Set(),
+								playedNodes: new Set(),
+								isLoopStart: false
+							}));
 						} else {
 							// Pattern not found, fall back to standalone instruments
 							await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes, project.automation);
-							// Get current playback position from store
-							let currentPosition = 0;
-							playbackStore.subscribe((state) => {
-								currentPosition = state.currentTime || 0;
-							})();
+							// Pattern editor: always start from position 0
 							transportState = 'play';
 							isPlaying = true;
-							engine.setTransport('play', currentPosition);
+							engine.setTransport('play', 0);
+							// Reset playback store to start fresh
+							playbackStore.update((state) => ({
+								currentTime: 0,
+								playingNodes: new Set(),
+								playedNodes: new Set(),
+								isLoopStart: false
+							}));
 						}
 					} else {
 						// Regular pattern view - use standalone instruments
 						await engine.loadProject(project.standaloneInstruments || [], currentBpm, project.baseMeterTrackId, undefined, project.patterns, project.effects, project.envelopes);
-						// Get current playback position from store
-						let currentPosition = 0;
-						playbackStore.subscribe((state) => {
-							currentPosition = state.currentTime || 0;
-						})();
+						// Pattern editor: always start from position 0
 						transportState = 'play';
 						isPlaying = true;
-						engine.setTransport('play', currentPosition);
+						engine.setTransport('play', 0);
+						// Reset playback store to start fresh
+						playbackStore.update((state) => ({
+							currentTime: 0,
+							playingNodes: new Set(),
+							playedNodes: new Set(),
+							isLoopStart: false
+						}));
 					}
 				}
 			}

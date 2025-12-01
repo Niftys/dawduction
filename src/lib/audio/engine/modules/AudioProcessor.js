@@ -16,11 +16,14 @@ class AudioProcessor {
 		// Quiet period detection for smart reload timing
 		this._quietPeriodCheckInterval = processor.sampleRate * 0.1; // Check every 100ms
 		this._lastQuietPeriodCheck = 0;
-		this._quietPeriodThreshold = 0.06; // 10% volume threshold (0.06 out of ~0.6 max mixed level)
-		this._quietPeriodMinDuration = processor.sampleRate * 0.1; // Need 100ms of quiet to be considered a quiet period
+		this._quietPeriodThreshold = 0.02; // Lower threshold (0.02 = ~3% volume) - only trigger on near-silence
+		// Adaptive quiet period duration based on BPM (slower songs need longer quiet periods)
+		// Default to 120 BPM, will be updated when BPM changes
+		this._currentBpm = 120;
+		this._quietPeriodMinDuration = processor.sampleRate * 0.3; // Start with 300ms minimum
 		this._quietPeriodSamples = 0;
 		this._lastQuietPeriodReport = 0;
-		this._quietPeriodCooldown = processor.sampleRate * 3; // Don't report more than once every 3 seconds
+		this._quietPeriodCooldown = processor.sampleRate * 5; // Don't report more than once every 5 seconds (increased for slow songs)
 	}
 
 	/**
@@ -79,13 +82,17 @@ class AudioProcessor {
 			// Track overall mixed output level (sum of left and right channels)
 			const mixedLevel = Math.abs(mixed.left) + Math.abs(mixed.right);
 			
-			// Check if output is below threshold (10% of typical max level)
-			// Typical max level after mixing is around 0.6 (0.3 master gain * 2 channels)
-			// So 10% would be around 0.06
-			if (mixedLevel < this._quietPeriodThreshold) {
+			// Check if any synths are active - if so, don't consider it a quiet period
+			// This prevents reloads during long sustained notes even if volume is low
+			const hasActiveSynths = this.processor.synthManager.hasActiveSynths();
+			
+			// Only count as quiet if:
+			// 1. Volume is below threshold (near-silence)
+			// 2. No synths are active (no notes playing)
+			if (mixedLevel < this._quietPeriodThreshold && !hasActiveSynths) {
 				this._quietPeriodSamples++;
 			} else {
-				this._quietPeriodSamples = 0; // Reset if not quiet
+				this._quietPeriodSamples = 0; // Reset if not quiet or synths are active
 			}
 			
 			// Check if we should analyze quiet periods periodically
@@ -144,6 +151,26 @@ class AudioProcessor {
 		// Only check in arrangement view
 		if (!this.processor.projectManager.isArrangementView) {
 			return;
+		}
+		
+		// Update BPM-based quiet period duration if BPM changed
+		const currentBpm = this.processor.playbackController.getBPM();
+		if (currentBpm !== this._currentBpm) {
+			this._currentBpm = currentBpm;
+			// Adaptive quiet period: slower BPM = longer required quiet period
+			// At 60 BPM, require 1 second of quiet
+			// At 120 BPM, require 0.3 seconds of quiet
+			// At 180 BPM, require 0.2 seconds of quiet
+			const bpmScale = 60 / Math.max(60, currentBpm); // Scale relative to 60 BPM
+			this._quietPeriodMinDuration = this.processor.sampleRate * (0.3 * bpmScale);
+			// Also adjust cooldown based on BPM
+			this._quietPeriodCooldown = this.processor.sampleRate * (5 * bpmScale);
+		}
+		
+		// Double-check that no synths are active before reporting quiet period
+		const hasActiveSynths = this.processor.synthManager.hasActiveSynths();
+		if (hasActiveSynths) {
+			return; // Don't report quiet period if synths are active
 		}
 		
 		// Check if we've had enough quiet samples

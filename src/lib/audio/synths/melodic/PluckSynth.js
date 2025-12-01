@@ -25,7 +25,7 @@ class PluckSynth {
 		this.settings = { ...this.settings, ...settings };
 	}
 
-	trigger(velocity, pitch) {
+	trigger(velocity, pitch, duration = null) {
 		// Check if we're retriggering while still active
 		this.wasActive = this.isActive;
 		
@@ -33,6 +33,7 @@ class PluckSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
+		this.noteDuration = duration; // Store note duration in beats
 		
 		// Calculate delay line length based on pitch
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
@@ -64,11 +65,27 @@ class PluckSynth {
 	process() {
 		if (!this.isActive || !this.delayLine) return 0;
 		
-		const attack = (this.settings.attack || 0.01) * this.sampleRate;
-		const decay = (this.settings.decay || 0.3) * this.sampleRate;
+		// Get BPM from settings or use default 120
+		const bpm = this.settings.bpm || 120;
+		const beatsPerSecond = bpm / 60;
+		
+		// Scale envelope parameters with BPM (slower BPM = longer envelope times)
+		const bpmScale = 120 / bpm;
+		
+		const attack = (this.settings.attack || 0.01) * this.sampleRate * bpmScale;
+		const decay = (this.settings.decay || 0.3) * this.sampleRate * bpmScale;
 		const sustain = this.settings.sustain || 0.0; // Plucks don't sustain
-		const release = (this.settings.release || 0.4) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		const release = (this.settings.release || 0.4) * this.sampleRate * bpmScale;
+		
+		// Calculate hold phase duration: note duration minus attack and decay
+		// Note: For plucks, hold phase may be minimal since sustain is typically 0
+		let holdSamples = 0;
+		if (this.noteDuration !== null && this.noteDuration !== undefined) {
+			const noteDurationSamples = (this.noteDuration / beatsPerSecond) * this.sampleRate;
+			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
+		}
+		
+		const totalDuration = attack + decay + holdSamples + release;
 
 		// Karplus-Strong: read from delay line, filter, and feed back
 		const readIndex = this.delayIndex;
@@ -95,7 +112,7 @@ class PluckSynth {
 		// Advance delay line index
 		this.delayIndex = (this.delayIndex + 1) % this.delayLength;
 
-		// ADSR envelope for overall amplitude
+		// ADSR envelope with hold phase for overall amplitude
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
@@ -107,13 +124,18 @@ class PluckSynth {
 			// Exponential decay (plucks don't sustain)
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			envelope = Math.exp(-decayPhase * 2);
-		} else if (this.envelopePhase < attack + decay + release) {
+		} else if (this.envelopePhase < attack + decay + holdSamples) {
+			// Hold phase: maintain sustain level (typically 0 for plucks, but allows sustain if set)
+			const decayEndValue = Math.exp(-2); // Value at end of decay
+			envelope = sustain > 0 ? sustain : decayEndValue;
+		} else if (this.envelopePhase < attack + decay + holdSamples + release) {
 			// Release: continue exponential decay
-			const releasePhase = (this.envelopePhase - attack - decay) / release;
-			envelope = Math.exp(-(2 + releasePhase * 4));
+			const releasePhase = (this.envelopePhase - attack - decay - holdSamples) / release;
+			const releaseStartValue = sustain > 0 ? sustain : Math.exp(-2);
+			envelope = releaseStartValue * Math.exp(-releasePhase * 4);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadePhase = (this.envelopePhase - (attack + decay + holdSamples + release)) / fadeOutSamples;
 			const fadeStartValue = Math.exp(-6);
 			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {

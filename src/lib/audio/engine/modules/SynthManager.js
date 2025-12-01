@@ -41,6 +41,14 @@ class SynthManager {
 				// Merge settings - use track settings and instrumentSettings
 				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
 				
+				// Add BPM to settings so synths can scale envelope parameters
+				if (this.processor.playbackController) {
+					const bpm = this.processor.playbackController.getBPM();
+					if (bpm) {
+						settings.bpm = bpm;
+					}
+				}
+				
 				synth = this.processor.synthFactory.create(instrumentType, settings);
 				if (synth) {
 					this.synths.set(trackId, synth);
@@ -136,10 +144,19 @@ class SynthManager {
 	 * @param {number} velocity - Note velocity
 	 * @param {number} pitch - Note pitch
 	 * @param {string} patternId - Optional pattern ID from event
+	 * @param {number} duration - Optional note duration in beats
 	 */
-	triggerNote(trackId, velocity, pitch, patternId = null) {
+	triggerNote(trackId, velocity, pitch, patternId = null, duration = null) {
 		const synth = this.getOrCreateSynth(trackId, patternId);
 		if (synth && synth.trigger) {
+			// Update synth settings with current BPM if available
+			if (this.processor.playbackController) {
+				const bpm = this.processor.playbackController.getBPM();
+				if (bpm && synth.updateSettings) {
+					synth.updateSettings({ bpm });
+				}
+			}
+			
 			// Debug: Log synth trigger (disabled for cleaner logs)
 			// this.processor.port.postMessage({
 			// 	type: 'debug',
@@ -149,12 +166,13 @@ class SynthManager {
 			// 		patternId: patternId || 'none',
 			// 		velocity,
 			// 		pitch,
+			// 		duration,
 			// 		synthExists: !!synth,
 			// 		hasTrigger: !!synth.trigger,
 			// 		totalSynths: this.synths.size
 			// 	}
 			// });
-			synth.trigger(velocity, pitch);
+			synth.trigger(velocity, pitch, duration);
 		}
 	}
 
@@ -164,6 +182,31 @@ class SynthManager {
 	 */
 	getAllSynths() {
 		return this.synths;
+	}
+
+	/**
+	 * Stop all active synths (set isActive to false)
+	 * Useful for pattern editor mode where we want to stop all sounds when stopping playback
+	 */
+	stopAllSynths() {
+		for (const synth of this.synths.values()) {
+			if (synth && synth.isActive !== undefined) {
+				synth.isActive = false;
+			}
+		}
+	}
+
+	/**
+	 * Check if any synths are currently active
+	 * @returns {boolean} True if any synth is active
+	 */
+	hasActiveSynths() {
+		for (const synth of this.synths.values()) {
+			if (synth && synth.isActive === true) {
+				return true;
+			}
+		}
+		return false;
 	}
 }
 

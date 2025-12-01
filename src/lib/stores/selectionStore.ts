@@ -26,11 +26,34 @@ function createSelectionStore() {
 					? new Set(state.selectedNodes)
 					: new Set<string>();
 				newSelectedNodes.add(nodeId);
+				
+				// When multiselecting, preserve existing track/pattern/instrument IDs if they're already set
+				// This allows selecting nodes from multiple instruments without breaking the selection
+				let finalTrackId = trackId;
+				let finalPatternId = patternId;
+				let finalInstrumentId = instrumentId;
+				
+				if (multiSelect && state.selectedNodes.size > 0) {
+					// If we already have a selection, check if the new node is from a different source
+					const isDifferentSource = 
+						state.selectedTrackId !== trackId ||
+						state.selectedPatternId !== patternId ||
+						state.selectedInstrumentId !== instrumentId;
+					
+					// If it's from a different source, preserve the existing IDs to maintain selection context
+					// This allows multiselect across instruments while keeping the first instrument's context
+					if (isDifferentSource) {
+						finalTrackId = state.selectedTrackId;
+						finalPatternId = state.selectedPatternId;
+						finalInstrumentId = state.selectedInstrumentId;
+					}
+				}
+				
 				return {
 					selectedNodes: newSelectedNodes,
-					selectedTrackId: trackId,
-					selectedPatternId: patternId,
-					selectedInstrumentId: instrumentId,
+					selectedTrackId: finalTrackId,
+					selectedPatternId: finalPatternId,
+					selectedInstrumentId: finalInstrumentId,
 					selectedNodeId: nodeId,
 					isRoot
 				};

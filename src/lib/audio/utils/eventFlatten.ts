@@ -93,10 +93,29 @@ export function flattenTrackPattern(rootNode: PatternNode, trackId: string, base
 	
 	// Start with root division as parent duration, which will be scaled by the ratio
 	// The children will be distributed proportionally within rootDivision, then the whole pattern scales to baseMeter
-	return flattenTree(rootNode, rootDivision, 0.0, trackId).map(event => ({
+	const events = flattenTree(rootNode, rootDivision, 0.0, trackId).map(event => ({
 		...event,
 		// Scale event times from rootDivision space to baseMeter space
 		time: event.time * (baseMeter / rootDivision)
 	}));
+	
+	// Calculate note duration: time until next note starts, or pattern length if last note
+	// Sort events by time to ensure correct duration calculation
+	const sortedEvents = [...events].sort((a, b) => a.time - b.time);
+	
+	return sortedEvents.map((event, index) => {
+		// Find next event for the same instrument
+		const nextEvent = sortedEvents.find((e, i) => i > index && e.instrumentId === event.instrumentId);
+		
+		// Duration is time until next note starts, or pattern length if it's the last note
+		const duration = nextEvent 
+			? nextEvent.time - event.time
+			: patternLength - event.time;
+		
+		return {
+			...event,
+			duration: Math.max(0.01, duration) // Ensure minimum duration to avoid zero
+		};
+	});
 }
 

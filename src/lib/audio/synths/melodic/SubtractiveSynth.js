@@ -23,7 +23,7 @@ class SubtractiveSynth {
 		this.settings = { ...this.settings, ...settings };
 	}
 
-	trigger(velocity, pitch) {
+	trigger(velocity, pitch, duration = null) {
 		// Check if we're retriggering while still active
 		this.wasActive = this.isActive;
 		
@@ -36,6 +36,7 @@ class SubtractiveSynth {
 		this.isActive = true;
 		this.velocity = velocity;
 		this.pitch = pitch || 60;
+		this.noteDuration = duration; // Store note duration in beats
 		this.filterState = { y1: 0, y2: 0, x1: 0, x2: 0 };
 		
 		// Start retrigger fade if was already active
@@ -46,11 +47,31 @@ class SubtractiveSynth {
 
 	process() {
 		if (!this.isActive) return 0;
-		const attack = (this.settings.attack || 0.1) * this.sampleRate;
-		const decay = (this.settings.decay || 0.2) * this.sampleRate;
+		
+		// Get BPM from settings or use default 120
+		const bpm = this.settings.bpm || 120;
+		const beatsPerSecond = bpm / 60;
+		
+		// Scale envelope parameters with BPM (slower BPM = longer envelope times)
+		// Base scale: at 120 BPM, 1.0 = 1 second. At 80 BPM, same value should be longer.
+		const bpmScale = 120 / bpm; // At 80 BPM, this is 1.5x longer
+		
+		const attack = (this.settings.attack || 0.1) * this.sampleRate * bpmScale;
+		const decay = (this.settings.decay || 0.2) * this.sampleRate * bpmScale;
 		const sustain = this.settings.sustain || 0.7;
-		const release = (this.settings.release || 0.3) * this.sampleRate;
-		const totalDuration = attack + decay + release;
+		const release = (this.settings.release || 0.3) * this.sampleRate * bpmScale;
+		
+		// Calculate hold phase duration: note duration minus attack and decay
+		// Hold phase allows note to sustain at sustain level for the full note duration
+		let holdSamples = 0;
+		if (this.noteDuration !== null && this.noteDuration !== undefined) {
+			// Convert note duration from beats to samples
+			const noteDurationSamples = (this.noteDuration / beatsPerSecond) * this.sampleRate;
+			// Hold phase = note duration - attack - decay (minimum 0)
+			holdSamples = Math.max(0, noteDurationSamples - attack - decay);
+		}
+		
+		const totalDuration = attack + decay + holdSamples + release;
 
 		const freq = 440 * Math.pow(2, (this.pitch - 69) / 12);
 		const osc1Type = this.settings.osc1Type || 'saw';
@@ -66,7 +87,7 @@ class SubtractiveSynth {
 		const resonance = this.settings.filterResonance || 0.5;
 		sample = this.lowpass(sample, cutoff, resonance);
 
-		// ADSR envelope - FIXED: Release fades from sustain properly
+		// ADSR envelope with hold phase - allows notes to sustain for full duration
 		const fadeOutSamples = Math.max(0.1 * this.sampleRate, release * 0.5);
 		const extendedDuration = totalDuration + fadeOutSamples;
 		
@@ -76,13 +97,16 @@ class SubtractiveSynth {
 		} else if (this.envelopePhase < attack + decay) {
 			const decayPhase = (this.envelopePhase - attack) / decay;
 			envelope = 1 - decayPhase * (1 - sustain);
-		} else if (this.envelopePhase < attack + decay + release) {
+		} else if (this.envelopePhase < attack + decay + holdSamples) {
+			// Hold phase: maintain sustain level for the note duration
+			envelope = sustain;
+		} else if (this.envelopePhase < attack + decay + holdSamples + release) {
 			// Release: fade from sustain to 0
-			const releasePhase = (this.envelopePhase - attack - decay) / release;
+			const releasePhase = (this.envelopePhase - attack - decay - holdSamples) / release;
 			envelope = sustain * Math.exp(-releasePhase * 6);
 		} else if (this.envelopePhase < extendedDuration) {
 			// Extended exponential fade-out
-			const fadePhase = (this.envelopePhase - (attack + decay + release)) / fadeOutSamples;
+			const fadePhase = (this.envelopePhase - (attack + decay + holdSamples + release)) / fadeOutSamples;
 			const fadeStartValue = sustain * Math.exp(-6);
 			envelope = fadeStartValue * Math.exp(-fadePhase * 10);
 		} else {

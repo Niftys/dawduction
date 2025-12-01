@@ -97,7 +97,22 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	}
 
 	setTransport(state, position = 0) {
-		this.playbackController.setTransport(state, position);
+		// Check if we're in pattern editor mode (not arrangement view)
+		const isArrangementView = this.projectManager.isArrangementView && this.projectManager.timeline && this.projectManager.timeline.totalLength;
+		
+		if (state === 'stop') {
+			// When stopping in pattern editor mode, stop all active synths
+			// This ensures clean stops without lingering sounds
+			if (!isArrangementView) {
+				this.synthManager.stopAllSynths();
+			}
+		}
+		
+		// When starting playback in pattern editor mode, always start from position 0
+		// In arrangement view, preserve the position for pause/resume functionality
+		const finalPosition = (state === 'play' && !isArrangementView) ? 0 : position;
+		
+		this.playbackController.setTransport(state, finalPosition);
 	}
 
 	updatePatternTree(trackId, patternTree, baseMeter = 4) {
@@ -304,6 +319,7 @@ class EngineWorkletProcessor extends AudioWorkletProcessor {
 	triggerEvent(event) {
 		// Extract patternId from event if available (for effects/envelopes)
 		const patternId = event.patternId || null;
-		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId);
+		const duration = event.duration || null;
+		this.synthManager.triggerNote(event.instrumentId, event.velocity, event.pitch, patternId, duration);
 	}
 }

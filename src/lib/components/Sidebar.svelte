@@ -70,10 +70,6 @@
 	$: selectedNodes = (() => {
 		if (!project || (!selection.selectedTrackId && !selection.selectedPatternId)) return [];
 		
-		// Get the pattern tree from selected instrument (if pattern), or standalone instrument
-		const tree = patternTree;
-		if (!tree) return [];
-		
 		// Use selectedNodes Set if it has items, otherwise fall back to selectedNodeId
 		const nodeIds = selection.selectedNodes.size > 0 
 			? Array.from(selection.selectedNodes)
@@ -81,7 +77,53 @@
 		
 		if (nodeIds.length === 0) return [];
 		
-			// Map node IDs to actual node objects with their pattern/standaloneInstrument/instrument info
+		// If we're in pattern editor mode, search across all instruments in the pattern
+		// This allows multiselect to work across multiple instruments
+		if (selection.selectedPatternId && selectedPattern) {
+			const instruments = selectedPattern.instruments && Array.isArray(selectedPattern.instruments) && selectedPattern.instruments.length > 0
+				? selectedPattern.instruments
+				: (selectedPattern.instrumentType && selectedPattern.patternTree ? [{
+					id: selectedPattern.id,
+					instrumentType: selectedPattern.instrumentType,
+					patternTree: selectedPattern.patternTree,
+					settings: selectedPattern.settings || {},
+					instrumentSettings: selectedPattern.instrumentSettings,
+					color: selectedPattern.color || '#7ab8ff',
+					volume: selectedPattern.volume ?? 1.0,
+					pan: selectedPattern.pan ?? 0.0,
+					mute: selectedPattern.mute,
+					solo: selectedPattern.solo
+				}] : []);
+			
+			// Search across all instruments to find nodes
+			const foundNodes: Array<{ node: PatternNode; pattern?: any; track?: StandaloneInstrument; instrument?: any; instrumentId?: string | null }> = [];
+			
+			for (const instrument of instruments) {
+				for (const nodeId of nodeIds) {
+					// Skip if we already found this node
+					if (foundNodes.some(n => n.node.id === nodeId)) continue;
+					
+					const node = findNodeInTree(instrument.patternTree, nodeId);
+					if (node) {
+						foundNodes.push({
+							node,
+							pattern: selectedPattern,
+							track: null,
+							instrument: instrument,
+							instrumentId: instrument.id
+						});
+					}
+				}
+			}
+			
+			return foundNodes;
+		}
+		
+		// For standalone instruments, search in the selected track's tree
+		const tree = patternTree;
+		if (!tree) return [];
+		
+		// Map node IDs to actual node objects with their pattern/standaloneInstrument/instrument info
 		return nodeIds.map((nodeId) => {
 			const node = findNodeInTree(tree, nodeId);
 			return node ? { 

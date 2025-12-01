@@ -179,10 +179,28 @@ class ProjectManager {
 			const scaleFactor = baseMeter / rootDivision;
 			
 			// Scale all event times from rootDivision space to baseMeter space
-			return events.map(event => ({
+			const scaledEvents = events.map(event => ({
 				...event,
 				time: event.time * scaleFactor
 			}));
+			
+			// Calculate note duration: time until next note starts, or pattern length if last note
+			const sortedEvents = [...scaledEvents].sort((a, b) => a.time - b.time);
+			
+			return sortedEvents.map((event, index) => {
+				// Find next event for the same instrument
+				const nextEvent = sortedEvents.find((e, i) => i > index && e.instrumentId === event.instrumentId);
+				
+				// Duration is time until next note starts, or pattern length if it's the last note
+				const duration = nextEvent 
+					? nextEvent.time - event.time
+					: patternLength - event.time;
+				
+				return {
+					...event,
+					duration: Math.max(0.01, duration) // Ensure minimum duration to avoid zero
+				};
+			});
 		};
 		
 		// Determine baseMeter for this track

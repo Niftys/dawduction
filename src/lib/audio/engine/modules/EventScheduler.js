@@ -301,7 +301,9 @@ class EventScheduler {
 				// Re-schedule events for next loop
 				this.scheduleEvents();
 			} else {
-				// Pattern mode: reset to 0
+				// Pattern mode: reset to 0 and stop all synths for clean restart
+				// This ensures patterns always start from the beginning without lingering sounds
+				this.processor.synthManager.stopAllSynths();
 				this.processor.currentTime = 0;
 				this._lastScheduledBeat = -1;
 				if (this.processor.audioProcessor) {

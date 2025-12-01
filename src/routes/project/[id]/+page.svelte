@@ -43,8 +43,6 @@
 	let playbackState: any;
 	let isLoading = true;
 	let timelineAreaElement: HTMLDivElement | null = null;
-	let hasScrolledToStart = false;
-	let currentProjectId: string | null = null;
 	let showWelcomeModal = false;
 	let showDeletePatternConfirm = false;
 	let patternToDelete: Pattern | null = null;
@@ -77,18 +75,6 @@
 	let editingPatternId: string | null = null;
 	let editingEffectId: string | null = null;
 	let editingEnvelopeId: string | null = null;
-	
-	// Reset scroll position when timeline element becomes available
-	$: if (timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart) {
-		// Set scroll to 0 immediately when element is available
-		timelineAreaElement.scrollLeft = 0;
-		// Also set it after a microtask to override any browser scroll restoration
-		setTimeout(() => {
-			if (timelineAreaElement) {
-				timelineAreaElement.scrollLeft = 0;
-			}
-		}, 0);
-	}
 	
 	// Update CSS variable for sidebar width - ensure it's set immediately
 	if (typeof document !== 'undefined') {
@@ -141,24 +127,6 @@
 		// loadingStore is only for operations like view transitions
 		// Clear any existing loading state
 		loadingStore.stopLoading();
-		
-		// Reset scroll flag if project ID changed
-		if (currentProjectId !== $page.params.id) {
-			hasScrolledToStart = false;
-			currentProjectId = $page.params.id;
-		}
-		
-		// Simple scroll to beginning after project loads
-		if (project && viewMode === 'arrangement') {
-			// Scroll to beginning
-			setTimeout(() => {
-				if (timelineAreaElement) {
-					timelineAreaElement.scrollLeft = 0;
-					// Force a reflow to ensure everything is positioned correctly
-					timelineAreaElement.offsetHeight;
-				}
-			}, 300);
-		}
 		
 		// Check if project is already loaded (from previous navigation)
 		if (project && project.id === $page.params.id) {
@@ -333,17 +301,6 @@
 			// Save on page unload
 			window.addEventListener('beforeunload', saveToLocalStorage);
 		}
-	}
-
-	// Simple scroll to beginning when arrangement view loads
-	$: if (project && !isLoading && timelineAreaElement && viewMode === 'arrangement' && !hasScrolledToStart && typeof window !== 'undefined') {
-		// Simple scroll to beginning after a short delay
-		setTimeout(() => {
-			if (timelineAreaElement) {
-				timelineAreaElement.scrollLeft = 0;
-				hasScrolledToStart = true;
-			}
-		}, 200);
 	}
 	
 	// Force layout recalculation when arrangement view is first rendered
@@ -2378,11 +2335,6 @@
 					on:touchmove={(e) => handleTimelineTouchMove(e)}
 					on:touchend={() => handleTimelineMouseUp()}
 					on:touchcancel={() => handleTimelineMouseUp()}
-					on:load={() => {
-						if (timelineAreaElement) {
-							timelineAreaElement.scrollLeft = 0;
-						}
-					}}
 				>
 					<TimelineRuler
 						totalLength={timeline.totalLength}
