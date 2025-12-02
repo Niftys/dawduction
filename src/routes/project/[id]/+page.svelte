@@ -2053,6 +2053,15 @@
 		}
 	}
 
+	function toggleTrackCollapse(trackId: string) {
+		if (!project || !project.timeline) return;
+		const track = project.timeline.tracks.find((t: TimelineTrack) => t.id === trackId);
+		if (!track) return;
+		
+		const newCollapsed = !(track.collapsed ?? false);
+		projectStore.updateTimelineTrack(trackId, { collapsed: newCollapsed });
+	}
+
 	// Get clips/effects/envelopes for a specific track
 	function getClipsForTrack(trackId: string): TimelineClip[] {
 		return (timeline.clips || []).filter((c: TimelineClip) => c.trackId === trackId);
@@ -2459,6 +2468,7 @@
 								onTrackVolumeMouseDown={handleTrackVolumeMouseDown}
 								onToggleTrackMute={toggleTrackMute}
 								onToggleTrackSolo={toggleTrackSolo}
+								onToggleTrackCollapse={toggleTrackCollapse}
 								onDeleteTrack={deleteTimelineTrack}
 								onChangeTrackColor={(trackId, color) => {
 									projectStore.updateTimelineTrack(trackId, { color });

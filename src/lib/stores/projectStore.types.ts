@@ -22,6 +22,7 @@ export interface TimelineTrack {
 	mute?: boolean; // Track mute state
 	solo?: boolean; // Track solo state
 	color?: string; // Track header color
+	collapsed?: boolean; // Track collapsed state (1/4 height when true)
 	createdAt: number;
 }
 

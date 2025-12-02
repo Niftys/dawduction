@@ -42,6 +42,7 @@
 		onTrackVolumeMouseDown,
 		onToggleTrackMute,
 		onToggleTrackSolo,
+		onToggleTrackCollapse,
 		onDeleteTrack,
 		onChangeTrackColor = () => {},
 		onClipMouseDown,
@@ -87,9 +88,10 @@
 		onRowClick: (e: MouseEvent) => void;
 		onRowTouchEnd?: ((e: TouchEvent) => void) | undefined;
 		onTrackVolumeMouseDown: (e: MouseEvent, trackId: string) => void;
-		onToggleTrackMute: (trackId: string) => void;
-		onToggleTrackSolo: (trackId: string) => void;
-		onDeleteTrack: (trackId: string) => void;
+	onToggleTrackMute: (trackId: string) => void;
+	onToggleTrackSolo: (trackId: string) => void;
+	onToggleTrackCollapse: (trackId: string) => void;
+	onDeleteTrack: (trackId: string) => void;
 		onChangeTrackColor?: (trackId: string, color: string) => void;
 		onClipMouseDown: (e: MouseEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void;
 		onClipTouchStart?: ((e: TouchEvent, clip: TimelineClip | TimelineEffect | TimelineEnvelope, type: 'clip' | 'effect' | 'envelope') => void) | undefined;
@@ -250,6 +252,8 @@
 	const rowLabelBackground = $derived(trackColor + '20');
 	const hasSoloedTrack = $derived(timeline.tracks?.some((t: any) => t.type === 'pattern' && t.solo === true) || false);
 	const isGreyedOut = $derived(track.mute || (hasSoloedTrack && !track.solo));
+	const isCollapsed = $derived(track.collapsed ?? false);
+	const trackHeight = $derived(isCollapsed ? TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT / 4 : TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT);
 	
 	// Available color swatches matching the theme
 	const colorSwatches = [
@@ -318,8 +322,8 @@
 </script>
 
 <div 
-	class="pattern-row {track.type}-row {dragOverRow === track.id ? 'drag-over' : ''} {dragOverTrackId === track.id ? 'drag-over-track' : ''}" 
-	style="height: {TIMELINE_CONSTANTS.PATTERN_ROW_HEIGHT}px;"
+	class="pattern-row {track.type}-row {dragOverRow === track.id ? 'drag-over' : ''} {dragOverTrackId === track.id ? 'drag-over-track' : ''} {isCollapsed ? 'collapsed' : ''}" 
+	style="height: {trackHeight}px;"
 	role="region"
 	aria-label="{track.type} timeline track"
 	on:dragover={handleRowDragOver}
@@ -340,6 +344,14 @@
 		on:drop={(e) => onTrackDrop(e, track.id)}
 		on:contextmenu={handleContextMenu}
 	>
+		<button 
+			class="track-collapse {isCollapsed ? 'collapsed' : ''}"
+			on:click|stopPropagation={() => onToggleTrackCollapse(track.id)}
+			on:dragstart|stopPropagation
+			title={isCollapsed ? 'Expand track' : 'Collapse track'}
+		>
+			{isCollapsed ? '▲' : '▼'}
+		</button>
 		{#if track.type === 'pattern'}
 			<div class="track-controls-group">
 				<div 
