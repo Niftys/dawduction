@@ -16,7 +16,7 @@ class TR808WavetableCymbalSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
-			basePitch: 40, // E1 - higher pitch than ride for brighter crash
+			basePitch: 49, // C#2 - standard cymbal pitch
 			...settings
 		};
 		

@@ -16,6 +16,7 @@ class TR808WavetableMidTomSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 45, // A1 - standard mid tom pitch
 			...settings
 		};
 		

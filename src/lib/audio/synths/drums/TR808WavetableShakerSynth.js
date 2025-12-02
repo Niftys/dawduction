@@ -16,6 +16,7 @@ class TR808WavetableShakerSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 48, // C2 - standard maracas/shaker pitch
 			...settings
 		};
 		

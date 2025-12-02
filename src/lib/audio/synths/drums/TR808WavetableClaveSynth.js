@@ -16,6 +16,7 @@ class TR808WavetableClaveSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 51, // D#2 - standard clave pitch
 			...settings
 		};
 		

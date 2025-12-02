@@ -16,6 +16,7 @@ class TR808WavetableClapSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 39, // D#1 - standard clap pitch
 			...settings
 		};
 		

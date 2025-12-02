@@ -16,6 +16,7 @@ class TR808WavetableRimshotSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 37, // C#1 - standard rimshot pitch
 			...settings
 		};
 		

@@ -16,6 +16,7 @@ class TR808WavetableCowbellSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 36, // C1 - matches typical cowbell pitch range
 			...settings
 		};
 		

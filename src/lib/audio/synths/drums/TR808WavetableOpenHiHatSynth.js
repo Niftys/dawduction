@@ -16,6 +16,7 @@ class TR808WavetableOpenHiHatSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 46, // A#1 - standard open hi-hat pitch
 			...settings
 		};
 		

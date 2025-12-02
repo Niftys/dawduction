@@ -16,6 +16,7 @@ class TR808WavetableLowTomSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 44, // G#1 - standard low tom pitch
 			...settings
 		};
 		

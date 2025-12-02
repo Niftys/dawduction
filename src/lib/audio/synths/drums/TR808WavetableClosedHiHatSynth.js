@@ -16,6 +16,7 @@ class TR808WavetableClosedHiHatSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 42, // F#1 - standard closed hi-hat pitch
 			...settings
 		};
 		

@@ -16,6 +16,7 @@ class TR808WavetableHighTomSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(typeWavetables).sort(),
 			wavetables: typeWavetables,
+			basePitch: 47, // B1 - standard high tom pitch
 			...settings
 		};
 		
