@@ -209,35 +209,14 @@ class SynthManager {
 			return;
 		}
 		
-		// Check if this is a drum instrument (monophonic - only one voice at a time)
-		const isDrum = track.instrumentType && (
-			track.instrumentType.startsWith('tr808') ||
-			track.instrumentType === 'kick' ||
-			track.instrumentType === 'snare' ||
-			track.instrumentType === 'hihat' ||
-			track.instrumentType === 'clap' ||
-			track.instrumentType === 'tom' ||
-			track.instrumentType === 'cymbal' ||
-			track.instrumentType === 'shaker' ||
-			track.instrumentType === 'rimshot'
-		);
-		
 		// Always use polyphonic voices (overlap always enabled)
+		// Drums now support multi-voicing just like melodic synths
 		{
 			// Get or create voice pool for this track
 			if (!this.voicePools.has(trackId)) {
 				this.voicePools.set(trackId, []);
 			}
 			const voicePool = this.voicePools.get(trackId);
-			
-			// For drums: stop all active voices before triggering (monophonic behavior)
-			if (isDrum) {
-				for (const v of voicePool) {
-					if (v && v.isActive !== undefined) {
-						v.isActive = false;
-					}
-				}
-			}
 			
 			// Get latest settings once - we'll use this for all voice operations
 			// CRITICAL: Get fresh track reference to ensure we have latest settings
