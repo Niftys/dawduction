@@ -26,6 +26,38 @@ class SynthFactory {
 			return new ShakerSynth(settings, this.sampleRate);
 		case 'rimshot':
 			return new RimshotSynth(settings, this.sampleRate);
+		case 'tr808kick':
+			return new TR808WavetableKickSynth(settings, this.sampleRate);
+		case 'tr808snare':
+			return new TR808WavetableSnareSynth(settings, this.sampleRate);
+		case 'tr808hihat':
+			return new TR808WavetableHiHatSynth(settings, this.sampleRate);
+		case 'tr808openhihat':
+			return new TR808WavetableOpenHiHatSynth(settings, this.sampleRate);
+		case 'tr808closedhihat':
+			return new TR808WavetableClosedHiHatSynth(settings, this.sampleRate);
+		case 'tr808clap':
+			return new TR808WavetableClapSynth(settings, this.sampleRate);
+		case 'tr808tom':
+			return new TR808WavetableLowTomSynth(settings, this.sampleRate);
+		case 'tr808lowtom':
+			return new TR808WavetableLowTomSynth(settings, this.sampleRate);
+		case 'tr808midtom':
+			return new TR808WavetableMidTomSynth(settings, this.sampleRate);
+		case 'tr808hightom':
+			return new TR808WavetableHighTomSynth(settings, this.sampleRate);
+		case 'tr808cymbal':
+			return new TR808WavetableCymbalSynth(settings, this.sampleRate);
+		case 'tr808ride':
+			return new TR808WavetableRideSynth(settings, this.sampleRate);
+		case 'tr808shaker':
+			return new TR808WavetableShakerSynth(settings, this.sampleRate);
+		case 'tr808cowbell':
+			return new TR808WavetableCowbellSynth(settings, this.sampleRate);
+		case 'tr808clave':
+			return new TR808WavetableClaveSynth(settings, this.sampleRate);
+		case 'tr808rimshot':
+			return new TR808WavetableRimshotSynth(settings, this.sampleRate);
 		case 'subtractive':
 			return new SubtractiveSynth(settings, this.sampleRate);
 			case 'fm':

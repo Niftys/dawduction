@@ -67,8 +67,9 @@ class SynthManager {
 					}
 				}
 				
-				// Merge settings - use track settings and instrumentSettings
-				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
+				// Merge settings - use track settings and instrumentSettings for this specific instrument type
+				const instrumentTypeSettings = track.instrumentSettings?.[instrumentType] || {};
+				const settings = Object.assign({}, track.settings || {}, instrumentTypeSettings);
 				
 				// Add BPM to settings so synths can scale envelope parameters
 				if (this.processor.playbackController) {
@@ -162,11 +163,24 @@ class SynthManager {
 			}
 		}
 		
+		// Debug: Log settings update
+		if (settings.attack !== undefined || settings.decay !== undefined || 
+		    settings.sustain !== undefined || settings.release !== undefined) {
+			console.log(`[SynthManager] Updating settings for ${trackId}:`, {
+				attack: settings.attack,
+				decay: settings.decay,
+				sustain: settings.sustain,
+				release: settings.release
+			});
+		}
+		
 		// Update main synth if it exists
+		// Note: Pattern instruments use voice pools, not main synths, so this is expected to be null for them
 		const synth = this.synths.get(trackId);
 		if (synth && synth.updateSettings) {
 			synth.updateSettings(settings);
 		}
+		// Don't warn if synth doesn't exist - pattern instruments use voice pools instead
 		
 		// Also update all voices in the voice pool (for polyphonic synths with overlap)
 		if (this.voicePools.has(trackId)) {
@@ -195,6 +209,19 @@ class SynthManager {
 			return;
 		}
 		
+		// Check if this is a drum instrument (monophonic - only one voice at a time)
+		const isDrum = track.instrumentType && (
+			track.instrumentType.startsWith('tr808') ||
+			track.instrumentType === 'kick' ||
+			track.instrumentType === 'snare' ||
+			track.instrumentType === 'hihat' ||
+			track.instrumentType === 'clap' ||
+			track.instrumentType === 'tom' ||
+			track.instrumentType === 'cymbal' ||
+			track.instrumentType === 'shaker' ||
+			track.instrumentType === 'rimshot'
+		);
+		
 		// Always use polyphonic voices (overlap always enabled)
 		{
 			// Get or create voice pool for this track
@@ -203,19 +230,66 @@ class SynthManager {
 			}
 			const voicePool = this.voicePools.get(trackId);
 			
+			// For drums: stop all active voices before triggering (monophonic behavior)
+			if (isDrum) {
+				for (const v of voicePool) {
+					if (v && v.isActive !== undefined) {
+						v.isActive = false;
+					}
+				}
+			}
+			
+			// Get latest settings once - we'll use this for all voice operations
+			// CRITICAL: Get fresh track reference to ensure we have latest settings
+			// The track object is updated by reference, but we want to be explicit
+			const freshTrack = this.processor.projectManager.getTrack(trackId);
+			if (!freshTrack) {
+				console.warn(`[SynthManager] Track ${trackId} not found when getting settings`);
+				return;
+			}
+			
+			const instrumentType = freshTrack.instrumentType || track.instrumentType;
+			if (!instrumentType) {
+				console.warn(`[SynthManager] No instrumentType for track ${trackId}`);
+				return;
+			}
+			
+			// Get settings - prioritize instrumentSettings[instrumentType] over base settings
+			// This ensures instrument-specific settings override general settings
+			const baseSettings = freshTrack.settings || {};
+			const instrumentTypeSettings = freshTrack.instrumentSettings?.[instrumentType] || {};
+			
+			// Merge: instrumentSettings override base settings (instrument-specific takes precedence)
+			const latestSettings = Object.assign({}, baseSettings, instrumentTypeSettings);
+			
+			// Debug: Log settings for TR808 instruments to verify they're being read correctly
+			if (instrumentType && instrumentType.startsWith('tr808')) {
+				console.log(`[SynthManager] Triggering ${instrumentType} (${trackId}) with settings:`, {
+					baseSettings: JSON.parse(JSON.stringify(baseSettings)), // Deep copy for logging
+					instrumentTypeSettings: JSON.parse(JSON.stringify(instrumentTypeSettings)), // Deep copy
+					mergedSettings: JSON.parse(JSON.stringify(latestSettings)), // Deep copy
+					hasAttack: latestSettings.attack !== undefined,
+					hasDecay: latestSettings.decay !== undefined,
+					hasRelease: latestSettings.release !== undefined,
+					attack: latestSettings.attack,
+					decay: latestSettings.decay,
+					release: latestSettings.release
+				});
+			}
+			
+			if (this.processor.playbackController) {
+				const bpm = this.processor.playbackController.getBPM();
+				if (bpm) {
+					latestSettings.bpm = bpm;
+				}
+			}
+			
 			// Find an inactive voice or create a new one
 			let voice = voicePool.find(v => !v.isActive);
 			
 			if (!voice && voicePool.length < this.maxVoices) {
-				// Create a new voice
-				const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
-				if (this.processor.playbackController) {
-					const bpm = this.processor.playbackController.getBPM();
-					if (bpm) {
-						settings.bpm = bpm;
-					}
-				}
-				voice = this.processor.synthFactory.create(track.instrumentType, settings);
+				// Create a new voice with latest settings - use instrumentType from freshTrack
+				voice = this.processor.synthFactory.create(instrumentType, latestSettings);
 				if (voice) {
 					// Set sample buffer if available
 					const storedBuffer = this.sampleBuffers.get(trackId);
@@ -234,14 +308,7 @@ class SynthManager {
 				} else {
 					// Pool is empty and we couldn't create one - try one more time
 					// This shouldn't happen, but ensures we always have a voice if possible
-					const settings = Object.assign({}, track.settings || {}, track.instrumentSettings || {});
-					if (this.processor.playbackController) {
-						const bpm = this.processor.playbackController.getBPM();
-						if (bpm) {
-							settings.bpm = bpm;
-						}
-					}
-					voice = this.processor.synthFactory.create(track.instrumentType, settings);
+					voice = this.processor.synthFactory.create(instrumentType, latestSettings);
 					if (voice) {
 						const storedBuffer = this.sampleBuffers.get(trackId);
 						if (storedBuffer && voice.setAudioBuffer) {
@@ -253,13 +320,15 @@ class SynthManager {
 			}
 			
 			if (voice && voice.trigger) {
-				// Update settings with current BPM
-				if (this.processor.playbackController) {
-					const bpm = this.processor.playbackController.getBPM();
-					if (bpm && voice.updateSettings) {
-						voice.updateSettings({ bpm });
-					}
+				// CRITICAL: Always update voice with latest settings before triggering
+				// This ensures parameters are always current, even if:
+				// - Voice was created earlier with old settings
+				// - Voice is being reused from the pool
+				// - Settings were updated after voice creation
+				if (voice.updateSettings) {
+					voice.updateSettings(latestSettings);
 				}
+				
 				// Pass ADSR params if provided, otherwise pass duration (for backward compatibility)
 				voice.trigger(velocity, pitch, adsrParams || duration);
 			}
@@ -342,4 +411,5 @@ class SynthManager {
 		}
 	}
 }
+
 

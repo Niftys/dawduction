@@ -62,6 +62,38 @@
 		{ value: 'rimshot', label: 'Rimshot', color: '#ff9900' }
 	];
 	
+	const tr808Instruments = [
+		{ value: 'tr808kick', label: 'Kick', color: '#00ffff' },
+		{ value: 'tr808snare', label: 'Snare', color: '#ff00ff' },
+		{ value: 'tr808closedhihat', label: 'Closed Hi-Hat', color: '#ffff00' },
+		{ value: 'tr808openhihat', label: 'Open Hi-Hat', color: '#ffff00' },
+		{ value: 'tr808clap', label: 'Clap', color: '#ff6600' },
+		{ value: 'tr808lowtom', label: 'Low Tom', color: '#00ff00' },
+		{ value: 'tr808midtom', label: 'Mid Tom', color: '#00ff00' },
+		{ value: 'tr808hightom', label: 'High Tom', color: '#00ff00' },
+		{ value: 'tr808cymbal', label: 'Crash', color: '#ff0066' },
+		{ value: 'tr808ride', label: 'Ride', color: '#ff0066' },
+		{ value: 'tr808shaker', label: 'Shaker', color: '#6600ff' },
+		{ value: 'tr808cowbell', label: 'Cowbell', color: '#ffcc00' },
+		{ value: 'tr808clave', label: 'Clave', color: '#cc6600' },
+		{ value: 'tr808rimshot', label: 'Rimshot', color: '#ff9900' }
+	];
+	
+	// Tab state for switching between Original and TR-808 drums
+	let drumTab = $state<'original' | 'tr808'>('original');
+	
+	// Auto-switch tab based on selected instrument type
+	$effect(() => {
+		if (activeItem?.instrumentType) {
+			const type = activeItem.instrumentType;
+			if (type.startsWith('tr808')) {
+				drumTab = 'tr808';
+			} else if (nonMelodicInstruments.some(inst => inst.value === type)) {
+				drumTab = 'original';
+			}
+		}
+	});
+	
 	const melodicInstrumentsList = [
 		{ value: 'bass', label: 'Bass', color: '#0066ff' },
 		{ value: 'subtractive', label: 'Subtractive', color: '#00ffcc' },
@@ -82,6 +114,22 @@
 		cymbal: { color: '#ff0066', settings: { attack: 0.01, decay: 0.5, sustain: 0.0, release: 0.2 } },
 		shaker: { color: '#6600ff', settings: { attack: 0.01, decay: 0.3, sustain: 0.0, release: 0.1 } },
 		rimshot: { color: '#ff9900', settings: { attack: 0.001, decay: 0.08, sustain: 0.0, release: 0.05 } },
+		// TR-808 defaults (matching synth constructors)
+		tr808kick: { color: '#00ffff', settings: { attack: 0.001, decay: 4.0, sustain: 0.0, release: 0.5 } },
+		tr808snare: { color: '#ff00ff', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808hihat: { color: '#ffff00', settings: { attack: 0.001, decay: 0.5, sustain: 0.0, release: 0.2 } },
+		tr808closedhihat: { color: '#ffff00', settings: { attack: 0.001, decay: 0.3, sustain: 0.0, release: 0.1 } },
+		tr808openhihat: { color: '#ffff00', settings: { attack: 0.001, decay: 1.5, sustain: 0.0, release: 0.5 } },
+		tr808clap: { color: '#ff6600', settings: { attack: 0.001, decay: 0.8, sustain: 0.0, release: 0.3 } },
+		tr808lowtom: { color: '#00ff00', settings: { attack: 0.001, decay: 1.0, sustain: 0.0, release: 0.4 } },
+		tr808midtom: { color: '#00ff00', settings: { attack: 0.001, decay: 0.8, sustain: 0.0, release: 0.3 } },
+		tr808hightom: { color: '#00ff00', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.2 } },
+		tr808cymbal: { color: '#ff0066', settings: { attack: 0.001, decay: 2.0, sustain: 0.0, release: 1.0 } },
+		tr808ride: { color: '#ff0066', settings: { attack: 0.001, decay: 3.0, sustain: 0.0, release: 1.0 } },
+		tr808shaker: { color: '#6600ff', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808cowbell: { color: '#ffcc00', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808clave: { color: '#cc6600', settings: { attack: 0.001, decay: 0.3, sustain: 0.0, release: 0.2 } },
+		tr808rimshot: { color: '#ff9900', settings: { attack: 0.001, decay: 0.5, sustain: 0.0, release: 0.2 } },
 		subtractive: { color: '#00ffcc', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3, osc1Type: 'saw', osc2Type: 'saw', osc2Detune: 0, filterCutoff: 5000, filterResonance: 0.5 } },
 		fm: { color: '#cc00ff', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3, operators: [{ frequency: 1, amplitude: 1, waveform: 'sine' }] } },
 		wavetable: { color: '#ffcc00', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3 } },
@@ -398,18 +446,48 @@
 	
 	<div class="instrument-group">
 		<h4 class="instrument-group-title">Drums</h4>
+		<div class="drum-tabs">
+			<button
+				class="drum-tab"
+				class:active={drumTab === 'original'}
+				onclick={() => drumTab = 'original'}
+			>
+				Original
+			</button>
+			<button
+				class="drum-tab"
+				class:active={drumTab === 'tr808'}
+				onclick={() => drumTab = 'tr808'}
+			>
+				TR-808
+			</button>
+		</div>
 		<div class="instrument-grid">
-			{#each nonMelodicInstruments as inst}
-				{@const isActive = activeItem?.instrumentType === inst.value}
-				<button
-					class="instrument-btn"
-					class:active={isActive}
-					style="border-color: {inst.color};"
-					onclick={() => updateInstrumentType(inst.value)}
-				>
-					{inst.label}
-				</button>
-			{/each}
+			{#if drumTab === 'original'}
+				{#each nonMelodicInstruments as inst}
+					{@const isActive = activeItem?.instrumentType === inst.value}
+					<button
+						class="instrument-btn"
+						class:active={isActive}
+						style="border-color: {inst.color};"
+						onclick={() => updateInstrumentType(inst.value)}
+					>
+						{inst.label}
+					</button>
+				{/each}
+			{:else}
+				{#each tr808Instruments as inst}
+					{@const isActive = activeItem?.instrumentType === inst.value}
+					<button
+						class="instrument-btn"
+						class:active={isActive}
+						style="border-color: {inst.color};"
+						onclick={() => updateInstrumentType(inst.value)}
+					>
+						{inst.label}
+					</button>
+				{/each}
+			{/if}
 		</div>
 	</div>
 	

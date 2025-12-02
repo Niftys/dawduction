@@ -50,6 +50,22 @@
 		cymbal: { color: '#ff0066', settings: { attack: 0.01, decay: 0.5, sustain: 0.0, release: 0.2 } },
 		shaker: { color: '#6600ff', settings: { attack: 0.01, decay: 0.3, sustain: 0.0, release: 0.1 } },
 		rimshot: { color: '#ff9900', settings: { attack: 0.001, decay: 0.08, sustain: 0.0, release: 0.05 } },
+		// TR-808 wavetable defaults (matching synth constructors)
+		tr808kick: { color: '#00ffff', settings: { attack: 0.001, decay: 4.0, sustain: 0.0, release: 0.5 } },
+		tr808snare: { color: '#ff00ff', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808hihat: { color: '#ffff00', settings: { attack: 0.001, decay: 0.5, sustain: 0.0, release: 0.2 } },
+		tr808openhihat: { color: '#ffff00', settings: { attack: 0.001, decay: 1.5, sustain: 0.0, release: 0.5 } },
+		tr808closedhihat: { color: '#ffff00', settings: { attack: 0.001, decay: 0.3, sustain: 0.0, release: 0.1 } },
+		tr808clap: { color: '#ff6600', settings: { attack: 0.001, decay: 0.8, sustain: 0.0, release: 0.3 } },
+		tr808lowtom: { color: '#00ff00', settings: { attack: 0.001, decay: 1.0, sustain: 0.0, release: 0.4 } },
+		tr808midtom: { color: '#00ff00', settings: { attack: 0.001, decay: 0.8, sustain: 0.0, release: 0.3 } },
+		tr808hightom: { color: '#00ff00', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.2 } },
+		tr808cymbal: { color: '#ff0066', settings: { attack: 0.001, decay: 2.0, sustain: 0.0, release: 1.0 } },
+		tr808ride: { color: '#ff0066', settings: { attack: 0.001, decay: 3.0, sustain: 0.0, release: 1.0 } },
+		tr808shaker: { color: '#6600ff', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808cowbell: { color: '#ffcc00', settings: { attack: 0.001, decay: 0.6, sustain: 0.0, release: 0.3 } },
+		tr808clave: { color: '#cc6600', settings: { attack: 0.001, decay: 0.3, sustain: 0.0, release: 0.2 } },
+		tr808rimshot: { color: '#ff9900', settings: { attack: 0.001, decay: 0.5, sustain: 0.0, release: 0.2 } },
 		subtractive: { color: '#00ffcc', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3, osc1Type: 'saw', osc2Type: 'saw', osc2Detune: 0, filterCutoff: 5000, filterResonance: 0.5 } },
 		fm: { color: '#cc00ff', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3, operators: [{ frequency: 1, amplitude: 1, waveform: 'sine' }] } },
 		wavetable: { color: '#ffcc00', settings: { attack: 0.1, decay: 0.2, sustain: 0.7, release: 0.3 } },
@@ -128,7 +144,7 @@
 			<button class="reset-btn" onclick={resetSynthParameters}>Reset All</button>
 		</div>
 	</div>
-	{#if activeItem && ['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'].includes(activeItem.instrumentType)}
+	{#if activeItem && (['kick', 'snare', 'hihat', 'clap', 'tom', 'cymbal', 'shaker', 'rimshot'].includes(activeItem.instrumentType) || activeItem.instrumentType?.startsWith('tr808'))}
 		<DrumSynthParams selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} {trackSettings} />
 	{:else if activeItem && activeItem.instrumentType === 'subtractive'}
 		<SubtractiveSynthParams selectedTrack={selectedTrack} selectedPattern={selectedPattern} selectedInstrument={selectedInstrument} {trackSettings} />

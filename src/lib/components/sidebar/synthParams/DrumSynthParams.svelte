@@ -46,7 +46,23 @@
 		tom: { attack: 0.01, decay: 0.4, release: 0.1 },
 		cymbal: { attack: 0.01, decay: 0.5, release: 0.2 },
 		shaker: { attack: 0.01, decay: 0.3, release: 0.1 },
-		rimshot: { attack: 0.001, decay: 0.08, release: 0.05 }
+		rimshot: { attack: 0.001, decay: 0.08, release: 0.05 },
+		// TR-808 defaults (matching synth constructors)
+		tr808kick: { attack: 0.001, decay: 4.0, release: 0.5 },
+		tr808snare: { attack: 0.001, decay: 0.6, release: 0.3 },
+		tr808hihat: { attack: 0.001, decay: 0.5, release: 0.2 },
+		tr808closedhihat: { attack: 0.001, decay: 0.3, release: 0.1 },
+		tr808openhihat: { attack: 0.001, decay: 1.5, release: 0.5 },
+		tr808clap: { attack: 0.001, decay: 0.8, release: 0.3 },
+		tr808lowtom: { attack: 0.001, decay: 1.0, release: 0.4 },
+		tr808midtom: { attack: 0.001, decay: 0.8, release: 0.3 },
+		tr808hightom: { attack: 0.001, decay: 0.6, release: 0.2 },
+		tr808cymbal: { attack: 0.001, decay: 2.0, release: 1.0 },
+		tr808ride: { attack: 0.001, decay: 3.0, release: 1.0 },
+		tr808shaker: { attack: 0.001, decay: 0.6, release: 0.3 },
+		tr808cowbell: { attack: 0.001, decay: 0.6, release: 0.3 },
+		tr808clave: { attack: 0.001, decay: 0.3, release: 0.2 },
+		tr808rimshot: { attack: 0.001, decay: 0.5, release: 0.2 }
 	});
 	
 	const defaults = $derived(activeItem?.instrumentType ? instrumentDefaults[activeItem.instrumentType as keyof typeof instrumentDefaults] : null);
@@ -61,8 +77,15 @@
 		let processedValue = value;
 		if (typeof value === 'number') {
 			if (isNaN(value)) return;
-			if (key === 'attack' || key === 'decay' || key === 'release') {
+			if (key === 'attack') {
+				// Attack is always 0-1
 				processedValue = Math.max(0, Math.min(1, parseFloat(value.toFixed(2))));
+			} else if (key === 'decay') {
+				// Decay can be up to 5.0 for TR-808 instruments (allows very long decays for kicks/cymbals)
+				processedValue = Math.max(0, Math.min(5.0, parseFloat(value.toFixed(2))));
+			} else if (key === 'release') {
+				// Release can be up to 1.5 for TR-808 instruments
+				processedValue = Math.max(0, Math.min(1.5, parseFloat(value.toFixed(2))));
 			} else {
 				processedValue = parseFloat(value.toFixed(2));
 			}
@@ -140,7 +163,7 @@
 	label="Decay"
 	value={trackSettings.decay ?? 0.3}
 	min={0}
-	max={1}
+	max={5.0}
 	step={0.01}
 	resetValue={defaults?.decay ?? 0.3}
 	onReset={() => updateSetting('decay', defaults?.decay ?? 0.3)}
@@ -151,7 +174,7 @@
 	label="Release"
 	value={trackSettings.release ?? 0.1}
 	min={0}
-	max={1}
+	max={1.5}
 	step={0.01}
 	resetValue={defaults?.release ?? 0.1}
 	onReset={() => updateSetting('release', defaults?.release ?? 0.1)}

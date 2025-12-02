@@ -240,6 +240,20 @@ class ProjectManager {
 		const track = this.getTrack(trackId);
 		if (track) {
 			track.settings = Object.assign({}, track.settings || {}, settings);
+			// Also update instrumentSettings for this instrument type so new voices get the updated settings
+			if (track.instrumentType) {
+				if (!track.instrumentSettings) {
+					track.instrumentSettings = {};
+				}
+				if (!track.instrumentSettings[track.instrumentType]) {
+					track.instrumentSettings[track.instrumentType] = {};
+				}
+				track.instrumentSettings[track.instrumentType] = Object.assign(
+					{},
+					track.instrumentSettings[track.instrumentType],
+					settings
+				);
+			}
 		}
 	}
 

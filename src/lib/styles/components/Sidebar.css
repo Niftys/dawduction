@@ -122,6 +122,40 @@
 	opacity: 0.7;
 }
 
+.drum-tabs {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.drum-tab {
+	background: #2d2d2d;
+	color: #b8b8b8;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	padding: 6px 12px;
+	cursor: pointer;
+	font-size: 11px;
+	font-weight: 500;
+	border-radius: 4px;
+	transition: all 0.2s ease;
+	flex: 1;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.drum-tab:hover {
+	background: #333333;
+	border-color: rgba(255, 255, 255, 0.2);
+	color: #e8e8e8;
+}
+
+.drum-tab.active {
+	background: #7ab8ff;
+	color: #1a1a1a;
+	border-color: #7ab8ff;
+	font-weight: 600;
+}
+
 .instrument-grid {
 	display: grid;
 	grid-template-columns: repeat(2, 1fr);

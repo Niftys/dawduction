@@ -50,7 +50,23 @@ const drumSynthFiles = [
 	'drums/TomSynth.js',
 	'drums/CymbalSynth.js',
 	'drums/ShakerSynth.js',
-	'drums/RimshotSynth.js'
+	'drums/RimshotSynth.js',
+	// TR-808 wavetable-based drum synths (replacing procedural ones)
+	'drums/TR808WavetableKickSynth.js',
+	'drums/TR808WavetableSnareSynth.js',
+	'drums/TR808WavetableHiHatSynth.js',
+	'drums/TR808WavetableOpenHiHatSynth.js',
+	'drums/TR808WavetableClosedHiHatSynth.js',
+	'drums/TR808WavetableClapSynth.js',
+	'drums/TR808WavetableLowTomSynth.js',
+	'drums/TR808WavetableMidTomSynth.js',
+	'drums/TR808WavetableHighTomSynth.js',
+	'drums/TR808WavetableCymbalSynth.js',
+	'drums/TR808WavetableRideSynth.js',
+	'drums/TR808WavetableShakerSynth.js',
+	'drums/TR808WavetableCowbellSynth.js',
+	'drums/TR808WavetableClaveSynth.js',
+	'drums/TR808WavetableRimshotSynth.js'
 ];
 
 // Melodic synth files
@@ -69,6 +85,12 @@ const melodicSynthFiles = [
 const sharedSynthFiles = [
 	'shared/choke.js', // Include choke utility first
 	'shared/SampleSynth.js'
+];
+
+// Wavetable files
+const wavetableFiles = [
+	'drums/WavetableDrumSynth.js',
+	'drums/wavetables/allDrumWavetables.js'
 ];
 
 function buildWorklet() {
@@ -121,6 +143,26 @@ function buildWorklet() {
 	
 	// Remove the registerProcessor line if it exists (we'll add it at the end)
 	processorCore = processorCore.replace(/registerProcessor\([^)]+\);?\s*$/, '');
+	
+	// Read and concatenate wavetable files first (needed by drum synths)
+	let wavetablesCode = '\n\n// ========== WAVETABLES ==========\n\n';
+	
+	for (const wavetableFile of wavetableFiles) {
+		const wavetablePath = path.join(synthsDir, wavetableFile);
+		if (fs.existsSync(wavetablePath)) {
+			console.log(`  Adding wavetable: ${wavetableFile}...`);
+			let wavetableCode = fs.readFileSync(wavetablePath, 'utf8');
+			// Convert export to const for inline use
+			wavetableCode = wavetableCode.replace(/^export\s+const\s+wavetables\s*=\s*/, 'const wavetables = ');
+			wavetableCode = wavetableCode.replace(/^export\s+const\s+defaultSamples\s*=\s*/, 'const defaultSamples = ');
+			wavetableCode = wavetableCode.replace(/^export\s+const\s+sampleNames\s*=\s*/, 'const sampleNames = ');
+			// Remove export statements
+			wavetableCode = wavetableCode.replace(/^export\s+/gm, '');
+			wavetablesCode += wavetableCode + '\n\n';
+		} else {
+			console.warn(`  Warning: ${wavetableFile} not found, skipping...`);
+		}
+	}
 	
 	// Read and concatenate drum synth files
 	let drumSynthsCode = '\n\n// ========== DRUM SYNTH CLASSES ==========\n\n';
@@ -198,7 +240,7 @@ function buildWorklet() {
 		}
 	}
 	
-	const synthsCode = drumSynthsCode + melodicSynthsCode + sharedSynthsCode;
+	const synthsCode = wavetablesCode + drumSynthsCode + melodicSynthsCode + sharedSynthsCode;
 	
 	// Combine everything: modules first, then processor core, then synths
 	const finalCode = modulesCode + processorCore + synthsCode + '\nregisterProcessor(\'engine-worklet-processor\', EngineWorkletProcessor);\n';
@@ -209,6 +251,7 @@ function buildWorklet() {
 	console.log(`✓ Built ${outputPath}`);
 	console.log(`  Modules: ${modulesCode.length} bytes`);
 	console.log(`  Processor core: ${processorCore.length} bytes`);
+	console.log(`  Wavetables: ${wavetablesCode.length} bytes`);
 	console.log(`  Drum synths: ${drumSynthsCode.length} bytes`);
 	console.log(`  Melodic synths: ${melodicSynthsCode.length} bytes`);
 	console.log(`  Shared synths: ${sharedSynthsCode.length} bytes`);
