@@ -131,7 +131,10 @@
 		if (!track || !track.patternTree) return [];
 		
 		// Check if this instrument type supports pitch editing
-		if (!pitchEditableInstruments.includes(track.instrumentType)) {
+		// Include TR-808 instruments (all start with 'tr808')
+		const supportsPitchEditing = pitchEditableInstruments.includes(track.instrumentType) || 
+		                             track.instrumentType?.startsWith('tr808');
+		if (!supportsPitchEditing) {
 			return [];
 		}
 		

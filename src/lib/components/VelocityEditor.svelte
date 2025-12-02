@@ -64,7 +64,10 @@
 		
 		// Don't show for instruments that support pitch editing
 		// MidiEditor handles both pitch and velocity modes for these instruments
-		return !pitchEditableInstruments.includes(track.instrumentType);
+		// Include TR-808 instruments (all start with 'tr808')
+		const supportsPitchEditing = pitchEditableInstruments.includes(track.instrumentType) || 
+		                             track.instrumentType?.startsWith('tr808');
+		return !supportsPitchEditing;
 	})();
 	
 	
