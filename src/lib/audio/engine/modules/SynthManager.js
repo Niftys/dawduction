@@ -163,16 +163,6 @@ class SynthManager {
 			}
 		}
 		
-		// Debug: Log settings update
-		if (settings.attack !== undefined || settings.decay !== undefined || 
-		    settings.sustain !== undefined || settings.release !== undefined) {
-			console.log(`[SynthManager] Updating settings for ${trackId}:`, {
-				attack: settings.attack,
-				decay: settings.decay,
-				sustain: settings.sustain,
-				release: settings.release
-			});
-		}
 		
 		// Update main synth if it exists
 		// Note: Pattern instruments use voice pools, not main synths, so this is expected to be null for them
@@ -223,13 +213,11 @@ class SynthManager {
 			// The track object is updated by reference, but we want to be explicit
 			const freshTrack = this.processor.projectManager.getTrack(trackId);
 			if (!freshTrack) {
-				console.warn(`[SynthManager] Track ${trackId} not found when getting settings`);
 				return;
 			}
 			
 			const instrumentType = freshTrack.instrumentType || track.instrumentType;
 			if (!instrumentType) {
-				console.warn(`[SynthManager] No instrumentType for track ${trackId}`);
 				return;
 			}
 			
@@ -240,21 +228,6 @@ class SynthManager {
 			
 			// Merge: instrumentSettings override base settings (instrument-specific takes precedence)
 			const latestSettings = Object.assign({}, baseSettings, instrumentTypeSettings);
-			
-			// Debug: Log settings for TR808 instruments to verify they're being read correctly
-			if (instrumentType && instrumentType.startsWith('tr808')) {
-				console.log(`[SynthManager] Triggering ${instrumentType} (${trackId}) with settings:`, {
-					baseSettings: JSON.parse(JSON.stringify(baseSettings)), // Deep copy for logging
-					instrumentTypeSettings: JSON.parse(JSON.stringify(instrumentTypeSettings)), // Deep copy
-					mergedSettings: JSON.parse(JSON.stringify(latestSettings)), // Deep copy
-					hasAttack: latestSettings.attack !== undefined,
-					hasDecay: latestSettings.decay !== undefined,
-					hasRelease: latestSettings.release !== undefined,
-					attack: latestSettings.attack,
-					decay: latestSettings.decay,
-					release: latestSettings.release
-				});
-			}
 			
 			if (this.processor.playbackController) {
 				const bpm = this.processor.playbackController.getBPM();

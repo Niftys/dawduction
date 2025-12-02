@@ -14,14 +14,6 @@ class WavetableDrumSynth {
 		this.currentWavetable = null;
 		this.wavetableLength = 0; // Will be set when wavetable is selected
 		
-		// Debug: Log wavetable info on construction
-		if (this.wavetables && Object.keys(this.wavetables).length > 0) {
-			const firstKey = Object.keys(this.wavetables)[0];
-			const firstWavetable = this.wavetables[firstKey];
-			console.log(`[WavetableDrumSynth] Constructed with ${Object.keys(this.wavetables).length} wavetables, first: ${firstKey}, length: ${firstWavetable?.length || 'N/A'}`);
-		} else {
-			console.warn(`[WavetableDrumSynth] Constructed with NO wavetables!`);
-		}
 		
 		// Playback state
 		this.phase = 0; // Phase accumulator for wavetable playback
@@ -97,19 +89,6 @@ class WavetableDrumSynth {
 		// Merge settings
 		this.settings = { ...this.settings, ...sanitizedSettings };
 		
-		// Debug: Log parameter updates
-		if (settings.attack !== undefined || settings.decay !== undefined || 
-		    settings.sustain !== undefined || settings.release !== undefined) {
-			console.log(`[WavetableDrumSynth] Settings updated:`, {
-				attack: this.settings.attack,
-				decay: this.settings.decay,
-				sustain: this.settings.sustain,
-				release: this.settings.release,
-				oldDecay: oldSettings.decay,
-				newDecay: this.settings.decay,
-				decayChanged: oldSettings.decay !== this.settings.decay
-			});
-		}
 		
 		// Update wavetables if provided
 		if (settings.wavetables) {
@@ -197,14 +176,11 @@ class WavetableDrumSynth {
 		if (this.wavetables[sampleName]) {
 			this.currentWavetable = this.wavetables[sampleName];
 			this.wavetableLength = this.currentWavetable.length;
-			// Debug: Log sample length to verify it's loading correctly
-			console.log(`[WavetableDrumSynth] Loaded wavetable: ${sampleName}, length: ${this.wavetableLength} samples (${(this.wavetableLength / this.sampleRate).toFixed(3)}s), first sample: ${this.currentWavetable[0]?.toFixed(6)}, peak: ${Math.max(...Array.from(this.currentWavetable).slice(0, 1000).map(s => Math.abs(s))).toFixed(6)}`);
 		} else {
 			// Fallback to first available
 			const firstKey = Object.keys(this.wavetables)[0];
 			this.currentWavetable = this.wavetables[firstKey];
 			this.wavetableLength = this.currentWavetable ? this.currentWavetable.length : 2048;
-			// console.log(`Using fallback wavetable: ${firstKey}, length: ${this.wavetableLength} samples`);
 		}
 	}
 
@@ -290,7 +266,6 @@ class WavetableDrumSynth {
 			attackSamples = 0.005 * this.sampleRate;
 		}
 		if (typeof decaySeconds !== 'number' || isNaN(decaySeconds) || decaySeconds < 0) {
-			console.warn(`[WavetableDrumSynth] Invalid decay value: ${decaySeconds}, using default 0.4`);
 			decaySeconds = 0.4; // Fallback to default
 		}
 		if (typeof sustain !== 'number' || isNaN(sustain) || sustain < 0) {
@@ -300,16 +275,6 @@ class WavetableDrumSynth {
 			releaseSamples = 0.15 * this.sampleRate;
 		}
 		
-		// Debug: Log current settings on first sample of new note (to verify they're being used)
-		if (this.envelopePhase === 0 && this.phase === 0) {
-			console.log(`[WavetableDrumSynth] Processing with settings:`, {
-				attack: this.settings.attack,
-				decay: decaySeconds,
-				sustain: sustain,
-				release: this.settings.release,
-				usingPerNote: !!this.perNoteADSR
-			});
-		}
 		
 		// Check if we've reached the end of the wavetable (drum samples play once, don't loop)
 		// Stop when phase reaches or exceeds the wavetable length
@@ -340,11 +305,6 @@ class WavetableDrumSynth {
 				// As time→∞: envelope → sustain
 				const decayFactor = Math.exp(-timeSinceAttack / decaySeconds);
 				envelope = sustain + (1.0 - sustain) * decayFactor;
-				
-				// Debug: Log decay calculation occasionally (every 1000 samples to avoid spam)
-				if (this.envelopePhase % 1000 === 0 && timeSinceAttack < decaySeconds * 2) {
-					console.log(`[WavetableDrumSynth] Decay envelope: time=${timeSinceAttack.toFixed(3)}s, decay=${decaySeconds.toFixed(3)}s, envelope=${envelope.toFixed(4)}, decayFactor=${decayFactor.toFixed(4)}`);
-				}
 			} else {
 				// If decay is very short or zero, immediately go to sustain
 				envelope = sustain;
