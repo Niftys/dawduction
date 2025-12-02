@@ -28,7 +28,7 @@ class TR808WavetableKickSynth extends WavetableDrumSynth {
 			selectedSample: 0,
 			sampleNames: Object.keys(kickWavetables).sort(),
 			wavetables: kickWavetables,
-			basePitch: 48, // C2 - kick uses C2 as base pitch for normal playback speed
+			basePitch: 36, // C1 - matches standard MIDI mapping for kick drum (36 = C1)
 			...settings
 		};
 		

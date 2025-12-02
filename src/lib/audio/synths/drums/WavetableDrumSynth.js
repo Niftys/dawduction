@@ -233,7 +233,7 @@ class WavetableDrumSynth {
 		// for typical drum pitches (kick=36, snare=38, etc.)
 		// Wavetables are resampled to match the worklet sample rate (44.1kHz),
 		// so playbackSpeed = 1.0 means we play 1 wavetable sample per audio sample
-		// Note: Kick uses C2 (48) as base, which is handled in TR808WavetableKickSynth
+		// Individual instruments can override basePitch to match their standard MIDI pitch
 		const basePitch = this.settings.basePitch !== undefined ? this.settings.basePitch : 36; // C1 (default for most drums)
 		this.playbackSpeed = Math.pow(2, (pitch - basePitch) / 12);
 		
